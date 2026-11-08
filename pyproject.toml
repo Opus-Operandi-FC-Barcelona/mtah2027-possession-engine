@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mtah2027"
+version = "0.1.0"
+description = "Deterministic frame-level ball possession engine for More than a Hack 2027 (BAR-ATH)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy==2.3.5",
+    "pandas==2.3.3",
+    "scipy==1.16.3",
+    "scikit-learn==1.7.2",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+fast = ["numba==0.68.0", "lightgbm==4.7.0"]
+numba = ["numba==0.68.0"]
+lightgbm = ["lightgbm==4.7.0"]
+dev = ["pytest==9.1.1", "ruff==0.17.2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", ".", "evaluation"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["evaluation", "starter", "games.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
