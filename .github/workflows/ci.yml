@@ -1,0 +1,59 @@
+name: MTAH2027 Continuous Verification (28 Issues Gate)
+
+on:
+  push:
+    branches: [ main, develop, "feat/**" ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  PYTHONHASHSEED: "0"
+
+jobs:
+  verify-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Security Gate — Verify no private match data or caches are tracked
+        run: |
+          if git ls-files | grep -E '^data/.*\.(mp4|txt|xml|csv)$|^cache/|\.npy$|\.npz$|_atd\.(txt|xml)$|_homography\.csv$|_smart_tagging\.xml$'; then
+            echo "ERROR FATAL: Archivos de datos privados o cachés detectados en Git."
+            exit 1
+          fi
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+
+      - name: Lint code with Ruff
+        run: ruff check src/ tests/ scripts/
+
+      - name: Run All Atomic Unit & Integration Tests
+        run: pytest -v --tb=short
+
+      - name: Verify End-to-End Determinism (Byte-for-Byte SHA256) & Format Contract
+        run: |
+          if [ -f scripts/generate_submission.py ]; then
+            python scripts/generate_submission.py --synthetic --out /tmp/sub_run1.csv
+            python scripts/generate_submission.py --synthetic --out /tmp/sub_run2.csv
+            HASH1=$(sha256sum /tmp/sub_run1.csv | awk '{print $1}')
+            HASH2=$(sha256sum /tmp/sub_run2.csv | awk '{print $1}')
+            echo "Run 1 SHA256: $HASH1"
+            echo "Run 2 SHA256: $HASH2"
+            if [ "$HASH1" != "$HASH2" ]; then
+              echo "ERROR FATAL: El pipeline no es 100% determinista."
+              exit 1
+            fi
+          else
+            echo "scripts/generate_submission.py not present yet (Issue #28); skipping determinism step."
+          fi
