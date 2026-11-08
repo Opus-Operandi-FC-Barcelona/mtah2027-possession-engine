@@ -13,7 +13,7 @@ Cada línea: `[x] COMPLETADA` / `[ ] PENDIENTE` · issue · oleada · título ·
 
 ## Milestone 2: Ingesta en Streaming, Limpieza de Slots y Sincronización de TV
 
-- [ ] PENDIENTE · #05 · wave-1 · Parser en streaming de ATD (.txt/.xml) a metros reales con caché .npy · `feat/issue-05-atd-streaming-loader`
+- [x] COMPLETADA · #05 · wave-1 · Parser en streaming de ATD (.txt/.xml) a metros reales con caché .npy · `feat/issue-05-atd-streaming-loader`
 - [ ] PENDIENTE · #06 · wave-1 · Parser de Smart Tagging XML a máscaras y eventos por frame · `feat/issue-06-smart-tagging-loader`
 - [ ] PENDIENTE · #07 · wave-1 · Cargador vectorizado de matrices de homografía $H$ e inversas $H^{-1}$ · `feat/issue-07-homography-loader`
 - [ ] PENDIENTE · #08 · wave-1 · Filtrado de suplentes en banda y fusión de tracks duplicados ($< 0.6\text{ m}$) · `feat/issue-08-track-dedup-and-bounds`
