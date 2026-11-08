@@ -1,7 +1,34 @@
-# Bootstrap guard; extended by Issue #1.
+# Anti-leak guard (Issue #1). The match data, caches and predictions never enter Git.
 data/*
 !data/README.md
 cache/
 *.mp4
 *.npy
+*.npz
+*_atd.txt
+*_atd.xml
+*_homography.csv
+*_smart_tagging.xml
+
+# Prediction CSVs (real match) at the repo root and in outputs/
+/*.csv
+outputs/
+evaluation/results/*.csv
+!evaluation/results/baseline_*.csv
+evaluation/reports/
+evaluation/scoreboard.csv
+
+# Documents generated for the submission
+/*.pdf
+
+# Python / tooling
 __pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.numba_cache/

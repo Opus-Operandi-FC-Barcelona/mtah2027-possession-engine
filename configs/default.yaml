@@ -1,0 +1,21 @@
+# Default configuration (Issue #1). Match constants are the published BAR-ATH values
+# (DATA.md); they are cross-checked against games.py at load time.
+team_name: OpusOperandi
+seed: 0
+
+match:
+  game: BAR-ATH
+  n_video_frames: 199319
+  fps: 25
+  pitch: [105.3, 68.0]          # metres (length, width)
+  half1: [11185, 90651]         # graded, ball alive/dead
+  half2_dead: [110808, 113741]  # graded, ball dead 100% -> forced D
+  half2_play: [113742, 190197]  # graded, from the centre kick-off to the final whistle
+
+# Macroscopic sanity ALARMS, not targets: wide ranges from generic football priors.
+# They must never be used to choose hyper-parameters (EVALUATION.md).
+kpi_alarms:
+  possessions: [150, 600]           # number of H/A spells
+  mean_duration_s: [6.0, 30.0]      # mean possession duration, seconds
+  dead_pct_of_graded: [10.0, 45.0]  # % of D over graded frames
+  home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames
