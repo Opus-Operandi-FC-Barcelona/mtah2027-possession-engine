@@ -73,3 +73,11 @@ def tactical_atd(synthetic_info):
 @pytest.fixture(scope="session")
 def broadcast_atd(synthetic_info):
     return parse_atd(synthetic_info["paths"]["broadcast_atd_txt"])
+
+
+@pytest.fixture(scope="session")
+def synthetic_full_dir(tmp_path_factory, synth_module):
+    """Full-length (199,319 frames) synthetic bundle; expensive, used only by ``slow`` tests."""
+    out = tmp_path_factory.mktemp("synthetic_full")
+    synth_module.generate_synthetic_match(out, seed=SYNTHETIC_SEED, full_length=True)
+    return out
