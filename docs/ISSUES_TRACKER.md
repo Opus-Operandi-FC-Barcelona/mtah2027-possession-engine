@@ -8,7 +8,7 @@ Cada línea: `[x] COMPLETADA` / `[ ] PENDIENTE` · issue · oleada · título ·
 
 - [x] COMPLETADA · #01 · wave-1 · Inicialización de paquete Python, .gitignore anti-fugas y configuración tipada · `feat/issue-01-repo-scaffold`
 - [x] COMPLETADA · #02 · wave-1 · GitHub Actions CI/CD, Security Gate anti-fuga de datos y automatización de las 28 Issues · `feat/issue-02-github-ci-security`
-- [ ] PENDIENTE · #03 · wave-1 · Generador determinista de partido sintético en formato FIFA/EPTS + SportsCode XML · `feat/issue-03-synthetic-match-generator`
+- [x] COMPLETADA · #03 · wave-1 · Generador determinista de partido sintético en formato FIFA/EPTS + SportsCode XML · `feat/issue-03-synthetic-match-generator`
 - [ ] PENDIENTE · #04 · wave-1 · Puente nativo con possession_metrics.py y validate_submission.py · `feat/issue-04-official-eval-bridge`
 
 ## Milestone 2: Ingesta en Streaming, Limpieza de Slots y Sincronización de TV
