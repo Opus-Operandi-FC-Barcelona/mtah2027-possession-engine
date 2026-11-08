@@ -1,0 +1,7 @@
+# Bootstrap guard; extended by Issue #1.
+data/*
+!data/README.md
+cache/
+*.mp4
+*.npy
+__pycache__/
