@@ -4,8 +4,8 @@ from __future__ import annotations
 import numpy as np
 
 
-def speed_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
-    """Speed (m/s) of positions ``xy[N, ..., 2]`` by a central difference over ``+-half_span`` frames.
+def velocity_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
+    """Velocity (m/s) of positions ``xy[N, ..., 2]`` by a central difference over ``+-half_span`` frames.
 
     Where one of the two neighbours is missing the available one-sided difference (over a single
     side) is used; NaN where neither side (or the sample itself) is available.
@@ -29,9 +29,14 @@ def speed_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
     d_p = (xy - prv) / h
     diff = np.where(both[..., None], d_both,
                     np.where(only_n[..., None], d_n, np.where(only_p[..., None], d_p, np.nan)))
-    speed = np.linalg.norm(diff, axis=-1) * fps
-    speed[~here] = np.nan
-    return speed.astype(np.float32)
+    diff = diff * fps
+    diff[~here] = np.nan
+    return diff.astype(np.float32)
+
+
+def speed_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
+    """Speed (m/s): the norm of :func:`velocity_from_xy`."""
+    return np.linalg.norm(velocity_from_xy(xy, fps, half_span), axis=-1).astype(np.float32)
 
 
 def window_mean(x: np.ndarray, lo: int, hi: int) -> np.ndarray:
