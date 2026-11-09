@@ -44,10 +44,16 @@ def test_ha_opens_only_around_contested_touch():
     lt = _build(touch_score=touch, d_home=near, d_away=near)
     assert lt[200, H, A] == P.ha_open and lt[195, A, H] == P.ha_open and lt[205, H, A] == P.ha_open
     assert lt[194, H, A] == P.ha_closed and lt[206, H, A] == P.ha_closed
-    # only one team close -> stays closed
+    # only the home team is at the ball: it can win it (A -> H opens) but the away team cannot (H -> A closed)
     far = np.full(N, 10.0)
     lt2 = _build(touch_score=touch, d_home=near, d_away=far)
-    assert np.all(lt2[1:, H, A] == P.ha_closed)
+    assert np.all(lt2[1:, H, A] == P.ha_closed) and lt2[200, A, H] == P.ha_open
+    # strict reading: only a contested touch (both teams close) opens anything
+    strict = tm.TransitionParams(require_both_teams=True)
+    lt_s = tm.build_log_transitions(N, touch_score=touch, d_home=near, d_away=far, params=strict)
+    assert np.all(lt_s[1:, H, A] == P.ha_closed) and np.all(lt_s[1:, A, H] == P.ha_closed)
+    lt_b = tm.build_log_transitions(N, touch_score=touch, d_home=near, d_away=near, params=strict)
+    assert lt_b[200, H, A] == P.ha_open and lt_b[200, A, H] == P.ha_open
     # an aerial ball never opens it
     aer = np.zeros(N, bool)
     aer[200] = True

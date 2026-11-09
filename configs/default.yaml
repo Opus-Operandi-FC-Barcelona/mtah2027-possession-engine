@@ -100,7 +100,8 @@ transition_matrix:
   ha_open: -1.4                 # H<->A inside a contested-touch window
   touch_halfwidth: 5            # window = touch peak +- this many frames
   touch_min_score: 0.5          # touch_score at or above this is a touch peak
-  touch_both_dist_m: 2.0        # both teams this close to a (non-aerial) visible ball at the touch
+  touch_both_dist_m: 2.0        # the gaining team must have a player this close to the ball at the touch
+  require_both_teams: false     # true: stricter 'contested touch' (both teams this close)
   touch_gate_halfwidth: 2       # ... within +- this many frames of the peak
   ha_occluded: -6.0             # H<->A while the ball has been missing for a long time
   occlusion_min_s: 2.0          # a missing-ball run at least this long counts as an occlusion
@@ -135,3 +136,31 @@ spell_optimizer:
   bridge_dead_threshold: 0.6    # ... where the smoothed dead_score is at least this ...
   bridge_gap_close_s: 1.0       # ... bridging evidence gaps shorter than this ...
   bridge_requires_geometry: true  # ... and there is touchline / set-piece / out-of-play support
+
+# Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
+# Generic priors; to be tuned on external matches only.
+heuristic_emissions:
+  w_evidence: 0.5               # logit of H vs A per unit of possession_evidence (in [-1, 1]); weak term
+  w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
+  w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
+  owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
+  dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
+  dead_scale_no_ball: 0.6       # ... when the ball is missing (the score then rests on player speeds)
+  w_status: 3.0                 # extra logit for an alive/dead ATD status channel (+ already in dead_score)
+  prob_floor: 0.001             # emission probabilities are floored here (max |log p| = 6.9)
+  carry_conf_threshold: 0.35    # |possession_evidence| from which a frame is a confident possession sample
+  carry_weight: 1.5             # logit of a fully confident carried team while the ball is missing
+  carry_tau_s: 30.0             # e-folding time of the carried confidence
+  carry_backward: true          # also carry the NEXT confident team backwards over the gap
+  w_touch: 3.0                  # logit of the last toucher's team (decays with touch_tau_s)
+  touch_tau_s: 60.0             # e-folding time of the last-touch evidence
+  touch_margin_m: 0.5           # distance gap at a touch that gives full weight to its team
+
+# Issue #28 (wave 1) -- end-to-end pipeline switches.  Every stage is optional (progressive fallback).
+pipeline:
+  use_clean_tracks: true
+  use_set_piece_anchors: true   # Smart Tagging -> restart frames t* and forced dead intervals
+  use_forced_dead: true         # apply the forced dead intervals of the anchors
+  use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
+  use_owner_channel: true       # ATD owning-team ball channel, if declared
+  use_spell_optimizer: true
