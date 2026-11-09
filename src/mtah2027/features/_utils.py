@@ -1,0 +1,97 @@
+"""Small vectorised helpers shared by the feature modules (NaN-aware, no Python loops over frames)."""
+from __future__ import annotations
+
+import numpy as np
+
+
+def speed_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
+    """Speed (m/s) of positions ``xy[N, ..., 2]`` by a central difference over ``+-half_span`` frames.
+
+    Where one of the two neighbours is missing the available one-sided difference (over a single
+    side) is used; NaN where neither side (or the sample itself) is available.
+    """
+    h = max(1, int(half_span))
+    xy = np.asarray(xy, dtype=np.float64)
+    n = xy.shape[0]
+    nxt = np.full_like(xy, np.nan)
+    prv = np.full_like(xy, np.nan)
+    if n > h:
+        nxt[:-h] = xy[h:]
+        prv[h:] = xy[:-h]
+    ok_n = np.isfinite(nxt).all(-1)
+    ok_p = np.isfinite(prv).all(-1)
+    both = ok_n & ok_p
+    only_n = ok_n & ~both
+    only_p = ok_p & ~both
+    here = np.isfinite(xy).all(-1)
+    d_both = (nxt - prv) / (2.0 * h)
+    d_n = (nxt - xy) / h
+    d_p = (xy - prv) / h
+    diff = np.where(both[..., None], d_both,
+                    np.where(only_n[..., None], d_n, np.where(only_p[..., None], d_p, np.nan)))
+    speed = np.linalg.norm(diff, axis=-1) * fps
+    speed[~here] = np.nan
+    return speed.astype(np.float32)
+
+
+def moving_mean(x: np.ndarray, window: int) -> np.ndarray:
+    """Centered NaN-aware moving mean along axis 0 over ``window`` samples (NaN if all are NaN)."""
+    x = np.asarray(x, dtype=np.float64)
+    window = max(1, int(window))
+    if window == 1:
+        return x.astype(np.float32)
+    valid = np.isfinite(x)
+    vals = np.where(valid, x, 0.0)
+    shape = (1,) + x.shape[1:]
+    cs = np.concatenate([np.zeros(shape), np.cumsum(vals, axis=0)], axis=0)
+    cn = np.concatenate([np.zeros(shape), np.cumsum(valid, axis=0)], axis=0)
+    n = x.shape[0]
+    idx = np.arange(n)
+    lo = np.clip(idx - window // 2, 0, n)
+    hi = np.clip(idx - window // 2 + window, 0, n)
+    s = cs[hi] - cs[lo]
+    c = cn[hi] - cn[lo]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where(c > 0, s / np.maximum(c, 1), np.nan)
+    return out.astype(np.float32)
+
+
+def frames_since(mask: np.ndarray) -> np.ndarray:
+    """Frames elapsed since the last True of ``mask`` (0 where True); -1 where there was none yet."""
+    idx = np.arange(len(mask))
+    last = np.maximum.accumulate(np.where(mask, idx, -1))
+    return np.where(last >= 0, idx - last, -1)
+
+
+def frames_until(mask: np.ndarray) -> np.ndarray:
+    """Frames until the next True of ``mask`` (0 where True); -1 where there is none any more."""
+    return frames_since(mask[::-1])[::-1]
+
+
+def run_length_before(mask: np.ndarray) -> np.ndarray:
+    """Length of the run of consecutive True ending at each index (0 where ``mask`` is False)."""
+    idx = np.arange(len(mask))
+    last_false = np.maximum.accumulate(np.where(~mask, idx, -1))
+    return np.where(mask, idx - last_false, 0)
+
+
+def row_percentile(values: np.ndarray, q: float, min_count: int = 1) -> np.ndarray:
+    """Linear-interpolation percentile ``q`` in [0, 1] of the finite entries of each row.
+
+    Equivalent to ``np.nanpercentile(values, 100 * q, axis=1)`` but vectorised through one sort;
+    rows with fewer than ``min_count`` finite entries give NaN.
+    """
+    srt = np.sort(np.asarray(values, dtype=np.float64), axis=1)      # NaN sorts last
+    n = np.isfinite(srt).sum(axis=1)
+    pos = q * np.maximum(n - 1, 0)
+    lo = np.floor(pos).astype(np.int64)
+    hi = np.minimum(lo + 1, np.maximum(n - 1, 0))
+    rows = np.arange(srt.shape[0])
+    a, b = srt[rows, lo], srt[rows, hi]
+    out = a + (b - a) * (pos - lo)
+    out[n < max(1, min_count)] = np.nan
+    return out.astype(np.float32)
+
+
+def sigmoid(z: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(z, -60.0, 60.0)))

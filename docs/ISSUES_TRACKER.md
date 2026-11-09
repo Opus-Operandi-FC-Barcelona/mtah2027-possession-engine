@@ -27,7 +27,7 @@ Cada línea: `[x] COMPLETADA` / `[ ] PENDIENTE` · issue · oleada · título ·
 
 ## Milestone 4: Balón Muerto (D), Anclaje de Set Pieces y Física Colectiva
 
-- [ ] PENDIENTE · #13 · wave-1 · Señales cinemáticas continuas de balón muerto (D) con y sin balón visible · `feat/issue-13-dead-ball-kinematic-signals`
+- [x] COMPLETADA · #13 · wave-1 · Señales cinemáticas continuas de balón muerto (D) con y sin balón visible · `feat/issue-13-dead-ball-kinematic-signals`
 - [ ] PENDIENTE · #14 · wave-1 · Anclaje quirúrgico del frame de reinicio $t^*$ en los 59 SET PIECES y post-GOALS · `feat/issue-14-setpiece-exact-anchoring`
 - [ ] PENDIENTE · #15 · wave-2 · Resolución determinista del equipo lanzador en los 26 Throw-in con Team = N/A · `feat/issue-15-throwin-team-resolver`
 - [ ] PENDIENTE · #16 · wave-1 · Distancias por equipo, esfera de influencia y detector de toques (touch_score) · `feat/issue-16-ball-carrier-and-touches`

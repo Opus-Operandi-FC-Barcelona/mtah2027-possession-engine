@@ -81,3 +81,20 @@ def synthetic_full_dir(tmp_path_factory, synth_module):
     out = tmp_path_factory.mktemp("synthetic_full")
     synth_module.generate_synthetic_match(out, seed=SYNTHETIC_SEED, full_length=True)
     return out
+
+
+@pytest.fixture(scope="session")
+def synthetic_kin(synthetic_info, synthetic_dir):
+    """Cleaned, oriented kinematics of the short synthetic match plus its true labels and Smart Tagging."""
+    from mtah2027.io import atd_loader as al
+    from mtah2027.io.smart_tagging_loader import load_smart_tagging
+    from mtah2027.preprocessing.clean_tracks import clean_tracks
+    from mtah2027.preprocessing.kinematics_and_orientation import compute_kinematics_and_orientation
+
+    spec = synthetic_info["spec"]
+    td = al.load_atd(synthetic_dir, cache_dir=None)
+    xy = clean_tracks(td.players_xy, td.team_of_slot).players_xy
+    kin = compute_kinematics_and_orientation(xy, td.ball_xy, td.team_of_slot,
+                                             halves=(spec.half1, spec.half2_play))
+    st = load_smart_tagging(synthetic_dir, n_frames=td.n_frames)
+    return {"td": td, "kin": kin, "spec": spec, "labels": synthetic_info["labels"], "st": st}
