@@ -51,3 +51,27 @@ dead_ball_signals:
   w_geom: 1.5
   w_status: 6.0
   speed_ref_mps: 2.5           # mean player speed at which the "slow" signal reaches zero
+
+# Issue #14 -- exact restart frame t* inside Smart Tagging SET PIECES windows and after GOALS.
+setpiece_anchor:
+  pre_margin_s: 1.0             # search window = [start - pre, end + post] around the tag interval
+  post_margin_s: 2.0
+  rest_speed_mps: 1.0           # ball at rest below this speed
+  launch_speed_mps: 4.0         # ball launched above this speed
+  launch_sustain_frames: 3      # launch speed must hold this many frames
+  min_rest_s: 0.4               # minimum rest immediately before the launch
+  rest_cap_s: 5.0               # rest longer than this does not add confidence/selection weight
+  max_ramp_s: 0.5               # t* is at most this far before the launch crossing
+  ball_speed_half_span: 2       # frames each side when the ball speed is derived from positions
+  player_speed_half_span: 1
+  collective_window_s: 1.0      # windows before/after for the collective speed jump
+  collective_jump_min_mps: 0.4  # minimum rise of the mean player speed
+  collective_conf_max: 0.5      # confidence ceiling of the collective method
+  dead_threshold: 0.5           # dead_score above this counts as dead-ball evidence
+  dead_gap_close_s: 1.0         # evidence gaps shorter than this are bridged
+  dead_tail_s: 1.0              # evidence may end this long before t*
+  max_dead_back_s: 40.0         # D onset is searched at most this far before t*
+  goal_search_pre_s: 3.0        # the goal's dead onset is searched in [start - pre, end + post]
+  goal_search_post_s: 6.0
+  max_goal_to_kickoff_s: 150.0  # a Kick Off (After Goal) farther than this is not linked to the goal
+  restart_mask_halfwidth: 0     # restart_mask is True on t* +- this many frames

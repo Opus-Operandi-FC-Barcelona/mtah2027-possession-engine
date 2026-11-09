@@ -34,12 +34,9 @@ def speed_from_xy(xy: np.ndarray, fps: float, half_span: int = 1) -> np.ndarray:
     return speed.astype(np.float32)
 
 
-def moving_mean(x: np.ndarray, window: int) -> np.ndarray:
-    """Centered NaN-aware moving mean along axis 0 over ``window`` samples (NaN if all are NaN)."""
+def window_mean(x: np.ndarray, lo: int, hi: int) -> np.ndarray:
+    """NaN-aware mean of ``x[i+lo : i+hi+1]`` along axis 0 (offsets inclusive, clipped at the edges)."""
     x = np.asarray(x, dtype=np.float64)
-    window = max(1, int(window))
-    if window == 1:
-        return x.astype(np.float32)
     valid = np.isfinite(x)
     vals = np.where(valid, x, 0.0)
     shape = (1,) + x.shape[1:]
@@ -47,13 +44,21 @@ def moving_mean(x: np.ndarray, window: int) -> np.ndarray:
     cn = np.concatenate([np.zeros(shape), np.cumsum(valid, axis=0)], axis=0)
     n = x.shape[0]
     idx = np.arange(n)
-    lo = np.clip(idx - window // 2, 0, n)
-    hi = np.clip(idx - window // 2 + window, 0, n)
-    s = cs[hi] - cs[lo]
-    c = cn[hi] - cn[lo]
+    a = np.clip(idx + lo, 0, n)
+    b = np.clip(idx + hi + 1, 0, n)
+    s = cs[b] - cs[a]
+    c = cn[b] - cn[a]
     with np.errstate(invalid="ignore", divide="ignore"):
         out = np.where(c > 0, s / np.maximum(c, 1), np.nan)
     return out.astype(np.float32)
+
+
+def moving_mean(x: np.ndarray, window: int) -> np.ndarray:
+    """Centered NaN-aware moving mean along axis 0 over ``window`` samples (NaN if all are NaN)."""
+    window = max(1, int(window))
+    if window == 1:
+        return np.asarray(x, dtype=np.float32)
+    return window_mean(x, -(window // 2), window - 1 - window // 2)
 
 
 def frames_since(mask: np.ndarray) -> np.ndarray:
