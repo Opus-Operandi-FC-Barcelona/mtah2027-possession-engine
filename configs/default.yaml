@@ -185,3 +185,9 @@ external_degrader:
   dup_offset_m: 0.4                # offset of the duplicate from the original track
   drop_rate_per_min: 0.5           # dropped-player episodes per minute
   drop_duration_s: [2.0, 20.0]
+
+# Issue #17 -- collective physics of each team (goalkeeper-free outfield block).
+collective_physics:
+  min_players: 4                # fewer valid outfield players -> shape features are NaN
+  deriv_span_s: 2.0             # total span of the central difference of areas / centroid
+  gk_vel_half_span: 1           # frames each side when velocities are derived from positions
