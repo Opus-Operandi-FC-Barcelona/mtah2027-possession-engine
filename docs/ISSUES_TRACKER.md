@@ -44,7 +44,7 @@ Cada línea: `[x] COMPLETADA` / `[ ] PENDIENTE` · issue · oleada · título ·
 ## Milestone 6: Viterbi Dinámico A_t, Optimización Directa de spellF1, KPIs y Entrega
 
 - [x] COMPLETADA · #23 · wave-1 · Constructor de la matriz de transición dependiente del tiempo $A_t \in \mathbb{R}^{N\times 3\times 3}$ · `feat/issue-23-dynamic-transition-matrix`
-- [ ] PENDIENTE · #24 · wave-1 · Decodificador Viterbi / CRF lineal con @numba.njit por mitad independiente · `feat/issue-24-numba-viterbi-decoder`
+- [x] COMPLETADA · #24 · wave-1 · Decodificador Viterbi / CRF lineal con @numba.njit por mitad independiente · `feat/issue-24-numba-viterbi-decoder`
 - [ ] PENDIENTE · #25 · wave-1 · Post-procesador directo de spellF1: poda de micro-posesiones e inserción de puente D · `feat/issue-25-spell-pruning-and-d-bridge`
 - [ ] PENDIENTE · #26 · wave-1 · Consenso MBR de fronteras y contrato estricto de las 199.319 filas · `feat/issue-26-mbr-consensus-and-contract`
 - [ ] PENDIENTE · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
