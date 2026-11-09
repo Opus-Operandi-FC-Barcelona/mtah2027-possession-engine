@@ -75,3 +75,19 @@ setpiece_anchor:
   goal_search_post_s: 6.0
   max_goal_to_kickoff_s: 150.0  # a Kick Off (After Goal) farther than this is not linked to the goal
   restart_mask_halfwidth: 0     # restart_mask is True on t* +- this many frames
+
+# Issue #16 -- ball-to-player distances, control weights, touches and the possession evidence.
+ball_kinematics:
+  k_nearest: 3
+  control_sigma_m: 2.0          # distance scale of the control weight
+  control_tau_mps: 10.0         # relative-speed scale of the control weight
+  touch_accel_mps2: 12.0        # |a_ball| peak threshold
+  touch_angle_deg: 35.0         # direction-change threshold
+  touch_angle_half_span: 2      # frames each side for the before/after velocity
+  touch_min_speed_mps: 1.0      # direction is undefined below this ball speed
+  touch_distance_m: 1.8         # a player must be this close to the ball at the peak
+  touch_gate_halfwidth: 2       # ... within +- this many frames
+  touch_peak_halfwidth: 3       # peak = local maximum within +- this many frames
+  evidence_smooth_s: 0.6        # moving-average window of possession_evidence
+  evidence_dist_scale_m: 2.0    # tanh scale of the distance-gap term
+  evidence_control_weight: 0.5  # share of the control-difference term (rest: distance-gap term)
