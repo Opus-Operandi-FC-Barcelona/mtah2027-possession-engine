@@ -213,3 +213,39 @@ def set_global_seeds(seed: int = 0) -> int:
 
 # Fail loudly at import time if the constants drift from the official module.
 cross_check_games()
+
+
+# --------------------------------------------------------------------------------------------
+# Per-module parameter sections (``configs/default.yaml``)
+# --------------------------------------------------------------------------------------------
+def load_section(name: str, path: str | os.PathLike | None = None) -> dict[str, Any]:
+    """Raw mapping of one top-level YAML section (``{}`` when the section is absent)."""
+    target = Path(path) if path is not None else DEFAULT_CONFIG_PATH
+    with open(target, encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle)
+    if not isinstance(raw, Mapping):
+        raise ConfigError(f"{target}: top level must be a mapping")
+    return dict(_section(raw, name))
+
+
+def params_from_mapping(cls: type, mapping: Mapping[str, Any], section: str = "") -> Any:
+    """Instantiate the frozen parameter dataclass ``cls`` from ``mapping``.
+
+    Unknown keys raise :class:`ConfigError` (typos must not pass silently); YAML lists are turned
+    into tuples; ints are accepted for float fields.  Missing keys keep the dataclass default.
+    """
+    import dataclasses
+
+    fields = {f.name: f for f in dataclasses.fields(cls)}
+    unknown = sorted(set(mapping) - set(fields))
+    if unknown:
+        raise ConfigError(f"unknown keys in section '{section or cls.__name__}': {unknown}")
+    kwargs: dict[str, Any] = {}
+    for key, value in mapping.items():
+        default = fields[key].default
+        if isinstance(value, list):
+            value = tuple(value)
+        if isinstance(default, float) and isinstance(value, int) and not isinstance(value, bool):
+            value = float(value)
+        kwargs[key] = value
+    return cls(**kwargs)

@@ -19,3 +19,35 @@ kpi_alarms:
   mean_duration_s: [5.0, 30.0]      # mean possession duration, seconds
   dead_pct_of_graded: [15.0, 55.0]  # % of D over graded frames (external matches: 29-52%)
   home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames
+
+# Issue #13 -- continuous dead-ball (D) signals. Defaults are generic football priors; they are
+# meant to be tuned on external matches only (never on the public 5 minutes of BAR-ATH).
+dead_ball_signals:
+  out_margin_m: 0.3            # ball counts as out of bounds beyond the lines by more than this
+  still_speed_mps: 0.4         # ball "stationary" below this speed
+  still_ref_s: 2.0             # stationary time that saturates the still signal
+  walk_speed_mps: 1.7          # a player "walks" below this speed
+  min_active_players: 6        # fewer valid players -> player-speed features are NaN
+  speed_smooth_s: 1.0          # moving-average window for the speed terms of dead_score
+  visibility_cap_s: 60.0       # cap of time-since / time-to ball visibility
+  ball_speed_half_span: 2      # frames each side when the ball speed is derived from positions
+  player_speed_half_span: 1
+  corner_radius_m: 2.0         # ball within this distance of a corner flag
+  goal_area_depth_m: 6.0       # 6-yard box depth (5.5 m) plus tracking tolerance
+  goal_area_half_width_m: 9.7  # 6-yard box half width (9.16 m) plus tolerance
+  centre_radius_m: 1.5         # ball near the centre spot
+  kickoff_own_half_tol_m: 1.0  # players may stand this far past the halfway line
+  kickoff_min_fraction: 0.85   # share of active players of each team inside their own half
+  kickoff_min_players: 5
+  touchline_margin_m: 1.5      # ball this close to a touchline (and not in a corner)
+  status_channels: [status, ball_status, ballstatus, alive, ball_alive, ballalive, dead, ball_dead, state]
+  # dead_score = logistic(bias + sum(w_i * signal_i)); bias_no_ball replaces bias when the ball is missing
+  bias: -3.5
+  bias_no_ball: -3.0
+  w_out: 4.0
+  w_still: 3.0
+  w_slow: 2.0
+  w_walk: 2.5
+  w_geom: 1.5
+  w_status: 6.0
+  speed_ref_mps: 2.5           # mean player speed at which the "slow" signal reaches zero
