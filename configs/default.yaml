@@ -191,3 +191,14 @@ collective_physics:
   min_players: 4                # fewer valid outfield players -> shape features are NaN
   deriv_span_s: 2.0             # total span of the central difference of areas / centroid
   gk_vel_half_span: 1           # frames each side when velocities are derived from positions
+
+# Issue #18 -- velocity phase coherence, line advance and ball memory (hidden-ball features).
+ball_memory:
+  min_players: 4                # fewer valid velocities -> coherence / advance are NaN
+  smooth_s: 1.0                 # moving average of the team mean v_x
+  cap_s: 120.0                  # cap of the time since / until features
+  ball_vel_half_span: 2         # frames each side when the ball velocity is derived from positions
+  player_vel_half_span: 1
+  touch_margin_m: 0.5           # |delta_d| at a touch needed to attribute it to a team
+  clear_evidence: 0.35          # |possession_evidence| from which a visible frame is a clear possessor
+  pressure_radius_m: 5.0        # radius of the pressure counts

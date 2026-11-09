@@ -32,7 +32,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` (primera versión funcional entre
 - [ ] PENDIENTE · #15 · wave-2 · Resolución determinista del equipo lanzador en los 26 Throw-in con Team = N/A · `feat/issue-15-throwin-team-resolver`
 - [x] COMPLETADA · #16 · wave-1 · Distancias por equipo, esfera de influencia y detector de toques (touch_score) · `feat/issue-16-ball-carrier-and-touches`
 - [x] COMPLETADA · #17 · wave-2 · Física Colectiva I: Porteros dinámicos y derivada de área (Espectral + Convex Hull Numba) · `feat/issue-17-collective-physics-hull-gk`
-- [ ] PENDIENTE · #18 · wave-2 · Física Colectiva II: Coherencia vectorial $R \in [0,1]$ y memoria del último balón visto · `feat/issue-18-phase-coherence-and-ball-memory`
+- [x] COMPLETADA · #18 · wave-2 · Física Colectiva II: Coherencia vectorial $R \in [0,1]$ y memoria del último balón visto · `feat/issue-18-phase-coherence-and-ball-memory`
 
 ## Milestone 5: Degradador de Validación, Auto-Supervisión y Modelos Especialistas
 
