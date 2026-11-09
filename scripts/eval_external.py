@@ -8,9 +8,11 @@ Smart Tagging) and scores the result with the official metric through ``eval_bri
 those where ``gt != X``.  The official baseline recipe (nearest player + ``+-50`` majority window) is computed
 on the same arrays for reference.
 
-``--hide-ball-frac F`` blanks the ball in random contiguous 5-60 s blocks until a share ``F`` of the frames
-inside the periods is hidden (a crude degradation; the realistic degrader is Issue #19).  Only aggregate
-numbers are printed.
+``--degrade`` applies the realistic degrader of Issue #19 (``models/external_degrader.py``): the ball is
+hidden in crowding-weighted blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) covering 41 % of the alive frames
+plus tracking noise, identity cuts, duplicate tracks and dropped players.  ``--seeds 0 1 2`` repeats it per
+seed and also prints the mean over seeds.  ``--hide-ball-frac F`` is the older crude degradation (random
+5-60 s blocks, no artefacts) and still works.  Only aggregate numbers are printed.
 """
 from __future__ import annotations
 
@@ -28,6 +30,7 @@ for extra in (REPO_ROOT / "src", REPO_ROOT):
         sys.path.insert(0, str(extra))
 
 from mtah2027.models.baseline_labels import baseline_labels  # noqa: E402
+from mtah2027.models.external_degrader import degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
 
@@ -64,14 +67,18 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
             "abstain_on_graded": int(r["n_abstain_on_graded"])}
 
 
-def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool) -> dict:
+def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
+                   degrade: bool = False) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
     fps, pitch = float(z["fps"]), tuple(float(v) for v in z["pitch"])
     periods = [(int(a), int(b)) for a, b in z["period_bounds"]]
     gt = eb.to_codes(z["gt"])
-    if hide_frac > 0:
+    if degrade:
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed)
+        players, ball = dm.players_xy, dm.ball_xy
+    elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
     t0 = time.perf_counter()
     core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
@@ -93,7 +100,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bench-dir", default=str(DEFAULT_BENCH_DIR))
     ap.add_argument("--hide-ball-frac", type=float, default=0.0)
+    ap.add_argument("--degrade", action="store_true",
+                    help="realistic degradation (Issue #19): 41%% occluded alive frames + tracking artefacts")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seeds", type=int, nargs="*", default=None,
+                    help="several seeds (mean reported); overrides --seed")
     ap.add_argument("--config", default=None, help="YAML configuration (default configs/default.yaml)")
     ap.add_argument("--matches", nargs="*", default=None, help="subset of match names (file stems)")
     ap.add_argument("--only-complete-ball", action="store_true",
@@ -111,28 +122,41 @@ def main(argv=None) -> int:
     if not files:
         print(f"no benchmark files in {args.bench_dir}")
         return 1
-    rows = []
-    print(f"hide_ball_frac={args.hide_ball_frac} seed={args.seed}")
-    head = f"{'match':<18}{'spellF1':>8}{'macroF1':>8}{'poss':>6}{'gt_poss':>8}{'dur_s':>7}{'gt_s':>6}"
+    seeds = list(args.seeds) if args.seeds else [args.seed]
+    all_rows = []
+    print(f"degrade={args.degrade} hide_ball_frac={args.hide_ball_frac} seeds={seeds}")
+    head = (f"{'match':<18}{'seed':>5}{'spellF1':>8}{'macroF1':>8}{'poss':>6}{'gt_poss':>8}"
+            f"{'dur_s':>7}{'gt_s':>6}")
     if not args.no_baseline:
         head += f"{'| base_sF1':>11}{'base_mF1':>9}{'b_poss':>7}"
     print(head)
-    for i, f in enumerate(files):
-        row = evaluate_match(f, args.hide_ball_frac, args.seed + i, args.config, not args.no_baseline)
-        rows.append(row)
-        e = row["engine"]
-        line = (f"{row['match']:<18}{e['spell_f1']:8.4f}{e['macro_f1']:8.4f}{e['n_pred_spells']:6d}"
-                f"{e['n_gt_spells']:8d}{e['mean_spell_s']:7.1f}{e['gt_mean_spell_s']:6.1f}")
-        if not args.no_baseline:
-            b = row["baseline"]
-            line += f"{'| ' + format(b['spell_f1'], '.4f'):>11}{b['macro_f1']:9.4f}{b['n_pred_spells']:7d}"
-        print(line, flush=True)
-    mean = {k: float(np.mean([r["engine"][k] for r in rows])) for k in ("spell_f1", "macro_f1")}
-    line = f"{'MEAN':<18}{mean['spell_f1']:8.4f}{mean['macro_f1']:8.4f}"
+    for seed in seeds:
+        for i, f in enumerate(files):
+            row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
+                                 args.degrade)
+            row["seed"] = seed
+            all_rows.append(row)
+            e = row["engine"]
+            line = (f"{row['match']:<18}{seed:5d}{e['spell_f1']:8.4f}{e['macro_f1']:8.4f}"
+                    f"{e['n_pred_spells']:6d}{e['n_gt_spells']:8d}{e['mean_spell_s']:7.1f}"
+                    f"{e['gt_mean_spell_s']:6.1f}")
+            if not args.no_baseline:
+                b = row["baseline"]
+                line += (f"{'| ' + format(b['spell_f1'], '.4f'):>11}{b['macro_f1']:9.4f}"
+                         f"{b['n_pred_spells']:7d}")
+            print(line, flush=True)
+    rows = all_rows
+    mean = {}
+    for key in ("engine", "baseline"):
+        if key == "baseline" and args.no_baseline:
+            continue
+        for metric in ("spell_f1", "macro_f1"):
+            mean[metric if key == "engine" else f"baseline_{metric}"] = float(
+                np.mean([r[key][metric] for r in rows]))
+    line = f"{'MEAN':<18}{'':>5}{mean['spell_f1']:8.4f}{mean['macro_f1']:8.4f}"
     if not args.no_baseline:
-        bm = {k: float(np.mean([r["baseline"][k] for r in rows])) for k in ("spell_f1", "macro_f1")}
-        line += f"{'':<31}{'| ' + format(bm['spell_f1'], '.4f'):>11}{bm['macro_f1']:9.4f}"
-        mean["baseline_spell_f1"], mean["baseline_macro_f1"] = bm["spell_f1"], bm["macro_f1"]
+        line += (f"{'':<26}{'| ' + format(mean['baseline_spell_f1'], '.4f'):>11}"
+                 f"{mean['baseline_macro_f1']:9.4f}")
     print(line)
     if args.json:
         Path(args.json).write_text(json.dumps({"mean": mean, "rows": rows}, indent=2), encoding="utf-8")

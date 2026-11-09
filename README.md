@@ -66,8 +66,14 @@ optional crude ball-hiding degradation:
 
 ```bash
 python scripts/eval_external.py --bench-dir ../mtah2027-external-benchmarks/cache --only-complete-ball
-python scripts/eval_external.py --only-complete-ball --hide-ball-frac 0.41 --seed 0
+python scripts/eval_external.py --only-complete-ball --hide-ball-frac 0.41 --seed 0     # crude hiding
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2            # realistic (Issue #19)
 ```
+
+`--degrade` uses `src/mtah2027/models/external_degrader.py`: 41 % of the alive frames lose the ball in
+contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially where the ball is crowded,
+plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
+(3 seeds) the engine scores spellF1 0.392 / macroF1 0.733 against 0.215 / 0.440 for the official baseline recipe.
 
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
 

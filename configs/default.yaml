@@ -164,3 +164,24 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+
+# Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
+# artefacts).  Used only to build validation / self-supervision data, never on the competition match.
+external_degrader:
+  hide_frac: 0.41                  # share of alive (H/A) frames whose ball is hidden
+  dur_edges_s: [5.0, 20.0, 60.0, 120.0]   # block-duration classes: [5,20) [20,60) [60,120] seconds
+  dur_probs: [0.33, 0.48, 0.19]    # empirical ATD gap mix of the spec
+  density_radius_m: 5.0            # players within this distance of the ball define the crowding
+  density_floor: 0.25              # added to the mean crowding so empty areas keep some probability
+  density_gamma: 1.0               # block weight = (floor + mean crowding) ** gamma
+  noise_player_m: 0.12             # i.i.d. Gaussian jitter of every player position
+  noise_ball_m: 0.08               # ... and of the visible ball
+  noise_corr_s: 0.5                # correlation time of the jitter (AR(1)); 0 = white noise
+  cut_rate_per_min: 0.6            # identity cuts per minute of graded time (whole match)
+  cut_players: [2, 4]              # same-team players whose slots are permuted at a cut (min, max)
+  cut_gap_s: [0.2, 2.0]            # the permuted tracks are lost for this long after the cut
+  dup_rate_per_min: 0.3            # duplicate-track episodes per minute
+  dup_duration_s: [5.0, 40.0]
+  dup_offset_m: 0.4                # offset of the duplicate from the original track
+  drop_rate_per_min: 0.5           # dropped-player episodes per minute
+  drop_duration_s: [2.0, 20.0]

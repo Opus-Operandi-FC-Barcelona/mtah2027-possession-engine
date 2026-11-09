@@ -36,7 +36,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` (primera versión funcional entre
 
 ## Milestone 5: Degradador de Validación, Auto-Supervisión y Modelos Especialistas
 
-- [ ] PENDIENTE · #19 · wave-2 · Degradador realista de partidos limpios (huecos de 5–60 s + rotura de IDs) · `feat/issue-19-realistic-atd-degrader`
+- [x] COMPLETADA · #19 · wave-2 · Degradador realista de partidos limpios (huecos de 5–60 s + rotura de IDs) · `feat/issue-19-realistic-atd-degrader`
 - [ ] PENDIENTE · #20 · wave-2 · Modelo Especialista A (con balón visible): entrenamiento y calibración de probabilidades · `feat/issue-20-specialist-a-ball-visible`
 - [ ] PENDIENTE · #21 · wave-2 · Generador de Pseudo-Labeling con *Block Masking* (5–45 s) sobre el propio partido · `feat/issue-21-self-supervised-block-masking`
 - [ ] PENDIENTE · #22 · wave-2 · Modelo Especialista B (sin balón) y fusor de emisiones log_probs[N, 3] · `feat/issue-22-specialist-b-ball-absent`
