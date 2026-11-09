@@ -16,7 +16,7 @@ Cada línea: `[x] COMPLETADA` / `[ ] PENDIENTE` · issue · oleada · título ·
 - [x] COMPLETADA · #05 · wave-1 · Parser en streaming de ATD (.txt/.xml) a metros reales con caché .npy · `feat/issue-05-atd-streaming-loader`
 - [x] COMPLETADA · #06 · wave-1 · Parser de Smart Tagging XML a máscaras y eventos por frame · `feat/issue-06-smart-tagging-loader`
 - [x] COMPLETADA · #07 · wave-1 · Cargador vectorizado de matrices de homografía $H$ e inversas $H^{-1}$ · `feat/issue-07-homography-loader`
-- [ ] PENDIENTE · #08 · wave-1 · Filtrado de suplentes en banda y fusión de tracks duplicados ($< 0.6\text{ m}$) · `feat/issue-08-track-dedup-and-bounds`
+- [x] COMPLETADA · #08 · wave-1 · Filtrado de suplentes en banda y fusión de tracks duplicados ($< 0.6\text{ m}$) · `feat/issue-08-track-dedup-and-bounds`
 - [ ] PENDIENTE · #09 · wave-1 · Cinemática Savitzky-Golay $(\vec{v}, \vec{a})$ y normalización de orientación de ataque · `feat/issue-09-savgol-kinematics-orientation`
 - [ ] PENDIENTE · #10 · wave-3 · Sincronización de cámara de TV por bloques continuos e inyección de balón · `feat/issue-10-broadcast-block-sync`
 
