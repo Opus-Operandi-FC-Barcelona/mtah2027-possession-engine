@@ -47,8 +47,8 @@ def test_yaml_load():
     assert conf.match == cfg.MatchConfig()
     assert conf.match.graded_blocks == cfg.GRADED_BLOCKS
     assert conf.kpi_alarms.possessions == (150, 600)
-    assert conf.kpi_alarms.mean_duration_s == (6.0, 30.0)
-    assert conf.kpi_alarms.dead_pct_of_graded == (10.0, 45.0)
+    assert conf.kpi_alarms.mean_duration_s == (5.0, 30.0)
+    assert conf.kpi_alarms.dead_pct_of_graded == (15.0, 55.0)
     assert conf.kpi_alarms.home_pct_of_alive == (35.0, 75.0)
     with pytest.raises(Exception):
         conf.seed = 1  # frozen

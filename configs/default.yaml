@@ -16,6 +16,6 @@ match:
 # They must never be used to choose hyper-parameters (EVALUATION.md).
 kpi_alarms:
   possessions: [150, 600]           # number of H/A spells
-  mean_duration_s: [6.0, 30.0]      # mean possession duration, seconds
-  dead_pct_of_graded: [10.0, 45.0]  # % of D over graded frames
+  mean_duration_s: [5.0, 30.0]      # mean possession duration, seconds
+  dead_pct_of_graded: [15.0, 55.0]  # % of D over graded frames (external matches: 29-52%)
   home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames

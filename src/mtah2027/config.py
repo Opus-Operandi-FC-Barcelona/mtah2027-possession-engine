@@ -72,8 +72,8 @@ class KpiAlarms:
     """Inclusive (low, high) alarm ranges. Alarms, never optimisation targets."""
 
     possessions: tuple[float, float] = (150, 600)
-    mean_duration_s: tuple[float, float] = (6.0, 30.0)
-    dead_pct_of_graded: tuple[float, float] = (10.0, 45.0)
+    mean_duration_s: tuple[float, float] = (5.0, 30.0)
+    dead_pct_of_graded: tuple[float, float] = (15.0, 55.0)
     home_pct_of_alive: tuple[float, float] = (35.0, 75.0)
 
 
