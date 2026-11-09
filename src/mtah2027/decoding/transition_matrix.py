@@ -7,11 +7,13 @@ which state the evidence prefers, so the decoder produces few, well-placed posse
 
 H <-> A (turnovers)
     Closed (``ha_closed``, -11.5) at rest.  Open (``ha_open``, -1.4) within ``touch_halfwidth`` frames of
-    a touch peak (``touch_score >= touch_min_score``) when both teams have a player within
-    ``touch_both_dist_m`` of the visible, non-aerial ball (within ``touch_gate_halfwidth`` frames of the
-    peak): a possession can only change hands in a contested touch.  Moderately open (``ha_occluded``,
-    -6) during and just around a missing-ball run of at least ``occlusion_min_s`` seconds, so that
-    possession can flip across an occlusion only with strong evidence.
+    a touch peak (``touch_score >= touch_min_score``) of the visible, non-aerial ball when the *gaining*
+    team has a player within ``touch_both_dist_m`` of it (within ``touch_gate_halfwidth`` frames of the peak):
+    a team can only win the ball through a touch of one of its own players, so H -> A opens when an away
+    player is at the ball and A -> H when a home player is.  With ``require_both_teams`` the stricter
+    reading "a contested touch, both teams within the distance" is used for both directions.  Moderately
+    open (``ha_occluded``, -6) during and just around a missing-ball run of at least ``occlusion_min_s``
+    seconds, so that possession can flip across an occlusion only with strong evidence.
 H, A -> D (ball becomes dead)
     ``dead_closed`` .. ``dead_open`` according to the smoothed dead-ball score (linear between the two
     ``dead_ramp`` values); fully open while the ball is out of bounds.
@@ -46,6 +48,7 @@ class TransitionParams:
     touch_halfwidth: int = 5
     touch_min_score: float = 0.5
     touch_both_dist_m: float = 2.0
+    require_both_teams: bool = False
     touch_gate_halfwidth: int = 2
     ha_occluded: float = -6.0
     occlusion_min_s: float = 2.0
@@ -81,9 +84,9 @@ def occlusion_mask(ball_visible: np.ndarray, min_frames: int, margin: int) -> np
     return out
 
 
-def touch_window_mask(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.ndarray,
-                      is_aerial: np.ndarray | None, p: TransitionParams) -> np.ndarray:
-    """True within ``touch_halfwidth`` of every contested touch (see the module docstring)."""
+def touch_window_masks(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.ndarray,
+                       is_aerial: np.ndarray | None, p: TransitionParams) -> tuple[np.ndarray, np.ndarray]:
+    """``(to_home, to_away)``: True within ``touch_halfwidth`` of a touch where that team can win the ball."""
     n = len(touch_score)
     peaks = np.nan_to_num(np.asarray(touch_score, dtype=np.float64), nan=0.0) >= p.touch_min_score
     if is_aerial is not None:
@@ -91,10 +94,24 @@ def touch_window_mask(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.nd
     gate = 2 * int(p.touch_gate_halfwidth) + 1
     dh = minimum_filter1d(np.where(np.isfinite(d_home), d_home, np.inf), gate, mode="nearest")
     da = minimum_filter1d(np.where(np.isfinite(d_away), d_away, np.inf), gate, mode="nearest")
-    contested = peaks & (dh <= p.touch_both_dist_m) & (da <= p.touch_both_dist_m)
-    if not contested.any():
-        return np.zeros(n, dtype=bool)
-    return maximum_filter1d(contested.astype(np.uint8), 2 * int(p.touch_halfwidth) + 1, mode="constant") > 0
+    near_h, near_a = dh <= p.touch_both_dist_m, da <= p.touch_both_dist_m
+    if p.require_both_teams:
+        near_h = near_a = near_h & near_a
+    width = 2 * int(p.touch_halfwidth) + 1
+
+    def spread(mask: np.ndarray) -> np.ndarray:
+        if not mask.any():
+            return np.zeros(n, dtype=bool)
+        return maximum_filter1d(mask.astype(np.uint8), width, mode="constant") > 0
+
+    return spread(peaks & near_h), spread(peaks & near_a)
+
+
+def touch_window_mask(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.ndarray,
+                      is_aerial: np.ndarray | None, p: TransitionParams) -> np.ndarray:
+    """True where a possession change is possible in either direction (union of both masks)."""
+    to_home, to_away = touch_window_masks(touch_score, d_home, d_away, is_aerial, p)
+    return to_home | to_away
 
 
 def build_log_transitions(
@@ -130,10 +147,9 @@ def build_log_transitions(
     ha = np.full(n, p.ha_closed, dtype=np.float64)
     occ = occlusion_mask(visible, max(1, int(round(p.occlusion_min_s * fps))), int(p.occlusion_margin_frames))
     ha = np.where(occ, np.maximum(ha, p.ha_occluded), ha)
-    touch = touch_window_mask(touch_score, d_home, d_away, is_aerial, p)
-    ha = np.where(touch, np.maximum(ha, p.ha_open), ha)
-    log_trans[:, H, A] = ha
-    log_trans[:, A, H] = ha
+    to_home, to_away = touch_window_masks(touch_score, d_home, d_away, is_aerial, p)
+    log_trans[:, H, A] = np.where(to_away, np.maximum(ha, p.ha_open), ha)      # away team wins the ball
+    log_trans[:, A, H] = np.where(to_home, np.maximum(ha, p.ha_open), ha)      # home team wins the ball
 
     # --- H, A -> D and D -> H, A -------------------------------------------------------------
     ds = np.zeros(n)

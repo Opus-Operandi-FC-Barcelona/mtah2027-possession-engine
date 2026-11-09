@@ -54,14 +54,14 @@ class SpellParams:
         return params_from_mapping(cls, load_section("spell_optimizer", path), "spell_optimizer")
 
 
-def _rle(codes: np.ndarray) -> list[list[int]]:
-    """Runs ``[start, end_exclusive, state]`` of a 1-D code array."""
+def _rle(codes: np.ndarray, offset: int = 0) -> list[list[int]]:
+    """Runs ``[start, end_exclusive, state]`` of a 1-D code array (frame indices shifted by ``offset``)."""
     if len(codes) == 0:
         return []
     change = np.flatnonzero(np.diff(codes.astype(np.int16)) != 0) + 1
     starts = np.concatenate([[0], change])
     ends = np.concatenate([change, [len(codes)]])
-    return [[int(s), int(e), int(codes[s])] for s, e in zip(starts, ends)]
+    return [[offset + int(s), offset + int(e), int(codes[s])] for s, e in zip(starts, ends)]
 
 
 def _coalesce(runs: list[list[int]]) -> list[list[int]]:
@@ -215,7 +215,7 @@ def optimize_spells(
         f = forced[sl] & playable
         stats["forced_dead_frames"] += int((f & (block != D)).sum())
         block[f] = D
-        runs = _rle(block)
+        runs = _rle(block, a)
         # 2. D bridge
         if ds is not None:
             smooth = moving_mean(ds[sl], max(1, int(round(0.4 * fps)))).astype(np.float64)

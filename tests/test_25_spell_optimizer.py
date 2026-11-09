@@ -156,3 +156,18 @@ def test_input_not_modified_and_length_checked():
     assert np.array_equal(codes, keep)
     with pytest.raises(ValueError):
         _opt(codes, ball_visible=np.ones(5, bool))
+
+
+def test_blocks_not_starting_at_zero_give_the_same_result():
+    inner = _labels([(H, 100), (A, 20), (H, 100), (D, 10), (H, 60), (X, 4), (A, 60)])
+    base, _ = _opt(inner, play_blocks=((0, len(inner) - 1),))
+    padded = np.concatenate([np.full(777, X, dtype=np.int8), inner, np.full(50, X, dtype=np.int8)])
+    out, _ = so.optimize_spells(padded, play_blocks=((777, 777 + len(inner) - 1),), params=P)
+    assert np.array_equal(out[777:777 + len(inner)], base)
+    assert (out[:777] == X).all() and (out[777 + len(inner):] == X).all()
+    n = len(padded)
+    ds = np.zeros(n)
+    ds[777 + 20:777 + 80] = 0.95
+    out2, st = so.optimize_spells(padded, play_blocks=((777, 777 + len(inner) - 1),), dead_score=ds,
+                                  dead_support=np.ones(n, bool), params=P)
+    assert out2.shape == padded.shape and st["micro_poss"] >= 1

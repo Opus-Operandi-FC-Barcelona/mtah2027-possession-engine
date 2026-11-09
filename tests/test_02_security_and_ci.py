@@ -98,7 +98,8 @@ def test_issue_template_and_tracker():
     template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "task.md").read_text(encoding="utf-8")
     assert template.startswith("---")
     tracker = (ROOT / "docs" / "ISSUES_TRACKER.md").read_text(encoding="utf-8")
-    rows = re.findall(r"^- \[( |x)\] (?:COMPLETADA|PENDIENTE) · #(\d\d) · (wave-\d)", tracker, re.M)
+    pattern = r"^- \[( |x|~)\] (?:COMPLETADA|PENDIENTE|OLEADA 1) · #(\d\d) · (wave-\d)"
+    rows = re.findall(pattern, tracker, re.M)
     assert [int(n) for _, n, _ in rows] == list(range(1, 29))
     waves = {int(n): w for _, n, w in rows}
     assert {n for n, w in waves.items() if w == "wave-3"} == {10, 11, 12}
