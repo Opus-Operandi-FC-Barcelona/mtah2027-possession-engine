@@ -105,3 +105,9 @@ def row_percentile(values: np.ndarray, q: float, min_count: int = 1) -> np.ndarr
 
 def sigmoid(z: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(z, -60.0, 60.0)))
+
+
+def mask_runs(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Start and exclusive end indices of the maximal True runs of a 1-D boolean ``mask``."""
+    edges = np.diff(np.concatenate([[0], np.asarray(mask, dtype=np.int8), [0]]))
+    return np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)

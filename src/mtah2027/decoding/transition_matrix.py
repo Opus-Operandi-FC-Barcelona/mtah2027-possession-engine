@@ -32,7 +32,7 @@ import numpy as np
 from scipy.ndimage import maximum_filter1d, minimum_filter1d
 
 from mtah2027.config import FPS, load_section, params_from_mapping
-from mtah2027.features._utils import moving_mean
+from mtah2027.features._utils import mask_runs, moving_mean
 
 H, A, D = 0, 1, 2
 ROUND_DECIMALS = 6
@@ -70,17 +70,11 @@ def _ramp(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return np.clip((x - lo) / max(hi - lo, 1e-9), 0.0, 1.0)
 
 
-def _runs_of(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Start and exclusive end indices of the True runs of ``mask``."""
-    edges = np.diff(np.concatenate([[0], mask.astype(np.int8), [0]]))
-    return np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
-
-
 def occlusion_mask(ball_visible: np.ndarray, min_frames: int, margin: int) -> np.ndarray:
     """True inside (and ``margin`` frames around) every missing-ball run of at least ``min_frames``."""
     missing = ~np.asarray(ball_visible, dtype=bool)
     out = np.zeros(len(missing), dtype=bool)
-    starts, ends = _runs_of(missing)
+    starts, ends = mask_runs(missing)
     for a, b in zip(starts, ends):
         if b - a >= min_frames:
             out[max(0, a - margin):min(len(missing), b + margin)] = True
