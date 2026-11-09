@@ -91,3 +91,27 @@ ball_kinematics:
   evidence_smooth_s: 0.6        # moving-average window of possession_evidence
   evidence_dist_scale_m: 2.0    # tanh scale of the distance-gap term
   evidence_control_weight: 0.5  # share of the control-difference term (rest: distance-gap term)
+
+# Issue #23 -- time-dependent log transition matrix log A_t[i, j] (states H=0, A=1, D=2).  Log-values;
+# staying in a state costs `stay`.  Generic priors, to be tuned on external matches only.
+transition_matrix:
+  stay: 0.0
+  ha_closed: -11.5              # H<->A at rest
+  ha_open: -1.4                 # H<->A inside a contested-touch window
+  touch_halfwidth: 5            # window = touch peak +- this many frames
+  touch_min_score: 0.5          # touch_score at or above this is a touch peak
+  touch_both_dist_m: 2.0        # both teams this close to a (non-aerial) visible ball at the touch
+  touch_gate_halfwidth: 2       # ... within +- this many frames of the peak
+  ha_occluded: -6.0             # H<->A while the ball has been missing for a long time
+  occlusion_min_s: 2.0          # a missing-ball run at least this long counts as an occlusion
+  occlusion_margin_frames: 5    # the occlusion window extends this far past the run on both sides
+  dead_closed: -8.0             # H/A -> D without dead-ball evidence
+  dead_open: -1.5               # H/A -> D with strong evidence (dead_score high or ball out)
+  dead_ramp: [0.3, 0.7]         # smoothed dead_score at which the entry starts / is fully open
+  dead_smooth_s: 0.4
+  d_exit_closed: -9.0           # D -> H/A away from restarts while dead evidence persists
+  d_exit_open: -2.0             # D -> H/A once the dead evidence has dropped
+  alive_ramp: [0.5, 0.9]        # smoothed (1 - dead_score) at which the exit starts / is fully open
+  restart_open: -1.0            # D -> restart team around a restart frame t*
+  restart_halfwidth: 3          # window = t* +- this many frames
+  restart_other_team: -3.0      # extra log-penalty for the other team when the restart team is known
