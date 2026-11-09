@@ -1,0 +1,166 @@
+# Default configuration (Issue #1). Match constants are the published BAR-ATH values
+# (DATA.md); they are cross-checked against games.py at load time.
+team_name: OpusOperandi
+seed: 0
+
+match:
+  game: BAR-ATH
+  n_video_frames: 199319
+  fps: 25
+  pitch: [105.3, 68.0]          # metres (length, width)
+  half1: [11185, 90651]         # graded, ball alive/dead
+  half2_dead: [110808, 113741]  # graded, ball dead 100% -> forced D
+  half2_play: [113742, 190197]  # graded, from the centre kick-off to the final whistle
+
+# Macroscopic sanity ALARMS, not targets: wide ranges from generic football priors.
+# They must never be used to choose hyper-parameters (EVALUATION.md).
+kpi_alarms:
+  possessions: [150, 600]           # number of H/A spells
+  mean_duration_s: [5.0, 30.0]      # mean possession duration, seconds
+  dead_pct_of_graded: [15.0, 55.0]  # % of D over graded frames (external matches: 29-52%)
+  home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames
+
+# Issue #13 -- continuous dead-ball (D) signals. Defaults are generic football priors; they are
+# meant to be tuned on external matches only (never on the public 5 minutes of BAR-ATH).
+dead_ball_signals:
+  out_margin_m: 0.3            # ball counts as out of bounds beyond the lines by more than this
+  still_speed_mps: 0.4         # ball "stationary" below this speed
+  still_ref_s: 2.0             # stationary time that saturates the still signal
+  walk_speed_mps: 1.7          # a player "walks" below this speed
+  min_active_players: 6        # fewer valid players -> player-speed features are NaN
+  speed_smooth_s: 1.0          # moving-average window for the speed terms of dead_score
+  visibility_cap_s: 60.0       # cap of time-since / time-to ball visibility
+  ball_speed_half_span: 2      # frames each side when the ball speed is derived from positions
+  player_speed_half_span: 1
+  corner_radius_m: 2.0         # ball within this distance of a corner flag
+  goal_area_depth_m: 6.0       # 6-yard box depth (5.5 m) plus tracking tolerance
+  goal_area_half_width_m: 9.7  # 6-yard box half width (9.16 m) plus tolerance
+  centre_radius_m: 1.5         # ball near the centre spot
+  kickoff_own_half_tol_m: 1.0  # players may stand this far past the halfway line
+  kickoff_min_fraction: 0.85   # share of active players of each team inside their own half
+  kickoff_min_players: 5
+  touchline_margin_m: 1.5      # ball this close to a touchline (and not in a corner)
+  status_channels: [status, ball_status, ballstatus, alive, ball_alive, ballalive, dead, ball_dead, state]
+  # dead_score = logistic(bias + sum(w_i * signal_i)); bias_no_ball replaces bias when the ball is missing
+  bias: -3.5
+  bias_no_ball: -3.0
+  w_out: 4.0
+  w_still: 3.0
+  w_slow: 2.0
+  w_walk: 2.5
+  w_geom: 1.5
+  w_status: 6.0
+  speed_ref_mps: 2.5           # mean player speed at which the "slow" signal reaches zero
+
+# Issue #14 -- exact restart frame t* inside Smart Tagging SET PIECES windows and after GOALS.
+setpiece_anchor:
+  pre_margin_s: 1.0             # search window = [start - pre, end + post] around the tag interval
+  post_margin_s: 2.0
+  rest_speed_mps: 1.0           # ball at rest below this speed
+  launch_speed_mps: 4.0         # ball launched above this speed
+  launch_sustain_frames: 3      # launch speed must hold this many frames
+  min_rest_s: 0.4               # minimum rest immediately before the launch
+  rest_cap_s: 5.0               # rest longer than this does not add confidence/selection weight
+  max_ramp_s: 0.5               # t* is at most this far before the launch crossing
+  ball_speed_half_span: 2       # frames each side when the ball speed is derived from positions
+  player_speed_half_span: 1
+  collective_window_s: 1.0      # windows before/after for the collective speed jump
+  collective_jump_min_mps: 0.4  # minimum rise of the mean player speed
+  collective_conf_max: 0.5      # confidence ceiling of the collective method
+  dead_threshold: 0.5           # dead_score above this counts as dead-ball evidence
+  dead_gap_close_s: 1.0         # evidence gaps shorter than this are bridged
+  dead_tail_s: 1.0              # evidence may end this long before t*
+  max_dead_back_s: 40.0         # D onset is searched at most this far before t*
+  goal_search_pre_s: 3.0        # the goal's dead onset is searched in [start - pre, end + post]
+  goal_search_post_s: 6.0
+  max_goal_to_kickoff_s: 150.0  # a Kick Off (After Goal) farther than this is not linked to the goal
+  restart_mask_halfwidth: 0     # restart_mask is True on t* +- this many frames
+
+# Issue #16 -- ball-to-player distances, control weights, touches and the possession evidence.
+ball_kinematics:
+  k_nearest: 3
+  control_sigma_m: 2.0          # distance scale of the control weight
+  control_tau_mps: 10.0         # relative-speed scale of the control weight
+  touch_accel_mps2: 12.0        # |a_ball| peak threshold
+  touch_angle_deg: 35.0         # direction-change threshold
+  touch_angle_half_span: 2      # frames each side for the before/after velocity
+  touch_min_speed_mps: 1.0      # direction is undefined below this ball speed
+  touch_distance_m: 1.8         # a player must be this close to the ball at the peak
+  touch_gate_halfwidth: 2       # ... within +- this many frames
+  touch_peak_halfwidth: 3       # peak = local maximum within +- this many frames
+  evidence_smooth_s: 0.6        # moving-average window of possession_evidence
+  evidence_dist_scale_m: 2.0    # tanh scale of the distance-gap term
+  evidence_control_weight: 0.5  # share of the control-difference term (rest: distance-gap term)
+
+# Issue #23 -- time-dependent log transition matrix log A_t[i, j] (states H=0, A=1, D=2).  Log-values;
+# staying in a state costs `stay`.  Generic priors, to be tuned on external matches only.
+transition_matrix:
+  stay: 0.0
+  ha_closed: -11.5              # H<->A at rest
+  ha_open: -1.4                 # H<->A inside a contested-touch window
+  touch_halfwidth: 5            # window = touch peak +- this many frames
+  touch_min_score: 0.5          # touch_score at or above this is a touch peak
+  touch_both_dist_m: 2.0        # the gaining team must have a player this close to the ball at the touch
+  require_both_teams: false     # true: stricter 'contested touch' (both teams this close)
+  touch_gate_halfwidth: 2       # ... within +- this many frames of the peak
+  ha_occluded: -6.0             # H<->A while the ball has been missing for a long time
+  occlusion_min_s: 2.0          # a missing-ball run at least this long counts as an occlusion
+  occlusion_margin_frames: 5    # the occlusion window extends this far past the run on both sides
+  dead_closed: -8.0             # H/A -> D without dead-ball evidence
+  dead_open: -1.5               # H/A -> D with strong evidence (dead_score high or ball out)
+  dead_ramp: [0.3, 0.7]         # smoothed dead_score at which the entry starts / is fully open
+  dead_smooth_s: 0.4
+  d_exit_closed: -9.0           # D -> H/A away from restarts while dead evidence persists
+  d_exit_open: -2.0             # D -> H/A once the dead evidence has dropped
+  alive_ramp: [0.5, 0.9]        # smoothed (1 - dead_score) at which the exit starts / is fully open
+  restart_open: -1.0            # D -> restart team around a restart frame t*
+  restart_halfwidth: 3          # window = t* +- this many frames
+  restart_other_team: -3.0      # extra log-penalty for the other team when the restart team is known
+
+# Issue #24 -- Viterbi decoding of each graded block.
+viterbi:
+  log_init: [-0.6931, -0.6931, -3.0]   # log-prior of the first frame of a block: H, A, D
+  round_decimals: 6                    # log_probs are rounded to this many decimals before decoding
+
+# Issue #25 -- spellF1-oriented post-processing of the decoded labels (never crosses a graded block).
+spell_optimizer:
+  micro_poss_s: 1.2             # H->A->H / A->H->A middle runs shorter than this are absorbed ...
+  keep_min_visible_frac: 0.5    # ... unless the ball is visible this share of the run ...
+  keep_min_touches: 2           # ... and there are at least this many touch peaks (a double touch)
+  touch_min_score: 0.5          # touch_score at or above this is a touch peak
+  touch_pad_frames: 3           # peaks are counted in the run +- this many frames
+  min_dead_s: 0.6               # D runs shorter than this (and not forced) are absorbed
+  min_isolated_poss_s: 0.8      # an H/A run squeezed between two D runs and shorter than this becomes D
+  bridge_min_poss_s: 25.0       # long same-team possessions may receive a D bridge ...
+  bridge_min_dead_s: 4.0        # ... over a dead-evidence valley at least this long ...
+  bridge_dead_threshold: 0.6    # ... where the smoothed dead_score is at least this ...
+  bridge_gap_close_s: 1.0       # ... bridging evidence gaps shorter than this ...
+  bridge_requires_geometry: true  # ... and there is touchline / set-piece / out-of-play support
+
+# Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
+# Generic priors; to be tuned on external matches only.
+heuristic_emissions:
+  w_evidence: 0.5               # logit of H vs A per unit of possession_evidence (in [-1, 1]); weak term
+  w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
+  w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
+  owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
+  dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
+  dead_scale_no_ball: 0.6       # ... when the ball is missing (the score then rests on player speeds)
+  w_status: 3.0                 # extra logit for an alive/dead ATD status channel (+ already in dead_score)
+  prob_floor: 0.001             # emission probabilities are floored here (max |log p| = 6.9)
+  carry_conf_threshold: 0.35    # |possession_evidence| from which a frame is a confident possession sample
+  carry_weight: 1.5             # logit of a fully confident carried team while the ball is missing
+  carry_tau_s: 30.0             # e-folding time of the carried confidence
+  carry_backward: true          # also carry the NEXT confident team backwards over the gap
+  w_touch: 3.0                  # logit of the last toucher's team (decays with touch_tau_s)
+  touch_tau_s: 60.0             # e-folding time of the last-touch evidence
+  touch_margin_m: 0.5           # distance gap at a touch that gives full weight to its team
+
+# Issue #28 (wave 1) -- end-to-end pipeline switches.  Every stage is optional (progressive fallback).
+pipeline:
+  use_clean_tracks: true
+  use_set_piece_anchors: true   # Smart Tagging -> restart frames t* and forced dead intervals
+  use_forced_dead: true         # apply the forced dead intervals of the anchors
+  use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
+  use_owner_channel: true       # ATD owning-team ball channel, if declared
+  use_spell_optimizer: true
