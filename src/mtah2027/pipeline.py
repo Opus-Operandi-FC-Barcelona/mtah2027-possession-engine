@@ -467,13 +467,55 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
     match = blocks or (typed.match if typed is not None else MatchConfig())
     n = match.n_video_frames
     st = _Stages(log)
-    t_total = time.perf_counter()
-
     td = st.run("load_atd", lambda: load_atd(data_dir, cache_dir=cache_dir, use_cache=cache_dir is not None,
                                              n_frames=n), required=True)
     smart = st.run("load_smart_tagging", lambda: load_smart_tagging(data_dir, n_frames=n))
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists)
+
+
+def match_from_periods(periods: Sequence[tuple[int, int]], n_frames: int, fps: float = FPS,
+                       pitch: tuple[float, float] = PITCH) -> MatchConfig:
+    """Match layout of a file with two declared periods and no dead pre-block (e.g. open Metrica data)."""
+    if len(periods) < 2:
+        raise ValueError(f"need the two periods (first/second half), got {list(periods)}")
+    (a1, b1), (a2, b2) = ((int(a), int(b)) for a, b in periods[:2])
+    return MatchConfig(game="external", n_video_frames=int(n_frames), fps=int(round(fps)), pitch=pitch,
+                       half1=(a1, b1), half2_dead=(a2, a2 - 1), half2_play=(a2, b2))
+
+
+def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
+                       smart_tagging_path: str | Path | None = None,
+                       config: str | Path | Config | None = None,
+                       periods: Sequence[tuple[int, int]] | None = None,
+                       log: Callable[[str], None] | None = None, specialists: Any = None) -> PipelineResult:
+    """Like :func:`run_pipeline` for an explicit EPTS ``(xml, txt)`` pair, e.g. a Metrica open sample.
+
+    The periods default to the ``first_half_start`` ... provider parameters of the XML; ``smart_tagging_path``
+    is optional (without it the Smart-Tagging-dependent stages are skipped and logged).  The pitch is the
+    ``<FieldSize>`` of the XML.
+    """
+    from mtah2027.io.atd_loader import load_atd_files
+    from mtah2027.io.smart_tagging_loader import load_smart_tagging
+
+    cfg_path, _ = resolve_config(config)
+    st = _Stages(log)
+    td = st.run("load_atd", lambda: load_atd_files(meta_path, raw_path), required=True)
+    match = match_from_periods(periods or td.periods, td.n_frames, td.fps, tuple(td.pitch))
+    if smart_tagging_path is not None:
+        smart = st.run("load_smart_tagging", lambda: load_smart_tagging(
+            n_frames=td.n_frames, fps=int(round(td.fps)), path=smart_tagging_path))
+    else:
+        smart = None
+        st.skip("load_smart_tagging", "no Smart Tagging file given")
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists)
+
+
+def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any) -> PipelineResult:
+    """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
+    n = match.n_video_frames
+    t_total = time.perf_counter()
     play_blocks = [match.half1, match.half2_play]
-    dead_blocks = [match.half2_dead]
+    dead_blocks = [match.half2_dead] if match.half2_dead[1] >= match.half2_dead[0] else []
     players, ball = _fit_length(td.players_xy, n), _fit_length(td.ball_xy, n)
 
     core_diag: dict = {}
