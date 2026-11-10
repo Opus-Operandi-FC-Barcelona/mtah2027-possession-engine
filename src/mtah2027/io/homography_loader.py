@@ -111,9 +111,19 @@ def project_pixels_to_pitch(H_inv: np.ndarray, u_px, v_px, pitch: tuple[float, f
     return x * length, y * width
 
 
+def _truthy(column: pd.Series) -> np.ndarray:
+    """``valid`` as booleans: numbers (> 0.5) or the strings true/false/yes/no/1/0."""
+    if column.dtype == object:
+        text = column.astype(str).str.strip().str.lower()
+        return text.isin({"1", "1.0", "true", "t", "yes", "y"}).to_numpy()
+    return column.to_numpy(dtype=np.float64) > 0.5
+
+
 def parse_homography_csv(path: str | os.PathLike, pitch: tuple[float, float] = PITCH) -> Homographies:
     """Parse one ``*_homography.csv`` into :class:`Homographies` (indexed by the ``frame`` column)."""
-    table = pd.read_csv(path)
+    table = pd.read_csv(path, skipinitialspace=True, encoding="utf-8-sig")
+    table.columns = [str(c).strip().lower() for c in table.columns]     # BOM / blanks / case
+    table = table.dropna(subset=["frame"]) if "frame" in table.columns else table
     missing = [c for c in ("frame", "reprojection_error", "valid") + MATRIX_COLUMNS if c not in table.columns]
     if missing:
         raise HomographyFormatError(f"{path}: missing columns {missing}")
@@ -126,7 +136,7 @@ def parse_homography_csv(path: str | os.PathLike, pitch: tuple[float, float] = P
     flag = np.zeros(n, dtype=bool)
     H[frames] = table[list(MATRIX_COLUMNS)].to_numpy(dtype=np.float64).reshape(-1, 3, 3)
     err[frames] = table["reprojection_error"].to_numpy(dtype=np.float64)
-    flag[frames] = table["valid"].to_numpy(dtype=np.float64) > 0.5
+    flag[frames] = _truthy(table["valid"]) & np.isfinite(H[frames].reshape(len(frames), 9)).all(axis=1)
     H[~flag] = np.nan
     H_inv, ok = invert_homographies(H, flag)
     return Homographies(H=H, H_inv=H_inv, reprojection_error=err, valid=ok,

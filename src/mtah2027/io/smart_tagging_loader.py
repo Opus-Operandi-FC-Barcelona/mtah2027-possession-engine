@@ -10,7 +10,11 @@ The tags are inferred automatically (false positives/negatives exist) and their 
 *windows*, not instants -- e.g. ``Kick Off (Start)`` opens ~3.5 s before the kick.  They are a soft
 prior, never ground truth; exact restart frames come from the tracking (Issue #14).
 
-Everything is case-insensitive: codes, group names, tag values.  Team names map to match sides
+Everything is case-insensitive: codes, group names, tag values.  The parser is also tolerant to the usual
+SportsCode export variants: tag names in any case or namespace, no ``<ALL_INSTANCES>`` wrapper, surrounding
+whitespace/newlines in any text, decimal commas, ``Set Piece`` / ``set_pieces`` / ``Goal`` code spellings,
+labels without a ``<group>`` (the team, half and type are then recognised from the text) and instances without
+usable times (skipped and counted, never fatal).  Team names map to match sides
 ``Barcelona -> 0 (H)``, ``Athletic -> 1 (A)``, ``N/A`` (or missing) ``-> -1``.
 """
 from __future__ import annotations
@@ -106,8 +110,11 @@ def _team_code(text: str | None, aliases: dict[str, int]) -> int:
 
 
 def _half_code(text: str | None) -> int:
-    match = re.search(r"([12])", _norm(text))
-    return int(match.group(1)) if match else 0
+    key = _norm(text)
+    match = re.search(r"([12])", key)
+    if match:
+        return int(match.group(1))
+    return 1 if "first" in key else 2 if "second" in key else 0
 
 
 def smart_tagging_path(data_dir: str | os.PathLike | None = None) -> str:
@@ -117,20 +124,79 @@ def smart_tagging_path(data_dir: str | os.PathLike | None = None) -> str:
     return games.require(["smart_tagging"], games.GAME, data_dir)[0]
 
 
+_CODE_ALIASES = {"set piece": SET_PIECE_CODE, "set pieces": SET_PIECE_CODE, "setpiece": SET_PIECE_CODE,
+                 "setpieces": SET_PIECE_CODE, "goal": GOAL_CODE, "goals": GOAL_CODE}
+_HALF_TEXT = re.compile(r"(?:\b([12])\s*(?:st|nd)?\s*(?:half|time|part)\b)|(?:\bhalf\s*([12])\b)|"
+                        r"\b(first|second)\s+half\b")
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def _child_text(el: ET.Element, name: str) -> str | None:
+    """Text of the first child called ``name`` (any case / namespace), ``None`` when absent."""
+    for child in el:
+        if _local(child.tag) == name:
+            return child.text or ""
+    return None
+
+
+def _seconds(text: str | None) -> float | None:
+    try:
+        value = float((text or "").strip().replace(",", "."))
+    except ValueError:
+        return None
+    return value if np.isfinite(value) else None
+
+
+def _code_key(text: str | None) -> str:
+    key = _norm(re.sub(r"[_\-]+", " ", text or ""))
+    return _CODE_ALIASES.get(key, key)
+
+
+def _ungrouped(texts: list[str], aliases: dict[str, int]) -> dict[str, str]:
+    """Team / half / type of labels that carry no ``<group>``, recognised from their text."""
+    tags: dict[str, str] = {}
+    rest = []
+    for text in texts:
+        key = _norm(text)
+        if "team" not in tags and (key in _NA or key in aliases or _team_code(key, aliases) != NO_TEAM):
+            tags["team"] = text
+        elif "half" not in tags and _HALF_TEXT.search(key):
+            tags["half"] = text
+        else:
+            rest.append(text)
+    if rest:
+        tags["type"] = rest[0]
+    return tags
+
+
 def parse_events(path: str | os.PathLike, fps: int = FPS,
                  team_aliases: dict[str, int] | None = None) -> list[TagEvent]:
     """Events in file order; frames are ``round(seconds * fps)`` with a half-open end."""
     aliases = {**DEFAULT_TEAM_ALIASES, **{_norm(k): v for k, v in (team_aliases or {}).items()}}
     events: list[TagEvent] = []
-    for instance in ET.parse(path).getroot().iter("instance"):
-        start_s, end_s = float(instance.findtext("start")), float(instance.findtext("end"))
+    for instance in ET.parse(path).getroot().iter():
+        if _local(instance.tag) != "instance":
+            continue
+        start_s, end_s = _seconds(_child_text(instance, "start")), _seconds(_child_text(instance, "end"))
+        if start_s is None or end_s is None:
+            continue
         tags: dict[str, str] = {}
-        for label in instance.findall("label"):
-            group = _norm(label.findtext("group"))
+        loose: list[str] = []
+        for label in instance:
+            if _local(label.tag) != "label":
+                continue
+            group, text = _norm(_child_text(label, "group")), (_child_text(label, "text") or "").strip()
             if group:
-                tags[group] = (label.findtext("text") or "").strip()    # last one wins
+                tags[group] = re.sub(r"\s+", " ", text)      # last one wins
+            elif text:
+                loose.append(re.sub(r"\s+", " ", text))
+        for group, text in _ungrouped(loose, aliases).items():
+            tags.setdefault(group, text)
         events.append(TagEvent(
-            code=_norm(instance.findtext("code")), start_s=start_s, end_s=end_s,
+            code=_code_key(_child_text(instance, "code")), start_s=start_s, end_s=end_s,
             start_frame=int(round(start_s * fps)), end_frame=int(round(end_s * fps)),
             team=_team_code(tags.get("team"), aliases), half=_half_code(tags.get("half")),
             type=_norm(tags.get("type")), tags=tags))

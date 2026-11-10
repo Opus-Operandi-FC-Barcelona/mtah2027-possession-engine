@@ -127,6 +127,22 @@ external matches); its dataset builder is reused by the specialist B work.
 
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
 
+## Real-format check (Metrica EPTS exports)
+
+The loaders are not tied to our synthetic imitation.  `load_atd_files(meta, raw)` parses any FIFA/EPTS pair,
+including Metrica's open Sample Game 3 (eleven `DataFormatSpecification` blocks, one per substitution window, 35
+player slots, no speed channel, `NaN` ball, normalised coordinates, `FieldSize` 105 x 68, periods in the provider
+parameters); positions were cross-checked against `kloppy.metrica.load_tracking_epts` (3.18.0, test-only extra
+`pip install -e .[crosscheck]`).  `scripts/check_real_format.py` runs the whole pipeline on such a pair and prints
+aggregates only; Smart Tagging and the homography are optional:
+
+```bash
+python scripts/check_real_format.py --meta Sample_Game_3_metadata.xml --raw Sample_Game_3_tracking.txt
+python scripts/check_real_format.py --meta atd.xml --raw atd.txt --smart-tagging st.xml --homography h.csv
+```
+
+`tests/test_29_real_format.py` + `tests/fixtures/metrica_sample3_structure_*` keep that structure covered in CI.
+
 ## Repository layout
 
 ```
