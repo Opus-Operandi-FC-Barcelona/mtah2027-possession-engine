@@ -103,9 +103,16 @@ to the ball + majority vote over +-50 frames, `D` only where nobody has the ball
 |---|---|---|---|---|
 | 7 IDSSE matches, complete ball | **0.691** | 0.934 | 0.310 | 0.394 |
 | 7 IDSSE matches, 41% of the ball hidden in random 5-60 s blocks (seed 0) | **0.487** | 0.814 | 0.218 | 0.453 |
+| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | **0.392** | 0.733 | 0.215 | 0.440 |
 | 3 Metrica sample games (their own ball channel is missing exactly while the ball is dead, which leaks `D`) | 0.778 | 0.889 | 0.437 | 0.833 |
 | all 10 matches as they are | 0.717 | 0.920 | 0.348 | 0.526 |
 | all 10 matches, 41% of the ball additionally hidden | 0.505 | 0.802 | 0.247 | 0.517 |
+
+**Occlusion-team learnability** (`scripts/explore_occlusion_team.py`, 7 degraded IDSSE matches x 3 seeds, leave-one-match-out
+HistGradientBoosting on the collective-physics (#17) and ball-memory (#18) features only, accuracy of the team on the
+alive frames whose ball is hidden): model **0.850**; physics only 0.847; memory only 0.796; constant majority team 0.529; current rule (last/next
+touch, change point in the middle) 0.621; engine decoded output 0.582.  The learned signal is mostly team shape
+(width of the attacking block, line advance), which is why the specialist B of Issue #22 should be trained on it.
 
 Diagnostic on two IDSSE matches (complete ball): giving the engine the ground-truth team with its own `D` raises
 spellF1 to ~0.96 (to ~0.87-0.89 with 41% of the ball hidden), whereas giving it the ground-truth `D` with its
@@ -134,8 +141,9 @@ version is not known to the authors at the time of writing (the data is processe
   largest source of lost spellF1 (see section 5) and the main target of the planned specialist B.
 * Touch detection depends on the ball track quality; noisy or interpolated ball positions produce missed or
   spurious touches.  Aerial balls are not modelled (`is_aerial` is all false until Issue #12).
-* The throw-in team resolver (#15) and collective-physics / ball-memory features (#17, #18) are planned; throw-ins
-  with `Team = N/A` are anchored in time but their team is inferred from the first touch only.
+* The throw-in team resolver (#15) is planned; throw-ins with `Team = N/A` are anchored in time but their team
+  is inferred from the first touch only.  The collective-physics (#17) and ball-memory (#18) features exist and are
+  validated offline, but are not yet fed to the emissions (Issue #22).
 * Parameters are generic priors validated on other competitions' data; the tracking noise of BAR-ATH may be
   different.  No parameter was fitted to BAR-ATH.
 * The KPI dashboard (#27, planned) will flag sanity alarms; in wave 1 only aggregate statistics are printed.

@@ -75,6 +75,10 @@ contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially
 plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
 (3 seeds) the engine scores spellF1 0.392 / macroF1 0.733 against 0.215 / 0.440 for the official baseline recipe.
 
+`scripts/explore_occlusion_team.py` checks how well the team in possession can be predicted while the ball is
+hidden from the collective-physics (#17) and ball-memory (#18) features alone (leave-one-match-out, degraded
+external matches); its dataset builder is reused by the specialist B work.
+
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
 
 ## Repository layout
@@ -85,8 +89,9 @@ src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
-  features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16)
-  models/                            heuristic_emissions (#28 wave 1), baseline_labels
+  features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
+                                     collective_physics (#17), ball_memory (#18)
+  models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19)
   decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
