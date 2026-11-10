@@ -214,3 +214,21 @@ def test_context_features_are_block_local_and_nan_safe():
     cx3, _ = sf.context_features(x, names, [(0, 149)], (20,))
     assert np.isnan(cx3[200]).all()                                              # outside the blocks: NaN
     assert sf.context_features(x, names, None, ())[0].shape == (n, 0)
+
+
+def test_specialists_route_overrides_apply_only_to_the_learned_route(trained, match):
+    from mtah2027.config import _load_raw
+
+    raw = _load_raw()
+    raw["route_overrides"] = {**(raw.get("route_overrides") or {}),
+                              "specialists": {"transition_matrix": {"ha_closed": -2.0, "ha_occluded": -2.0},
+                                              "specialist_fusion": {"scale_hidden": 0.25}}}
+    base = _core(match, specialists=trained)
+    over = _core(match, specialists=trained, config_path=raw)
+    assert over.diagnostics["emission_source"] == "specialists"
+    assert not np.array_equal(base.codes, over.codes)
+    # the heuristic route is untouched by route_overrides.specialists, and the fusion override took effect
+    assert np.array_equal(_core(match).codes, _core(match, config_path=raw).codes)
+    ks = _core(match, specialists=trained, config_path=raw, keep_features=True).features["log_probs"]
+    ks0 = _core(match, specialists=trained, keep_features=True).features["log_probs"]
+    assert not np.array_equal(ks, ks0)
