@@ -127,6 +127,20 @@ external matches); its dataset builder is reused by the specialist B work.
 
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
 
+### Possession count and the KPI 7 evidence
+
+On the degraded external matches the learned route predicts fewer possessions than the truth (2467 vs 3061 over
+the 7 IDSSE matches, seed 0) while the heuristic route matches the count (3057).  `scripts/diagnose_possessions.py`
+shows why: 43 % of the true possessions last < 3 s, and 976 of the 2351 true H<->A turnovers happen while the ball is
+hidden, where 81 % are missed (37 % with the ball visible).  Sweeping the transition gates (`ha_closed`, `ha_open`,
+`ha_occluded`, touch gates), the spell optimiser (`micro_poss_s`, `min_dead_s`, `keep_min_touches`) and the fusion
+temperature moves spellF1 by <= 0.003 and every extra flip is spurious, so the gap is the F1-optimal conservatism of
+an evidence-limited emission model, not a gating bug; no default was changed.
+
+`scripts/make_external_evidence.py` stores the aggregate leave-one-match-out result in the committed
+`reports/external_evidence.json` (external open data only, with seeds, date and git sha).  The KPI dashboard uses it
+for the KPI 7 route decision whenever `--external-lomo` is not run.
+
 ## Real-format check (Metrica EPTS exports)
 
 The loaders are not tied to our synthetic imitation.  `load_atd_files(meta, raw)` parses any FIFA/EPTS pair,

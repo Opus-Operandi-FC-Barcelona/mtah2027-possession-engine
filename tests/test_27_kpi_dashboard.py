@@ -194,6 +194,7 @@ def test_dashboard_on_the_synthetic_match(synthetic_dir, synthetic_spec, synthet
     digest = hashlib.sha256(sub.read_bytes()).hexdigest()
     assert k["6_format"]["status"] == kd.OK and k["6_format"]["sha256"] == digest
     assert k["7_routes"]["specialists"] is None and report["synthetic_truth"]["heuristic"]["spell_f1"] > 0.0
+    assert k["7_routes"]["decision"]["recommended"] in ("specialists", "heuristic")   # committed evidence
     saved = json.loads(out_json.read_text(encoding="utf-8"))
     assert saved["kpis"].keys() == k.keys()
     assert out_json.stat().st_size < 20000  # aggregates only, nothing per frame
@@ -225,3 +226,33 @@ def test_cli_runs_on_a_short_synthetic_match(tmp_path):
     assert cli.run(args) == 0
     assert json.loads(out_json.read_text(encoding="utf-8"))["kpis"]["6_format"]["status"] == "OK"
     assert (tmp_path / "a.csv").is_file()
+
+
+def _evidence_file(tmp_path, h=0.40, s=0.61):
+    path = tmp_path / "evidence.json"
+    route = lambda v: {"spell_f1": v, "macro_f1": 0.8}  # noqa: E731
+    path.write_text(json.dumps({"schema": 1, "date": "2026-10-25", "git_sha": "abcdef1234567890",
+                                "settings": {
+        "degraded": {"seeds": [0], "n_matches": 7,
+                     "routes": {"heuristic": route(h), "specialists_lomo": route(s)}}}}), encoding="utf-8")
+    return path
+
+
+def test_committed_external_evidence_decides_the_route(tmp_path):
+    ev = kd.load_external_evidence(_evidence_file(tmp_path), "degraded")
+    assert ev["source"].endswith("2026-10-25 @ abcdef12")
+    decision = kd.decide_route(ev, None, 0.04)
+    assert decision["recommended"] == "specialists" and decision["evidence"] == ev["source"]
+    assert kd.decide_route(kd.load_external_evidence(_evidence_file(tmp_path, 0.6, 0.61), "degraded"),
+                           None, 0.04)["recommended"] == "heuristic"
+    assert kd.load_external_evidence(tmp_path / "nope.json") is None
+    assert kd.load_external_evidence(_evidence_file(tmp_path), "no_such_setting") is None
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert kd.load_external_evidence(tmp_path / "bad.json") is None
+
+
+def test_repository_evidence_file_is_valid():
+    ev = kd.load_external_evidence(None, "degraded")
+    assert ev is not None and ev["n_matches"] == 7
+    assert kd.decide_route(ev, None, kd.KpiParams().route_margin_spellf1)["recommended"] in (
+        "specialists", "heuristic")
