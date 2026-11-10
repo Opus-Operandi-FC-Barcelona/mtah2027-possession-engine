@@ -67,6 +67,7 @@ from mtah2027.postprocessing.spell_optimizer import SpellParams, optimize_spells
 from mtah2027.postprocessing.submission_contract import enforce_submission_contract
 from mtah2027.preprocessing.clean_tracks import clean_tracks
 from mtah2027.preprocessing.kinematics_and_orientation import compute_kinematics_and_orientation
+from mtah2027.vision.aerial_filter import AerialParams, compute_is_aerial, find_z_channel
 
 H, A, D, X = 0, 1, 2, 3
 
@@ -79,6 +80,8 @@ class PipelineParams:
     use_phase_prior: bool = True
     use_owner_channel: bool = True
     use_spell_optimizer: bool = True
+    use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
+    use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
 
     @classmethod
     def from_config(cls, path=None) -> "PipelineParams":
@@ -186,6 +189,7 @@ class FrontEnd:
     phys: Any = None
     mem: Any = None
     throwins: Any = None          # list of ThrowInResolution (Issue #15), None when not run
+    is_aerial: np.ndarray | None = None   # Issue #12 mask (None when the filter is off or failed)
 
 
 def compute_front_end(
@@ -195,7 +199,7 @@ def compute_front_end(
         ball_channel_codes: dict[str, dict[str, int]] | None = None,
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, stages: "_Stages | None" = None,
-        collective: bool = False) -> FrontEnd:
+        collective: bool = False, homography: np.ndarray | None = None) -> FrontEnd:
     """Stages 2-6 (cleaning, kinematics + orientation, dead-ball signals, ball kinematics, set-piece anchors)
     plus the owner / phase / touch priors; with ``collective`` also the collective physics (#17) and the
     ball memory (#18) that feed the learned specialists."""
@@ -233,9 +237,19 @@ def compute_front_end(
         ball_channel_codes=ball_channel_codes, fps=fps, pitch=pitch, params=DeadBallParams.from_config(cfg)))
     dead_score = sig.dead_score if sig is not None else np.zeros(n, dtype=np.float32)
 
+    # 4b. aerial ball (Issue #12) -----------------------------------------------------------------
+    is_aerial = None
+    if pp.use_aerial_filter:
+        ap = AerialParams.from_config(cfg)
+        is_aerial = st.run("aerial_filter", lambda: compute_is_aerial(
+            bxy, fps=fps, ball_z=find_z_channel(ball_channels, ap.z_channels, n),
+            H=homography if pp.use_homography else None, pitch=pitch, params=ap))
+    else:
+        st.skip("aerial_filter", "disabled by configuration")
+
     # 5. ball kinematics -------------------------------------------------------------------------
     bk = st.run("ball_kinematics", lambda: compute_ball_kinematics(
-        pxy, team, bxy, players_vel=pvel, ball_vel=bvel, ball_acc=bacc, fps=fps,
+        pxy, team, bxy, players_vel=pvel, ball_vel=bvel, ball_acc=bacc, is_aerial=is_aerial, fps=fps,
         params=BallKinParams.from_config(cfg)))
 
     # 6. set-piece anchors -----------------------------------------------------------------------
@@ -291,7 +305,7 @@ def compute_front_end(
     return FrontEnd(pxy=pxy, bxy=bxy, team=team, pvel=pvel, bvel=bvel, bacc=bacc, pspeed=pspeed,
                     bspeed=bspeed, visible=visible, sig=sig, bk=bk, anchors=anchors, dead_score=dead_score,
                     owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem,
-                    throwins=throwins)
+                    throwins=throwins, is_aerial=is_aerial)
 
 
 def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_Stages | None" = None):
@@ -315,7 +329,8 @@ def run_core(
         ball_channel_codes: dict[str, dict[str, int]] | None = None,
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
-        keep_features: bool = False, specialists: Any = None) -> CoreResult:
+        keep_features: bool = False, specialists: Any = None,
+        homography: np.ndarray | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -339,7 +354,8 @@ def run_core(
             players_xy, team_of_slot, ball, play_blocks=play_blocks, fps=fps, pitch=pitch,
             ball_channels=ball_channels, ball_channel_codes=ball_channel_codes, team_ids=team_ids,
             team_names=team_names, smart_tagging=smart_tagging, config_path=cfg,
-            stages=_Stages(lambda m: None) if quiet else st, collective=specialists is not None)
+            stages=_Stages(lambda m: None) if quiet else st, collective=specialists is not None,
+            homography=homography)
 
     fe = front_end(ball_xy)
     sig, bk, anchors, visible, dead_score = fe.sig, fe.bk, fe.anchors, fe.visible, fe.dead_score
@@ -414,6 +430,7 @@ def run_core(
     diagnostics = {
         "stages": st.info, "n_frames": int(n), "n_slots": int(players_xy.shape[1]),
         "ball_visible_share": float(visible.mean()) if n else 0.0,
+        "aerial_share": float(fe.is_aerial.mean()) if fe.is_aerial is not None and n else None,
         "has_status_channel": bool(sig is not None and sig.has_status),
         "owner_channel": owner_key, "n_anchors": len(anchors.anchors) if anchors is not None else 0,
         "n_anchors_resolved": anchors.n_resolved if anchors is not None else 0,
@@ -470,7 +487,14 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
     td = st.run("load_atd", lambda: load_atd(data_dir, cache_dir=cache_dir, use_cache=cache_dir is not None,
                                              n_frames=n), required=True)
     smart = st.run("load_smart_tagging", lambda: load_smart_tagging(data_dir, n_frames=n))
-    return _decode_loaded(td, smart, match, cfg_path, st, specialists)
+    pp = PipelineParams.from_config(cfg_path)
+    homography = None
+    if pp.use_aerial_filter and pp.use_homography:
+        from mtah2027.io.homography_loader import load_homography
+
+        hom = st.run("load_homography", lambda: load_homography(data_dir))
+        homography = _fit_length(hom.H, n) if hom is not None else None
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography)
 
 
 def match_from_periods(periods: Sequence[tuple[int, int]], n_frames: int, fps: float = FPS,
@@ -510,7 +534,8 @@ def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
     return _decode_loaded(td, smart, match, cfg_path, st, specialists)
 
 
-def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any) -> PipelineResult:
+def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any,
+                   homography: np.ndarray | None = None) -> PipelineResult:
     """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
     n = match.n_video_frames
     t_total = time.perf_counter()
@@ -524,7 +549,8 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             players, td.team_of_slot, ball, play_blocks=play_blocks, dead_blocks=dead_blocks, fps=td.fps,
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
-            smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists)
+            smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
+            homography=homography)
         codes, core_diag = core.codes, core.diagnostics
         route = "heuristic"
     except Exception as exc:  # noqa: BLE001 - last resort: still deliver a valid file

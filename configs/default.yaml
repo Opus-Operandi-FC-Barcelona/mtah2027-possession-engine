@@ -181,6 +181,8 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+  use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
+  use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
 
 # Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
 # artefacts).  Used only to build validation / self-supervision data, never on the competition match.
@@ -300,3 +302,18 @@ throwin_resolver:
   resolve_known_teams: false    # only Team = N/A throw-ins are resolved
   emission_bias: 0.0            # optional log-bias towards the restart team after t* (0 = off; no gain measured)
   emission_window_s: 2.0
+
+# Issue #12 -- aerial-ball mask from the ball track alone (apparent speed, reprojection jumps, long straight
+# flights without grass deceleration, optional ATD height channel).  Generic physical priors.
+aerial_filter:
+  speed_mps: 35.0               # apparent ground speed above which the ball is airborne
+  jump_px: 90.0                 # pixel displacement per frame (with homographies) that is a track jump
+  flight_min_speed_mps: 12.0    # a straight flight moves faster than this ...
+  straight_deg: 8.0             # ... with a heading change per frame below this ...
+  flight_min_length_m: 18.0     # ... over a path at least this long ...
+  grass_decel_mps2: 1.5         # ... and a speed slope above -this (rolling on grass loses several m/s per s)
+  edge_trim_frames: 3           # kick / landing frames of a flight that are not flagged
+  pad_frames: 2                 # growth of the speed / jump cues
+  min_run_frames: 2             # flagged runs shorter than this are dropped
+  z_min_m: 1.5                  # ball height above which it is airborne (ATD z channel, if declared)
+  z_channels: [z, ball_z, height, ballz]
