@@ -44,7 +44,8 @@ def transition_type(frm: int, to: int) -> str:
     return f"{NAMES[frm]}->{NAMES[to]}"
 
 
-def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int, visible: np.ndarray | None = None) -> dict:
+def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int,
+             visible: np.ndarray | None = None) -> dict:
     runs = pm.valid_runs(gt)
     filled = pm.fill_abstentions(pred, runs)
     gt_tr, pr_tr = pm.transitions(gt, runs), pm.transitions(filled, runs)
@@ -117,7 +118,7 @@ def main(argv=None) -> int:
 
         fusion = sf.FusionParams.from_config(args.config)
         cache = Path(args.cache) if args.cache else None
-        training = build_training_set(args.bench_dir, config_path=args.config, log=lambda m: None)
+        training = []          # the training rows are only built when a leave-one-out model is not cached
 
         def specialists_for(stem: str):
             if stem not in models:
@@ -125,7 +126,10 @@ def main(argv=None) -> int:
                 if path is not None and path.is_file():
                     models[stem] = sf.load_specialists(path, args.config)
                 else:
-                    spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                    if not training:
+                        training.append(build_training_set(args.bench_dir, config_path=args.config,
+                                                           log=lambda m: None))
+                    spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training[0],
                                                 exclude_match=stem)
                     models[stem] = dataclasses.replace(spec, fusion=fusion)
                     if path is not None:

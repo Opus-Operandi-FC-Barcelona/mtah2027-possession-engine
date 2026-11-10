@@ -63,6 +63,20 @@ class TransitionParams:
     restart_open: float = -1.0
     restart_halfwidth: int = 3
     restart_other_team: float = -3.0
+    # Specialist-driven openings inside occlusions (learned route only; off by default).  H<->A opens to
+    # ``spec_ha_open`` around the frames where the specialists' H-vs-A logit changes sign (hysteresis
+    # ``spec_hyst``), only towards the team the new sign names; H/A->D is opened to ``spec_dead_open`` where
+    # P(D) is a local peak >= ``spec_dead_min``; collective-speed accelerations above ``spec_accel_min`` m/s
+    # (change of the mean player speed over +-``spec_accel_half`` frames) open both to ``spec_accel_open``.
+    spec_open: bool = False
+    spec_ha_open: float = -4.0
+    spec_hyst: float = 0.5
+    spec_halfwidth: int = 12
+    spec_dead_open: float = -4.0
+    spec_dead_min: float = 0.5
+    spec_accel_open: float = -5.0
+    spec_accel_min: float = 1.0
+    spec_accel_half: int = 12
 
     @classmethod
     def from_config(cls, path=None) -> "TransitionParams":
@@ -82,6 +96,51 @@ def occlusion_mask(ball_visible: np.ndarray, min_frames: int, margin: int) -> np
         if b - a >= min_frames:
             out[max(0, a - margin):min(len(missing), b + margin)] = True
     return out
+
+
+def logit_flips(z: np.ndarray, hyst: float) -> tuple[np.ndarray, np.ndarray]:
+    """Frames where the sign of ``z`` (H-vs-A logit) switches with hysteresis: ``(to_home, to_away)``.
+
+    The state becomes +1 once ``z > hyst`` and -1 once ``z < -hyst`` (NaN and the dead band keep the last
+    state); a flip is a frame where the state differs from the previous non-zero one."""
+    z = np.nan_to_num(np.asarray(z, dtype=np.float64), nan=0.0)
+    st = np.where(z > hyst, 1, np.where(z < -hyst, -1, 0))
+    idx = np.arange(len(st))
+    last = np.maximum.accumulate(np.where(st != 0, idx, -1))
+    ff = np.where(last >= 0, st[np.maximum(last, 0)], 0)
+    prev = np.concatenate([[0], ff[:-1]])
+    prev_nz = np.maximum.accumulate(np.where(prev != 0, idx, -1))
+    prev_state = np.where(prev_nz >= 0, prev[np.maximum(prev_nz, 0)], 0)
+    flip = (st != 0) & (prev_state != 0) & (st != prev_state)
+    return flip & (st > 0), flip & (st < 0)
+
+
+def specialist_openings(n: int, occ: np.ndarray, p: TransitionParams, *, home_logit, p_dead,
+                        speed) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """``(to_home, to_away, to_dead, accel)`` boolean masks, True only inside ``occ`` (see the params)."""
+    hw = 2 * int(p.spec_halfwidth) + 1
+
+    def spread(mask):
+        if not mask.any():
+            return np.zeros(n, bool)
+        return maximum_filter1d(mask.astype(np.uint8), hw, mode="constant") > 0
+
+    zero = np.zeros(n, bool)
+    to_home = to_away = to_dead = accel = zero
+    if home_logit is not None:
+        fh, fa = logit_flips(home_logit, p.spec_hyst)
+        to_home, to_away = spread(fh) & occ, spread(fa) & occ
+    if p_dead is not None:
+        pd = np.nan_to_num(np.asarray(p_dead, dtype=np.float64), nan=0.0)
+        peak = (pd >= p.spec_dead_min) & (pd >= maximum_filter1d(pd, hw, mode="nearest") - 1e-12)
+        to_dead = spread(peak) & occ
+    if speed is not None:
+        sp = np.nan_to_num(np.asarray(speed, dtype=np.float64), nan=0.0)
+        h = max(1, int(p.spec_accel_half))
+        fwd = np.concatenate([sp[h:], np.repeat(sp[-1:], h)])
+        bwd = np.concatenate([np.repeat(sp[:1], h), sp[:-h]])
+        accel = (np.abs(fwd - bwd) >= p.spec_accel_min) & occ
+    return to_home, to_away, to_dead, accel
 
 
 def touch_window_masks(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.ndarray,
@@ -120,7 +179,8 @@ def build_log_transitions(
         is_aerial: np.ndarray | None = None, dead_score: np.ndarray | None = None,
         ball_out: np.ndarray | None = None, restart_frames: np.ndarray | None = None,
         restart_teams: np.ndarray | None = None, fps: float = FPS,
-        params: TransitionParams | None = None) -> np.ndarray:
+        params: TransitionParams | None = None, spec_home_logit: np.ndarray | None = None,
+        spec_p_dead: np.ndarray | None = None, spec_speed: np.ndarray | None = None) -> np.ndarray:
     """Build ``log_trans[n, 3, 3]`` (float64, rounded to 1e-6) from the per-frame evidence.
 
     ``d_home`` / ``d_away`` are the distances (m) of the closest player of each team to the ball (NaN
@@ -148,8 +208,18 @@ def build_log_transitions(
     occ = occlusion_mask(visible, max(1, int(round(p.occlusion_min_s * fps))), int(p.occlusion_margin_frames))
     ha = np.where(occ, np.maximum(ha, p.ha_occluded), ha)
     to_home, to_away = touch_window_masks(touch_score, d_home, d_away, is_aerial, p)
-    log_trans[:, H, A] = np.where(to_away, np.maximum(ha, p.ha_open), ha)      # away team wins the ball
-    log_trans[:, A, H] = np.where(to_home, np.maximum(ha, p.ha_open), ha)      # home team wins the ball
+    ha_ha = np.where(to_away, np.maximum(ha, p.ha_open), ha)
+    ha_ah = np.where(to_home, np.maximum(ha, p.ha_open), ha)
+    s_dead = s_acc = np.zeros(n, bool)
+    if p.spec_open and (spec_home_logit is not None or spec_p_dead is not None or spec_speed is not None):
+        s_home, s_away, s_dead, s_acc = specialist_openings(
+            n, occ, p, home_logit=spec_home_logit, p_dead=spec_p_dead, speed=spec_speed)
+        ha_ha = np.where(s_away, np.maximum(ha_ha, p.spec_ha_open), ha_ha)
+        ha_ah = np.where(s_home, np.maximum(ha_ah, p.spec_ha_open), ha_ah)
+        ha_ha = np.where(s_acc, np.maximum(ha_ha, p.spec_accel_open), ha_ha)
+        ha_ah = np.where(s_acc, np.maximum(ha_ah, p.spec_accel_open), ha_ah)
+    log_trans[:, H, A] = ha_ha      # away team wins the ball
+    log_trans[:, A, H] = ha_ah      # home team wins the ball
 
     # --- H, A -> D and D -> H, A -------------------------------------------------------------
     ds = np.zeros(n)
@@ -162,6 +232,8 @@ def build_log_transitions(
         open_in = np.maximum(open_in, (np.nan_to_num(np.asarray(ball_out, dtype=np.float64)) > 0.5)
                              .astype(np.float64))
     to_dead = p.dead_closed + (p.dead_open - p.dead_closed) * open_in
+    to_dead = np.where(s_dead, np.maximum(to_dead, p.spec_dead_open), to_dead)
+    to_dead = np.where(s_acc, np.maximum(to_dead, p.spec_accel_open), to_dead)
     log_trans[:, H, D] = to_dead
     log_trans[:, A, D] = to_dead
 

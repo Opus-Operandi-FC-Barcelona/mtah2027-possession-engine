@@ -143,7 +143,7 @@ to the ball + majority vote over +-50 frames, `D` only where nobody has the ball
 |---|---|---|---|---|
 | 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.742**) | 0.934 (0.947) | 0.310 | 0.394 |
 | 7 IDSSE matches, 41% of the ball hidden in random 5-60 s blocks (seed 0) | **0.487** | 0.814 | 0.218 | 0.453 |
-| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.392 (wave 2: **0.606**) | 0.733 (0.900) | 0.215 | 0.440 |
+| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.392 (wave 2: **0.631**) | 0.733 (0.909) | 0.215 | 0.440 |
 | 3 Metrica sample games (their own ball channel is missing exactly while the ball is dead, which leaks `D`) | 0.778 | 0.889 | 0.437 | 0.833 |
 | all 10 matches as they are | 0.717 | 0.920 | 0.348 | 0.526 |
 | all 10 matches, 41% of the ball additionally hidden | 0.505 | 0.802 | 0.247 | 0.517 |
@@ -156,7 +156,7 @@ as the rows above; hyper-parameters examined only this way, never on BAR-ATH):
 | Setting (mean over 7 matches) | wave-1 heuristic spellF1 / macroF1 | wave-2 specialists spellF1 / macroF1 | official-style baseline |
 |---|---|---|---|
 | complete ball | 0.691 / 0.934 | **0.742 / 0.947** | 0.310 / 0.394 |
-| `--degrade`, seeds 0-2 (21 runs) | 0.392 / 0.733 | **0.606 / 0.900** | 0.215 / 0.440 |
+| `--degrade`, seeds 0-2 (21 runs) | 0.392 / 0.733 | **0.631 / 0.909** (0.606 / 0.900 before the context features, 5.x) | 0.215 / 0.440 |
 
 Every one of the 21 degraded runs improves (spellF1 +0.11 ... +0.30 per run; the learned route finds fewer, longer
 possessions: 352 vs 466 predicted for 511 true on the first match).  Choices examined leave-one-match-out on the

@@ -140,7 +140,7 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
     fp = specialists.fusion
     n = len(fe.visible)
     t0 = time.perf_counter()
-    fm = build_feature_matrix(fe, heuristic)
+    fm = build_feature_matrix(fe, heuristic, play_blocks=play_blocks, config_path=config_path)
     if fm.names != specialists.a.feature_names or fm.names != specialists.b.feature_names:
         raise ValueError("feature layout of the match does not match the stored specialists")
     vis = np.asarray(fe.visible, dtype=bool)
