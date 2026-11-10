@@ -44,6 +44,8 @@ from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_i
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
 from mtah2027.features._utils import speed_from_xy
 from mtah2027.features.ball_kinematics import BallKinParams, compute_ball_kinematics
+from mtah2027.features.ball_memory import BallMemoryParams, compute_ball_memory
+from mtah2027.features.collective_physics import CollectivePhysicsParams, compute_collective_physics
 from mtah2027.features.dead_ball_signals import DeadBallParams, compute_dead_ball_signals
 from mtah2027.features.setpiece_anchor import AnchorParams, anchor_set_pieces
 from mtah2027.models.baseline_labels import baseline_labels
@@ -148,29 +150,52 @@ def summarize_labels(codes: np.ndarray, play_blocks: Sequence[tuple[int, int]], 
             "n_possessions": n_poss, "mean_possession_s": float(alive / max(n_poss, 1) / fps)}
 
 
-def run_core(
+@dataclass
+class FrontEnd:
+    """Per-frame feature bundle shared by the heuristic route and the learned specialists (stages 2-6).
+
+    ``pxy`` / ``bxy`` are cleaned and oriented (home attacks +x); optional pieces are ``None`` when their
+    stage failed or its inputs were missing.
+    """
+
+    pxy: np.ndarray
+    bxy: np.ndarray
+    team: np.ndarray
+    pvel: np.ndarray | None
+    bvel: np.ndarray | None
+    bacc: np.ndarray | None
+    pspeed: np.ndarray
+    bspeed: np.ndarray
+    visible: np.ndarray
+    sig: Any
+    bk: Any
+    anchors: Any
+    dead_score: np.ndarray
+    owner: np.ndarray | None
+    owner_key: str | None
+    phase: np.ndarray | None
+    touches: np.ndarray | None
+    phys: Any = None
+    mem: Any = None
+
+
+def compute_front_end(
         players_xy: np.ndarray, team_of_slot: np.ndarray, ball_xy: np.ndarray, *,
-        play_blocks: Sequence[tuple[int, int]], dead_blocks: Sequence[tuple[int, int]] = (),
-        fps: float = FPS, pitch: tuple[float, float] = PITCH,
+        play_blocks: Sequence[tuple[int, int]], fps: float = FPS, pitch: tuple[float, float] = PITCH,
         ball_channels: dict[str, np.ndarray] | None = None,
         ball_channel_codes: dict[str, dict[str, int]] | None = None,
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
-        config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
-        keep_features: bool = False) -> CoreResult:
-    """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
-
-    ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
-    1 away.  ``play_blocks`` are the inclusive graded blocks decoded independently (the first two also give
-    the halves used to orient the pitch); ``dead_blocks`` are forced to ``D``.  ``smart_tagging`` (optional)
-    is a :class:`~mtah2027.io.smart_tagging_loader.SmartTagging`.  Frames outside the blocks are ``X``.
-    """
+        config_path: str | Path | None = None, stages: "_Stages | None" = None,
+        collective: bool = False) -> FrontEnd:
+    """Stages 2-6 (cleaning, kinematics + orientation, dead-ball signals, ball kinematics, set-piece anchors)
+    plus the owner / phase / touch priors; with ``collective`` also the collective physics (#17) and the
+    ball memory (#18) that feed the learned specialists."""
     cfg = config_path
     pp = PipelineParams.from_config(cfg)
-    st = _Stages(log)
+    st = stages or _Stages(None)
     n = len(ball_xy)
     team = np.asarray(team_of_slot)
     play_blocks = [(int(a), int(b)) for a, b in play_blocks]
-    feats: dict[str, np.ndarray] = {}
 
     # 2. cleaning ---------------------------------------------------------------------------
     pxy = np.asarray(players_xy, dtype=np.float32)
@@ -215,7 +240,7 @@ def run_core(
         reason = "no Smart Tagging" if smart_tagging is None else "disabled by configuration"
         st.skip("set_piece_anchors", reason)
 
-    # 7. emissions ---------------------------------------------------------------------------------
+    # priors for the emissions ----------------------------------------------------------------------
     owner, owner_key = None, None
     if pp.use_owner_channel and ball_channels:
         ep = EmissionParams.from_config(cfg)
@@ -226,17 +251,89 @@ def run_core(
         phase = np.asarray(smart_tagging.phase_prior_home, dtype=np.float64)
         if phase.shape != (n,):
             phase = None
-    zeros = np.zeros(n)
     touches = None
     if bk is not None:
         touches = touch_signal(bk.touch_mask, bk.delta_d, EmissionParams.from_config(cfg).touch_margin_m)
-    em = st.run("emissions", lambda: compute_emissions(
-        dead_score, bk.possession_evidence if bk is not None else zeros,
-        bk.evidence_valid if bk is not None else np.zeros(n, bool), visible,
+
+    phys = mem = None
+    if collective:
+        phys = st.run("collective_physics", lambda: compute_collective_physics(
+            pxy, team, players_vel=pvel, fps=fps, params=CollectivePhysicsParams.from_config(cfg)))
+        mem = st.run("ball_memory", lambda: compute_ball_memory(
+            pxy, team, bxy, players_vel=pvel, ball_vel=bvel,
+            touch_mask=bk.touch_mask if bk is not None else None,
+            delta_d=bk.delta_d if bk is not None else None,
+            possession_evidence=bk.possession_evidence if bk is not None else None, fps=fps,
+            params=BallMemoryParams.from_config(cfg)))
+    return FrontEnd(pxy=pxy, bxy=bxy, team=team, pvel=pvel, bvel=bvel, bacc=bacc, pspeed=pspeed,
+                    bspeed=bspeed, visible=visible, sig=sig, bk=bk, anchors=anchors, dead_score=dead_score,
+                    owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem)
+
+
+def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_Stages | None" = None):
+    """Wave-1 emissions of a :class:`FrontEnd` (an ``EmissionResult``)."""
+    st = stages or _Stages(None)
+    n = len(fe.visible)
+    bk, sig = fe.bk, fe.sig
+    return st.run("emissions", lambda: compute_emissions(
+        fe.dead_score, bk.possession_evidence if bk is not None else np.zeros(n),
+        bk.evidence_valid if bk is not None else np.zeros(n, bool), fe.visible,
         status_dead=sig.status_dead if (sig is not None and sig.has_status) else None,
-        phase_prior_home=phase, owner_team=owner, touch_signed=touches, fps=fps,
-        params=EmissionParams.from_config(cfg)),
-        required=True)
+        phase_prior_home=fe.phase, owner_team=fe.owner, touch_signed=fe.touches, fps=fps,
+        params=EmissionParams.from_config(config_path)), required=True)
+
+
+def run_core(
+        players_xy: np.ndarray, team_of_slot: np.ndarray, ball_xy: np.ndarray, *,
+        play_blocks: Sequence[tuple[int, int]], dead_blocks: Sequence[tuple[int, int]] = (),
+        fps: float = FPS, pitch: tuple[float, float] = PITCH,
+        ball_channels: dict[str, np.ndarray] | None = None,
+        ball_channel_codes: dict[str, dict[str, int]] | None = None,
+        team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
+        config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
+        keep_features: bool = False, specialists: Any = None) -> CoreResult:
+    """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
+
+    ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
+    1 away.  ``play_blocks`` are the inclusive graded blocks decoded independently (the first two also give
+    the halves used to orient the pitch); ``dead_blocks`` are forced to ``D``.  ``smart_tagging`` (optional)
+    is a :class:`~mtah2027.io.smart_tagging_loader.SmartTagging`.  Frames outside the blocks are ``X``.
+
+    ``specialists`` (a :class:`~mtah2027.models.specialist_fusion.SpecialistSet`, optional) replaces the
+    heuristic emissions by the learned ones (Issues #20-#22); if it is ``None`` or fails at any point the
+    wave-1 heuristic emissions are used (progressive fallback).
+    """
+    cfg = config_path
+    pp = PipelineParams.from_config(cfg)
+    st = _Stages(log)
+    n = len(ball_xy)
+    play_blocks = [(int(a), int(b)) for a, b in play_blocks]
+    feats: dict[str, np.ndarray] = {}
+
+    def front_end(ball: np.ndarray, quiet: bool = False) -> FrontEnd:
+        return compute_front_end(
+            players_xy, team_of_slot, ball, play_blocks=play_blocks, fps=fps, pitch=pitch,
+            ball_channels=ball_channels, ball_channel_codes=ball_channel_codes, team_ids=team_ids,
+            team_names=team_names, smart_tagging=smart_tagging, config_path=cfg,
+            stages=_Stages(lambda m: None) if quiet else st, collective=specialists is not None)
+
+    fe = front_end(ball_xy)
+    sig, bk, anchors, visible, dead_score = fe.sig, fe.bk, fe.anchors, fe.visible, fe.dead_score
+    owner_key = fe.owner_key
+
+    # 7. emissions ---------------------------------------------------------------------------------
+    em = heuristic_emissions(fe, fps, cfg, st)
+    learned = None
+    if specialists is not None:
+        from mtah2027.models.specialist_fusion import fuse_emissions
+
+        learned = st.run("specialists", lambda: fuse_emissions(
+            specialists, fe, em, play_blocks=play_blocks, fps=fps,
+            rebuild=lambda ball: front_end(ball, quiet=True), raw_ball=np.asarray(ball_xy, np.float32),
+            config_path=cfg))
+        if learned is not None:
+            em = learned.emissions
+    emission_source = "specialists" if learned is not None else "heuristic"
 
     # 8. transitions -------------------------------------------------------------------------------
     restart_frames = restart_teams = None
@@ -293,6 +390,8 @@ def run_core(
         "has_status_channel": bool(sig is not None and sig.has_status),
         "owner_channel": owner_key, "n_anchors": len(anchors.anchors) if anchors is not None else 0,
         "n_anchors_resolved": anchors.n_resolved if anchors is not None else 0,
+        "emission_source": emission_source,
+        "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
         "optimizer": opt_stats,
     }

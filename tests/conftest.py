@@ -98,3 +98,21 @@ def synthetic_kin(synthetic_info, synthetic_dir):
                                              halves=(spec.half1, spec.half2_play))
     st = load_smart_tagging(synthetic_dir, n_frames=td.n_frames)
     return {"td": td, "kin": kin, "spec": spec, "labels": synthetic_info["labels"], "st": st}
+
+
+@pytest.fixture(scope="session")
+def external_like_dir(synthetic_info, synthetic_dir, tmp_path_factory):
+    """Two ``.npz`` files in the external-benchmark format, built from the short synthetic match."""
+    from mtah2027.io import atd_loader as al
+
+    td = al.load_atd(synthetic_dir, cache_dir=None)
+    spec = synthetic_info["spec"]
+    out = tmp_path_factory.mktemp("external_like")
+    n = len(synthetic_info["labels"])
+    ball = np.where(np.isfinite(td.ball_xy), td.ball_xy, 0.0)[:n].astype(np.float32)   # complete ball
+    for k in range(2):
+        np.savez(out / f"fake_match_{k}.npz", players_xy=td.players_xy[:n], team_of_slot=td.team_of_slot,
+                 ball_xy=ball, fps=np.float64(td.fps), pitch=np.asarray(td.pitch, dtype=np.float64),
+                 period_bounds=np.array([spec.half1, spec.half2_play]),
+                 gt=np.asarray(synthetic_info["labels"]))
+    return out
