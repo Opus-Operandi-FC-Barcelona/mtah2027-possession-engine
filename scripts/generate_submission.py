@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Deterministic end-to-end submission generator: tracking bundle -> ``<team>.csv`` (Issue #28, wave 1).
+"""Deterministic end-to-end submission generator: tracking bundle -> ``<team>.csv`` (Issue #28, waves 1-2).
 
 Examples::
 
@@ -49,6 +49,15 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="generate the full-length synthetic match (fixed seed) in a temp dir and run on it")
     ap.add_argument("--synthetic-frames", type=int, default=None,
                     help="with --synthetic: use a short match of this many frames instead (tests)")
+    ap.add_argument("--specialists", choices=("auto", "train", "load", "off"), default="auto",
+                    help="learned emissions (Issues #20-#22): train = fit on the external matches at run "
+                         "time; load = committed models/specialists.json; auto = train if the external "
+                         "matches are on disk, else load, else heuristic emissions (with --synthetic, auto "
+                         "never trains); off = wave-1 heuristic emissions")
+    ap.add_argument("--bench-dir", default=None,
+                    help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
+                         "mtah2027-external-benchmarks/cache)")
+    ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
     ap.add_argument("--no-cache", action="store_true", help="do not cache the parsed ATD under cache/")
     ap.add_argument("--quiet", action="store_true", help="do not print the per-stage log")
     return ap.parse_args(argv)
@@ -76,6 +85,7 @@ def main(argv=None) -> int:
     _pin_hash_seed()
 
     from mtah2027.config import MatchConfig, load_config, set_global_seeds
+    from mtah2027.models.specialist_fusion import resolve_specialists
     from mtah2027.pipeline import resolve_config, run_pipeline
     from mtah2027.postprocessing.submission_contract import write_submission_csv
     from mtah2027.validation import eval_bridge as eb
@@ -111,11 +121,29 @@ def main(argv=None) -> int:
             data_dir = args.data_dir or os.environ.get("MTAH_DATA_DIR") or str(REPO_ROOT / "data")
             cache_dir = None if args.no_cache else REPO_ROOT / "cache"
 
+        say = (lambda m: None) if args.quiet else print
+        # --synthetic (CI / tests): never train at run time, so the run is fast and independent of local data
+        t_models = time.perf_counter()
+        specialists = resolve_specialists(
+            args.specialists, bench_dir=args.bench_dir, model_path=args.model_path, config_path=cfg_path,
+            prefer_file=args.synthetic, log=lambda m: say(f"[specialists] {m}"))
+        print(f"specialists: {specialists.source if specialists else 'none (heuristic emissions)'} "
+              f"({time.perf_counter() - t_models:.1f} s)")
+        if specialists is not None and specialists.training:
+            t = specialists.training
+            print(f"  trained on {len(t.get('matches', []))} external matches, "
+                  f"{t.get('rows_visible', 0)} visible-ball / {t.get('rows_hidden', 0)} hidden-ball rows")
         result = run_pipeline(data_dir, cfg_path, blocks, cache_dir=cache_dir,
-                              log=(lambda m: None) if args.quiet else None)
+                              log=(lambda m: None) if args.quiet else None, specialists=specialists)
         write_submission_csv(out, result.labels, n_expected=blocks.n_video_frames)
         check = eb.validate_submission_file(out, blocks.n_video_frames)
         digest = hashlib.sha256(out.read_bytes()).hexdigest()
+        core = result.diagnostics.get("core", {})
+        print(f"emissions: {core.get('emission_source', 'n/a')}")
+        pseudo = core.get("specialists", {}).get("pseudo_labels", {}) if core else {}
+        if pseudo:
+            print(f"pseudo-labels (target match, algorithmic): {pseudo.get('blocks', 0)} masked blocks, "
+                  f"{pseudo.get('rows', 0)} rows, adapted={pseudo.get('adapted')}")
         print(f"route: {result.diagnostics['route']}   validate_submission: "
               f"{'OK' if check else 'FAIL: ' + str(check.reason)}")
         _summary(result.labels, blocks, time.perf_counter() - t0, out, digest)
