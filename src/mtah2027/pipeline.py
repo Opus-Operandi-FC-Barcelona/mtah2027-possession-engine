@@ -490,6 +490,7 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
     smart = st.run("load_smart_tagging", lambda: load_smart_tagging(data_dir, n_frames=n))
     pp = PipelineParams.from_config(cfg_path)
     vp = VisionParams.from_config(cfg_path)
+    td, broadcast = _apply_broadcast_sync(td, data_dir, match, cfg_path, st, cache_dir)
     homography, hom = None, None
     if (pp.use_aerial_filter and pp.use_homography) or vp.enabled:
         from mtah2027.io.homography_loader import load_homography
@@ -505,7 +506,31 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
                    f"({100 * vision.stats['fill_rate']:.1f}%)")
     elif not vp.enabled:
         st.skip("vision_recovery", "disabled by configuration")
-    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision)
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision, broadcast)
+
+
+def _apply_broadcast_sync(td, data_dir, match: MatchConfig, cfg_path, st: _Stages, cache_dir):
+    """Issue #10: broadcast ball injected into the tactical holes; ``(td, stats)``."""
+    from mtah2027.preprocessing import broadcast_sync as bsync
+
+    bp = bsync.BroadcastSyncParams.from_config(cfg_path)
+    if not bp.enabled:
+        st.skip("broadcast_sync", "disabled by configuration")
+        return td, None
+    if not bsync.broadcast_files_present(data_dir):
+        st.skip("broadcast_sync", "broadcast files not found")
+        return td, None
+    res = st.run("broadcast_sync", lambda: bsync.sync_broadcast_files(
+        td, data_dir, [match.half1, match.half2_play], params=bp, cache_dir=cache_dir))
+    if res is None:
+        return td, None
+    s = res.stats
+    st.log(f"broadcast: {s['blocks_accepted']}/{s['blocks']} blocks synchronised, "
+           f"{s['frames_filled']} hidden frames filled ({100 * s['fill_rate']:.1f}%)")
+    ball = res.ball_xy
+    channels = {**td.ball_channels, "x": np.ascontiguousarray(ball[:, 0]),
+                "y": np.ascontiguousarray(ball[:, 1])}
+    return dataclasses.replace(td, ball_xy=ball, ball_channels=channels), dict(s)
 
 
 def _merge_cached_vision(td, hom, data_dir, match: MatchConfig, vp: VisionParams, n: int):
@@ -560,7 +585,8 @@ def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
 
 
 def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any,
-                   homography: np.ndarray | None = None, vision: Any = None) -> PipelineResult:
+                   homography: np.ndarray | None = None, vision: Any = None,
+                   broadcast: dict | None = None) -> PipelineResult:
     """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
     n = match.n_video_frames
     t_total = time.perf_counter()
@@ -594,6 +620,7 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
         "route": route, "loader_stages": dict(st.info), "core": core_diag,
         "n_frames": n, "team_names": list(td.team_names),
         "vision": dict(vision.stats) if vision is not None else None,
+        "broadcast": broadcast,
         "final": summarize_labels(labels, play_blocks, td.fps),
         "seconds_total": round(time.perf_counter() - t_total, 3),
     }

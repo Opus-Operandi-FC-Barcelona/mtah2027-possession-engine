@@ -18,7 +18,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` (versión funcio
 - [x] COMPLETADA · #07 · wave-1 · Cargador vectorizado de matrices de homografía $H$ e inversas $H^{-1}$ · `feat/issue-07-homography-loader`
 - [x] COMPLETADA · #08 · wave-1 · Filtrado de suplentes en banda y fusión de tracks duplicados ($< 0.6\text{ m}$) · `feat/issue-08-track-dedup-and-bounds`
 - [x] COMPLETADA · #09 · wave-1 · Cinemática Savitzky-Golay $(\vec{v}, \vec{a})$ y normalización de orientación de ataque · `feat/issue-09-savgol-kinematics-orientation`
-- [ ] PENDIENTE · #10 · wave-3 · Sincronización de cámara de TV por bloques continuos e inyección de balón · `feat/issue-10-broadcast-block-sync`
+- [x] COMPLETADA · #10 · wave-3 · Sincronización de cámara de TV por bloques continuos e inyección de balón · `feat/issue-10-broadcast-block-sync`
 
 ## Milestone 3: Visión Guiada por Atención y Geometría 3D de Balón Aéreo
 

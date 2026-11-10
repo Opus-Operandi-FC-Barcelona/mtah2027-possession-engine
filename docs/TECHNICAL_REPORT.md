@@ -66,7 +66,7 @@ per-frame classifiers (the official baselines show it: raw 0.04 vs smoothed 0.33
 | Tactical Smart Tagging XML | **used** | set-piece/goal windows -> restart frames; weak phase prior for H/A |
 | External open tracking matches (IDSSE / DFL Bundesliga, 7 matches) | **used for training and tuning only** | training data of Specialists A/B and all hyper-parameter choices; never BAR-ATH (section 3) |
 | Tactical homography | loader implemented (#7), **not used** in wave 1 | needed for the planned attention crops |
-| Broadcast ATD / homography | **not used** in wave 1 | planned sync (#10, wave 3) to inject a ball where the tactical one is missing |
+| Broadcast ATD / homography | **not used** in wave 1 | `preprocessing/broadcast_sync.py` (#10): block-wise sync + ball injection, OFF by default (see Limitations) |
 | Videos (tactical, broadcast) | **not used** | planned YOLO attention crops (#11, wave 3) |
 | Official scorer / `games.py` / starter | **used (vendored, unmodified)** | metric, constants, format check |
 | Public 5-minute ground truth | **not used for any decision** | only reserved as a format/alignment smoke test |
@@ -239,6 +239,16 @@ version is not known to the authors at the time of writing (the data is processe
   with 0.3 m noise at X = 40 the heuristic route gains +0.061 (0.3968 -> 0.4575) and the learned one +0.014
   (0.6105 -> 0.6248).  So it only pays with an accurate detector (about 0.3 m) and is no use at 1 m; the
   AGPL-3.0 `ultralytics` dependency is an optional extra and nothing in the submission path needs it.
+* Broadcast sync (`preprocessing/broadcast_sync.py`, #10) is built and tested on synthetic data only and is OFF by
+  default (`broadcast_sync.enabled: false`); the real broadcast files have not been processed.  Simulated value
+  (`scripts/simulate_broadcast_value.py`, seed 0, the 10 external matches degraded with the #19 degrader; the TV
+  view follows the ball with a 35 m window, shots of 3-12 s, cuts, replay-induced clock drift, permuted slots, 0.3 m
+  player / 0.5 m ball noise): 38 % of the blocks are accepted, 94.5 % of them within 2 frames of the true offset
+  (median error 0 frames; the other 5.5 % are wrong placements), 13.9 % of the hidden graded frames get a ball
+  (median error 0.60 m, i.e. the injected noise).  Heuristic-route spellF1 0.4127 -> 0.4224 (+0.010; 7 matches up,
+  3 down by up to 0.012), the learned route on the first two matches only (leave-one-match-out training is slow)
+  0.5621 -> 0.5592 (-0.003).  A +0.01 is within the spellF1 noise (~0.04), so it stays off until a local run on the
+  real files shows a high accepted share and a small position residual.
 * Parameters are generic priors validated on other competitions' data; the tracking noise of BAR-ATH may be
   different.  No parameter was fitted to BAR-ATH.
 * The KPI dashboard (#27) only flags alarms; its ranges and targets are never used to tune parameters.

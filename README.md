@@ -183,6 +183,27 @@ Only aggregates are printed (crops scanned, detections kept, share of hidden fra
 **AGPL-3.0**: it is imported only by `--detector yolo`, is a separate optional extra, and nothing in the
 submission path needs it.  It stays off until validated locally on the real video.
 
+## Broadcast sync (optional, off by default)
+
+`preprocessing/broadcast_sync.py` (Issue #10) places the TV tracking (`data/broadcast/*_broadcast_atd.*` +
+`*_broadcast_homography.csv`, **not aligned** to the tactical clock) on the tactical timeline and injects its ball
+where the tactical ball is NaN (`ball_source` 4).  Continuous blocks (homography `valid` and error < 5, >= 75
+frames, split every 90 s) get a crop-invariant fingerprint (mean speed of the visible players, median distance to
+the nearest visible opponent); the offset comes from a z-normalised cross-correlation against the tactical
+fingerprint (accepted at corr >= 0.65), refined and verified with the player positions (label-free nearest
+same-team distance) and a ball-agreement test; blocks that fail the strict global test are retried in a narrow
+window around the offset of their nearest synchronised neighbour.  Without broadcast files the stage is skipped
+and logged.
+
+```bash
+# 1. set broadcast_sync.enabled: true in configs/default.yaml (needs data/broadcast/ next to data/tactical/)
+python scripts/generate_submission.py --data-dir data --out outputs/OpusOperandi.csv
+#    the log prints "broadcast: N/M blocks synchronised, K hidden frames filled"; diagnostics["broadcast"] has
+#    only aggregates (blocks, accepted, offset/corr/residual medians, fill rate, seconds)
+# 2. value estimate on other matches with a simulated camera (never BAR-ATH):
+python scripts/simulate_broadcast_value.py --seed 0 --specialists lomo
+```
+
 ## Repository layout
 
 ```
@@ -190,7 +211,7 @@ configs/default.yaml                 all parameters, one section per module
 src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
-  preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
+  preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9), broadcast_sync (#10, off)
   vision/                            attention_crops, detectors, recovery (#11, off); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      throwin_resolver (#15), collective_physics (#17), ball_memory (#18)

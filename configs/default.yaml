@@ -354,3 +354,32 @@ vision:
   speed_slack_m: 1.5
   interp_max_frames: 25         # frames interpolated between two points (at least one a detection)
   cache_dir: cache/vision
+
+# Issue #10 -- broadcast (TV) tracking synchronised to the tactical clock by continuous blocks; its ball fills
+# the tactical holes (ball_source 4).  OFF by default until validated locally on the real broadcast files.
+broadcast_sync:
+  enabled: false
+  min_block_frames: 75          # continuous block = valid homography and reprojection_error < max_reproj_error
+  max_block_s: 90.0             # longer shots are split in pieces of at most this length (0 = no split)
+  max_reproj_error: 5.0
+  pitch_margin_m: 1.0           # players farther outside the pitch are ignored
+  min_players: 4                # visible players needed for a fingerprint sample
+  speed_half_span: 2
+  fingerprint_smooth_s: 1.0
+  min_corr: 0.65                # z-normalised cross-correlation of the fingerprints
+  min_margin: 0.0               # ... and its lead over the best peak outside margin_excl_s (0 = off; the position
+                                # residual below is the real arbiter: the margin rejected as many right as wrong blocks)
+  margin_excl_s: 2.0
+  max_offset_s: 2400.0          # search window |tactical - broadcast| (0 = unbounded)
+  std_floor_rel: 0.1
+  refine_s: 3.0                 # position refinement half-width (0 = off)
+  refine_step: 5
+  refine_max_samples: 80
+  max_refine_dist_m: 2.0        # accepted median nearest-same-team distance after the refinement
+  max_ball_disagree_m: 3.0      # accepted median ball distance where both balls are visible
+  min_ball_overlap: 25
+  ball_margin_m: 1.0
+  local_rounds: 3               # propagation rounds from the accepted blocks to their neighbours (0 = off)
+  local_reach_s: 180.0          # a block is only matched to anchors at most this far away in time
+  local_window_s: 60.0          # ... searching offsets within +- this of the nearest anchor's offset
+  min_corr_local: 0.5           # relaxed fingerprint correlation inside that narrow window
