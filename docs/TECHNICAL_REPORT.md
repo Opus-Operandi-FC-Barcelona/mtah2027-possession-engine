@@ -222,7 +222,7 @@ version is not known to the authors at the time of writing (the data is processe
   the same hash-checked pipeline.
 * The block-masking pseudo-labelling (#21) did not help on external matches and is off by default.
 * Touch detection depends on the ball track quality; noisy or interpolated ball positions produce missed or
-  spurious touches.  Aerial balls are not modelled (`is_aerial` is all false until Issue #12).
+  spurious touches.  Aerial balls: `vision/aerial_filter.py` (#12) derives `is_aerial` from the ball track alone (apparent speed > 35 m/s, reprojection jumps with homographies, straight flights > 18 m without grass deceleration, optional ATD z channel; the IDSSE benchmark has no z, so only the 2-D cues were measured) and suppresses touches there. It is OFF by default (`pipeline.use_aerial_filter`): on the 7 degraded IDSSE matches it lowered spellF1 (heuristic route 0.3968 -> 0.3806, leave-one-match-out specialists 0.6105 -> 0.6045), because the touches it removes at kicks/landings are real boundaries.
 * Throw-ins with `Team = N/A` get their team from the tracking (`features/throwin_resolver.py`, #15): the player
   within 1.5 m of a touchline who is most isolated from opponents (and holds the ball) in `[start, t*]`, and the
   first clear controller in `[t*, t*+35]`, vote; below the confidence floor the throw-in stays unresolved and

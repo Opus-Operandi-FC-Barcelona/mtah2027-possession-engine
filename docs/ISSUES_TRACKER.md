@@ -23,7 +23,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` (versión funcio
 ## Milestone 3: Visión Guiada por Atención y Geometría 3D de Balón Aéreo
 
 - [ ] PENDIENTE · #11 · wave-3 · Generador de Attention Crops ($640\times640$) con homografía e interfaz de detector · `feat/issue-11-attention-crops-yolo`
-- [ ] PENDIENTE · #12 · wave-3 · Detector de balón aéreo (is_aerial) por velocidad aparente y curvatura · `feat/issue-12-aerial-ball-filter`
+- [x] COMPLETADA · #12 · wave-3 · Detector de balón aéreo (is_aerial) por velocidad aparente y curvatura · `feat/issue-12-aerial-ball-filter`
 
 ## Milestone 4: Balón Muerto (D), Anclaje de Set Pieces y Física Colectiva
 

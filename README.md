@@ -165,6 +165,7 @@ src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
+  vision/                            aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
