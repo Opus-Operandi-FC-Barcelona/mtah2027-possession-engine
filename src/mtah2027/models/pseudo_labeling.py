@@ -44,6 +44,7 @@ class PseudoLabelParams:
     max_attempts: int = 20000
     seed: int = 0
     min_rows: int = 300               # fewer pseudo rows than this -> no adaptation
+    include_dead: bool = True         # also keep the anchors labelled D (else only H / A possessions)
 
     def __post_init__(self):
         if not 0 < self.block_min_s <= self.block_max_s:
@@ -144,6 +145,8 @@ def build_pseudo_dataset(
         on_grid = (np.arange(n) % p.stride) == variant
         rows = np.flatnonzero(in_block & np.asarray(anchor_mask, bool) & on_grid)
         rows = rows[np.asarray(anchor_label)[rows] >= 0]
+        if not p.include_dead:
+            rows = rows[np.asarray(anchor_label)[rows] != 2]
         xs.append(fm.x[rows])
         ys.append(np.asarray(anchor_label)[rows].astype(np.int64))
         ws.append(np.full(len(rows), p.weight))

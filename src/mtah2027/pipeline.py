@@ -20,7 +20,8 @@ and skipped -- *progressive fallback* -- and the route continues with what remai
 If a required stage of the heuristic route fails, the whole route falls back to the nearest-player baseline so
 that a valid file is always produced.  ``run_core`` is the array-level part (no file loaders, no Smart
 Tagging unless supplied) shared with the external-benchmark evaluation; ``run_pipeline`` adds the loaders and
-the contract.  The wave-2 specialists (#20-#22) will replace stage 7 and plug in here.
+the contract.  The wave-2 specialists (#20-#22, ``specialists=``) replace stage 7 (the heuristic
+emissions stay as the fallback) and add the collective-physics / ball-memory features to the front end.
 """
 from __future__ import annotations
 
@@ -422,12 +423,14 @@ def resolve_config(config: str | Path | Config | None) -> tuple[Path, Config | N
 
 def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config | None = None,
                  blocks: MatchConfig | None = None, *, cache_dir: str | Path | None = None,
-                 log: Callable[[str], None] | None = None) -> PipelineResult:
+                 log: Callable[[str], None] | None = None, specialists: Any = None) -> PipelineResult:
     """Tracking bundle in ``data_dir`` -> contract-compliant labels (see the module docstring).
 
     ``config`` is a YAML path or a typed :class:`Config` (default ``configs/default.yaml``); ``blocks`` the
     match layout (default: the official BAR-ATH one, or ``config.match``).  ``cache_dir`` enables the
-    ``.npz`` cache of the parsed ATD (``None`` = no cache).
+    ``.npz`` cache of the parsed ATD (``None`` = no cache).  ``specialists`` (optional
+    :class:`~mtah2027.models.specialist_fusion.SpecialistSet`) switches the emissions from the heuristic
+    to the learned ones (Issues #20-#22); the heuristic emissions remain the fallback.
     """
     from mtah2027.io.atd_loader import load_atd
     from mtah2027.io.smart_tagging_loader import load_smart_tagging
@@ -451,7 +454,7 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
             players, td.team_of_slot, ball, play_blocks=play_blocks, dead_blocks=dead_blocks, fps=td.fps,
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
-            smart_tagging=smart, config_path=cfg_path, log=st.log)
+            smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists)
         codes, core_diag = core.codes, core.diagnostics
         route = "heuristic"
     except Exception as exc:  # noqa: BLE001 - last resort: still deliver a valid file

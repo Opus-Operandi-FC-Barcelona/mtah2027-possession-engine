@@ -65,6 +65,7 @@ class MatchRows:
 class TrainingSet:
     names: list[str]
     parts: list[MatchRows]
+    base_seeds: tuple = ()           # degradation seeds requested for every match (before the match offset)
 
     def stack(self, kind: str, exclude_match: str | None = None, only_match: str | None = None):
         """``(x, y, groups)`` of the ``vis`` or ``hid`` rows (groups = match name)."""
@@ -90,7 +91,7 @@ class TrainingSet:
         return {"matches": self.matches, "n_variants": len(self.parts),
                 "rows_visible": int(sum(len(p.y_vis) for p in self.parts)),
                 "rows_hidden": int(sum(len(p.y_hid) for p in self.parts)),
-                "seeds": sorted({p.seed for p in self.parts}),
+                "degradation_seeds": list(self.base_seeds) or sorted({p.seed for p in self.parts}),
                 "swapped_variants": int(sum(p.swap for p in self.parts))}
 
 
@@ -160,5 +161,5 @@ def build_training_set(bench_dir: str | Path, *, params: TrainingDataParams | No
             if log:
                 log(f"training rows {f.stem} seed {seed + i}: {len(parts[-1].y_vis)} visible / "
                     f"{len(parts[-1].y_hid)} hidden ({time.perf_counter() - t0:.1f} s)")
-    return TrainingSet(names=parts[0].names, parts=parts)
+    return TrainingSet(names=parts[0].names, parts=parts, base_seeds=tuple(p.seeds))
 

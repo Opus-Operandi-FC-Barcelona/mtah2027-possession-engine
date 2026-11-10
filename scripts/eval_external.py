@@ -11,7 +11,16 @@ on the same arrays for reference.
 ``--degrade`` applies the realistic degrader of Issue #19 (``models/external_degrader.py``): the ball is
 hidden in crowding-weighted blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) covering 41 % of the alive frames
 plus tracking noise, identity cuts, duplicate tracks and dropped players.  ``--seeds 0 1 2`` repeats it per
-seed and also prints the mean over seeds.  ``--hide-ball-frac F`` is the older crude degradation (random
+seed and also prints the mean over seeds.
+
+``--specialists lomo`` adds the learned route of Issues #20-#22 (Specialists A and B + fusion), evaluated
+**leave-one-match-out**: for every held-out match the specialists are trained on the *other* matches only
+(degraded with several seeds, home / away swapped copies), and the held-out match is processed as the
+unlabelled target (its pseudo-labels, Issue #21, come from its own degraded tracking, never from its ground
+truth).  ``--no-pseudo`` switches the Issue #21 adaptation off (ablation).  ``--fusion key=value ...``
+overrides ``specialist_fusion`` parameters for tuning sweeps (external matches only).
+
+``--hide-ball-frac F`` is the older crude degradation (random
 5-60 s blocks, no artefacts) and still works.  Only aggregate numbers are printed.
 """
 from __future__ import annotations
@@ -68,7 +77,7 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
 
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
-                   degrade: bool = False) -> dict:
+                   degrade: bool = False, specialists=None) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
@@ -87,6 +96,13 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
     row["engine"] = score(gt, core.codes)
+    if specialists is not None:
+        t0 = time.perf_counter()
+        learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
+                           log=lambda m: None, specialists=specialists)
+        row["specialists"] = score(gt, learned.codes)
+        row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
+        row["specialists"]["source"] = learned.diagnostics["emission_source"]
     if with_baseline:
         base = np.full(len(gt), 3, dtype=np.int8)
         full = baseline_labels(players, team, ball)
@@ -110,6 +126,11 @@ def main(argv=None) -> int:
     ap.add_argument("--only-complete-ball", action="store_true",
                     help="skip matches whose own ball channel has gaps (Metrica samples drop the ball "
                          "while it is dead, which leaks D into the visibility)")
+    ap.add_argument("--specialists", choices=("off", "lomo"), default="off",
+                    help="lomo: also score the learned specialists, trained leave-one-match-out")
+    ap.add_argument("--no-pseudo", action="store_true", help="with --specialists: no Issue #21 adaptation")
+    ap.add_argument("--fusion", nargs="*", default=[], metavar="KEY=VALUE",
+                    help="override specialist_fusion parameters (tuning on external matches only)")
     ap.add_argument("--no-baseline", action="store_true")
     ap.add_argument("--json", default=None, help="write the aggregate rows to this JSON file")
     args = ap.parse_args(argv)
@@ -123,6 +144,31 @@ def main(argv=None) -> int:
         print(f"no benchmark files in {args.bench_dir}")
         return 1
     seeds = list(args.seeds) if args.seeds else [args.seed]
+    models: dict = {}
+    training = None
+    if args.specialists == "lomo":
+        import dataclasses
+
+        from mtah2027.models import specialist_fusion as sf
+        from mtah2027.models.specialist_data import build_training_set
+
+        overrides = {}
+        for item in args.fusion:
+            key, _, value = item.partition("=")
+            overrides[key] = json.loads(value)
+        if args.no_pseudo:
+            overrides["use_pseudo_labels"] = False
+        fusion = dataclasses.replace(sf.FusionParams.from_config(args.config), **overrides)
+        training = build_training_set(args.bench_dir, config_path=args.config, log=print)
+
+        def specialists_for(stem: str):
+            if stem not in models:
+                t0 = time.perf_counter()
+                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                                            exclude_match=stem)
+                models[stem] = dataclasses.replace(spec, fusion=fusion)
+                print(f"  trained specialists without {stem} ({time.perf_counter() - t0:.0f} s)", flush=True)
+            return models[stem]
     all_rows = []
     print(f"degrade={args.degrade} hide_ball_frac={args.hide_ball_frac} seeds={seeds}")
     head = (f"{'match':<18}{'seed':>5}{'spellF1':>8}{'macroF1':>8}{'poss':>6}{'gt_poss':>8}"
@@ -133,7 +179,7 @@ def main(argv=None) -> int:
     for seed in seeds:
         for i, f in enumerate(files):
             row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
-                                 args.degrade)
+                                 args.degrade, specialists_for(f.stem) if training is not None else None)
             row["seed"] = seed
             all_rows.append(row)
             e = row["engine"]
@@ -145,6 +191,11 @@ def main(argv=None) -> int:
                 line += (f"{'| ' + format(b['spell_f1'], '.4f'):>11}{b['macro_f1']:9.4f}"
                          f"{b['n_pred_spells']:7d}")
             print(line, flush=True)
+            if "specialists" in row:
+                sp = row["specialists"]
+                print(f"{'  + specialists':<18}{seed:5d}{sp['spell_f1']:8.4f}{sp['macro_f1']:8.4f}"
+                      f"{sp['n_pred_spells']:6d}{sp['n_gt_spells']:8d}{sp['mean_spell_s']:7.1f}"
+                      f"{sp['gt_mean_spell_s']:6.1f}   ({sp['source']}, {sp['seconds']} s)", flush=True)
     rows = all_rows
     mean = {}
     for key in ("engine", "baseline"):
@@ -153,11 +204,17 @@ def main(argv=None) -> int:
         for metric in ("spell_f1", "macro_f1"):
             mean[metric if key == "engine" else f"baseline_{metric}"] = float(
                 np.mean([r[key][metric] for r in rows]))
+    if training is not None:
+        for metric in ("spell_f1", "macro_f1"):
+            mean[f"specialists_{metric}"] = float(np.mean([r["specialists"][metric] for r in rows]))
     line = f"{'MEAN':<18}{'':>5}{mean['spell_f1']:8.4f}{mean['macro_f1']:8.4f}"
     if not args.no_baseline:
         line += (f"{'':<26}{'| ' + format(mean['baseline_spell_f1'], '.4f'):>11}"
                  f"{mean['baseline_macro_f1']:9.4f}")
     print(line)
+    if training is not None:
+        print(f"{'MEAN + specialists':<23}{mean['specialists_spell_f1']:8.4f}"
+              f"{mean['specialists_macro_f1']:8.4f}")
     if args.json:
         Path(args.json).write_text(json.dumps({"mean": mean, "rows": rows}, indent=2), encoding="utf-8")
     return 0
