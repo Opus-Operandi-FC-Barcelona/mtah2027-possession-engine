@@ -44,7 +44,7 @@ def transition_type(frm: int, to: int) -> str:
     return f"{NAMES[frm]}->{NAMES[to]}"
 
 
-def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int) -> dict:
+def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int, visible: np.ndarray | None = None) -> dict:
     runs = pm.valid_runs(gt)
     filled = pm.fill_abstentions(pred, runs)
     gt_tr, pr_tr = pm.transitions(gt, runs), pm.transitions(filled, runs)
@@ -71,7 +71,16 @@ def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int) -> dict:
     seg = pm.segments(gt, runs)
     short_d = [(a, b) for a, b, k in seg if k == 2 and (b - a) / fps < 3.0]
     reproduced = sum(1 for a, b in short_d if (filled[a:b] == 2).mean() >= 0.5)
+    hid = {"total": 0, "missed": 0, "vis_total": 0, "vis_missed": 0}
+    if visible is not None:
+        miss_set = {int(f) for f, _, _ in missed}
+        for f, frm, to in gt_tr:
+            if frm in (0, 1) and to in (0, 1) and frm != to:
+                key = "vis_" if visible[int(f)] else ""
+                hid[key + "total"] += 1
+                hid[key + "missed"] += int(int(f) in miss_set)
     out = {
+        "hidden_turnovers": hid,
         "n_gt": len(gt_sp), "n_pred": len(pr_sp),
         "gt_short_lt3s": int((dur < 3.0).sum()),
         "gt_short_lt3s_unmatched": int(((dur < 3.0) & ~matched).sum()),
@@ -133,7 +142,7 @@ def main(argv=None) -> int:
             codes = row["_codes"]
             for route in args.routes:
                 pred = codes["engine"] if route == "engine" else codes["specialists"]
-                d = diagnose(codes["gt"], pred, codes["fps"], args.tol)
+                d = diagnose(codes["gt"], pred, codes["fps"], args.tol, codes.get("visible"))
                 d.update({"match": row["match"], "seed": seed, "route": route,
                           "spell_f1": row[route]["spell_f1"], "macro_f1": row[route]["macro_f1"]})
                 rows.append(d)
@@ -145,6 +154,8 @@ def main(argv=None) -> int:
                 for kind in ("missed", "spurious", "gt", "pred"):
                     for typ, n in d["transitions"][kind].items():
                         t[f"{kind}:{typ}"] += n
+                for k, v in d["hidden_turnovers"].items():
+                    t["hid_" + k] += v
                 t["n"] += 1
     for route in args.routes:
         t = total[route]
@@ -158,6 +169,11 @@ def main(argv=None) -> int:
         print(f"   predicted spells merging >=2 true spells {int(t['pred_spells_merging_2plus_gt'])} "
               f"(covering {int(t['gt_spells_inside_a_merged_pred'])} true spells); true D stoppages <3 s "
               f"reproduced {int(t['gt_short_D_lt3s_reproduced'])}/{int(t['gt_short_D_lt3s'])}")
+        ht, hm = t["hid_total"], t["hid_missed"]
+        vt, vm = t["hid_vis_total"], t["hid_vis_missed"]
+        print(f"   H<->A turnovers with the ball hidden: {int(ht)} true, {int(hm)} missed "
+              f"({100 * hm / max(ht, 1):.1f} %); ball visible: {int(vt)} true, {int(vm)} missed "
+              f"({100 * vm / max(vt, 1):.1f} %)")
         for typ in ("H->A", "A->H", "->D", "D->"):
             print(f"   {typ:>5}: true {int(t['gt:' + typ]):5d} pred {int(t['pred:' + typ]):5d} "
                   f"missed {int(t['missed:' + typ]):5d} spurious {int(t['spurious:' + typ]):5d}")
