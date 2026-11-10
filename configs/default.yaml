@@ -317,3 +317,40 @@ aerial_filter:
   min_run_frames: 2             # flagged runs shorter than this are dropped
   z_min_m: 1.5                  # ball height above which it is airborne (ATD z channel, if declared)
   z_channels: [z, ball_z, height, ballz]
+
+# Issue #11 -- ball recovery from the tactical video (attention crops + detector).  OFF by default until it has
+# been validated locally on the real video.  `enabled: true` makes run_pipeline merge the detections cached by
+# scripts/run_vision_recovery.py (cache/vision/*.npz); it never reads the video itself.
+vision:
+  enabled: false
+  crop_size: 640
+  frame_width: 1920
+  frame_height: 1080
+  every_k: 5                    # one crop every k frames of each ball-missing gap
+  max_crops: 0                  # 0 = no cap
+  max_homography_error: 5.0     # frames with a larger reprojection error are not planned
+  offscreen_margin_px: 160.0
+  interp_max_s: 20.0            # gaps longer than this: search around the nearer seen ball
+  pressure_radius_m: 12.0
+  pressure_sigma_m: 6.0
+  closing_gain_mps: 3.0
+  pressure_weight: 0.5          # 0 = pure interpolation, 1 = pressure centroid
+  vel_half_span: 2
+  detector: hough               # yolo | hough | dryrun
+  weights: yolov8n.pt           # public COCO weights downloaded by ultralytics (AGPL-3.0, optional extra yolo)
+  confidence: 0.25
+  batch_size: 16
+  device: ""
+  seek_threshold_frames: 250
+  hough_min_radius_px: 4
+  hough_max_radius_px: 14
+  hough_param1: 120.0
+  hough_param2: 10.0
+  hough_min_brightness: 170.0
+  hough_max_candidates: 5
+  pitch_margin_m: 1.0
+  max_search_dist_m: 30.0
+  max_speed_mps: 40.0
+  speed_slack_m: 1.5
+  interp_max_frames: 25         # frames interpolated between two points (at least one a detection)
+  cache_dir: cache/vision

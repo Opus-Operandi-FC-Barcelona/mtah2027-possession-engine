@@ -578,15 +578,23 @@ def run_dashboard(
     }
     t_all = time.perf_counter()
 
+    vision_diag: dict = {}
+
     def route(sp) -> np.ndarray:
-        return run_pipeline(
+        res = run_pipeline(
             data_dir, cfg_path, blocks, cache_dir=cache_dir, log=lambda m: None, specialists=sp
-        ).labels
+        )
+        vision_diag.setdefault("vision", res.diagnostics.get("vision"))
+        return res.labels
 
     t0 = time.perf_counter()
     labels_heur = route(None)
     labels_spec = route(specialists) if specialists is not None else None
     report["route_seconds"] = round(time.perf_counter() - t0, 1)
+    if vision_diag.get("vision"):      # Issue #11: only present when vision.enabled (aggregates only)
+        report["vision"] = {k: vision_diag["vision"][k] for k in (
+            "status", "hidden_graded_frames", "gaps", "frames_filled", "fill_rate", "gaps_touched",
+            "gap_fill_rate", "detections_kept") if k in vision_diag["vision"]}
     primary = labels_spec if labels_spec is not None else labels_heur
     report["primary_route"] = "specialists" if labels_spec is not None else "heuristic"
     if submission_path is not None:
@@ -782,6 +790,15 @@ def format_report(report: dict) -> str:
         )
     else:
         row("7 route comparison", r["status"], r.get("error", ""))
+    if "vision" in report:
+        v = report["vision"]
+        lines.append(
+            f"vision recovery ({v.get('status')}): {v.get('frames_filled', 0)} of "
+            f"{v.get('hidden_graded_frames', 0)} "
+            f"hidden graded frames filled ({100 * v.get('fill_rate', 0.0):.1f}%), gaps with a recovery "
+            f"{100 * v.get('gap_fill_rate', 0.0):.0f}% of {v.get('gaps', 0)}, detections kept "
+            f"{v.get('detections_kept', 0)}"
+        )
     if "synthetic_truth" in report:
         lines.append(
             "synthetic ground truth (own generator): "

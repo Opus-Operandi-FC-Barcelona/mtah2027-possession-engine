@@ -157,6 +157,32 @@ python scripts/check_real_format.py --meta atd.xml --raw atd.txt --smart-tagging
 
 `tests/test_29_real_format.py` + `tests/fixtures/metrica_sample3_structure_*` keep that structure covered in CI.
 
+## Vision recovery (optional, off by default)
+
+`vision/attention_crops.py`, `detectors.py`, `recovery.py` (Issue #11) recover the ball from the **tactical video**
+where the tracking lost it: for every ball-missing graded frame (one in `vision.every_k`) a search point is
+predicted (interpolation between the last/next seen ball pulled towards the pressure centroid), projected to
+pixels with the tactical homography, and a 640x640 crop is cut and sent to a detector; detections are
+reprojected with `H^-1`, filtered (confidence, inside the pitch, near the search point, plausible speed) and
+injected into `ball_xy` only where it is NaN (`ball_source`: 1 tracking, 2 vision, 3 vision interpolation).
+Detections are cached in `cache/vision/*.npz` (git-ignored; key = video size/mtime + plan + detector).
+`run_pipeline` merges the cache when `vision.enabled: true`; it never decodes the video itself.
+
+```bash
+pip install -e ".[vision]"            # OpenCV headless 4.13.0.92 (reads the mp4, Hough fallback detector)
+pip install -e ".[yolo]"              # + ultralytics 8.3.253 for the YOLO detector (COCO "sports ball")
+python scripts/run_vision_recovery.py --data-dir data --benchmark 2000         # time the first 2000 frames
+python scripts/run_vision_recovery.py --data-dir data --detector dryrun        # chain check, no model
+python scripts/run_vision_recovery.py --data-dir data --detector yolo --weights yolov8n.pt [--every-k 5]
+# then vision.enabled: true in configs/default.yaml and generate_submission.py as usual
+python scripts/simulate_vision_value.py --fracs 0 0.2 0.4 0.6 --noise 1.0   # value estimate on external data
+```
+
+Only aggregates are printed (crops scanned, detections kept, share of hidden frames/gaps filled, runtime).
+**Licences:** OpenCV is Apache-2.0.  `ultralytics` (and its pretrained weights, downloaded by the library) is
+**AGPL-3.0**: it is imported only by `--detector yolo`, is a separate optional extra, and nothing in the
+submission path needs it.  It stays off until validated locally on the real video.
+
 ## Repository layout
 
 ```
@@ -165,7 +191,7 @@ src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
-  vision/                            aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
+  vision/                            attention_crops, detectors, recovery (#11, off); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),

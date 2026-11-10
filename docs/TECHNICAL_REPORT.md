@@ -230,6 +230,15 @@ version is not known to the authors at the time of writing (the data is processe
   `t*`) and an optional emission prior (`throwin_resolver.emission_bias`, off: no gain measured).  On the
   synthetic match 55 of 56 gradable throw-ins are right and none is wrong (one abstains); its effect on spellF1
   is nil there (the transition columns were already open), so the resolver is a safety net, not a gain claim.
+* Video ball recovery (`vision/`, #11) is built and tested on synthetic video only and is OFF by default
+  (`vision.enabled: false`); the real tactical video has not been processed.  Simulated value on the 7 degraded
+  IDSSE matches (a detector that recovers the true ball on X % of the planned crops, one per 5 frames of each
+  gap, then the same interpolating injection; 77 % of the hidden frames end up filled at X = 40 %), mean
+  spellF1 (paired, seed 0): with 1 m noise the heuristic route gains +0.021 (X = 20), +0.010 (40), -0.020 (60)
+  and the learned route LOSES 0.058 / 0.086 / 0.087 (its training data never had a noisy "recovered" ball);
+  with 0.3 m noise at X = 40 the heuristic route gains +0.061 (0.3968 -> 0.4575) and the learned one +0.014
+  (0.6105 -> 0.6248).  So it only pays with an accurate detector (about 0.3 m) and is no use at 1 m; the
+  AGPL-3.0 `ultralytics` dependency is an optional extra and nothing in the submission path needs it.
 * Parameters are generic priors validated on other competitions' data; the tracking noise of BAR-ATH may be
   different.  No parameter was fitted to BAR-ATH.
 * The KPI dashboard (#27) only flags alarms; its ranges and targets are never used to tune parameters.
