@@ -100,7 +100,8 @@ def main(argv=None) -> int:
         }
         r = settings[name]["routes"]
         print(f"{name}: heuristic {r['heuristic']['spell_f1']:.4f}/{r['heuristic']['macro_f1']:.4f}  "
-              f"specialists_lomo {r['specialists_lomo']['spell_f1']:.4f}/{r['specialists_lomo']['macro_f1']:.4f}",
+              f"specialists_lomo {r['specialists_lomo']['spell_f1']:.4f}/"
+              f"{r['specialists_lomo']['macro_f1']:.4f}",
               flush=True)
 
     evidence = {

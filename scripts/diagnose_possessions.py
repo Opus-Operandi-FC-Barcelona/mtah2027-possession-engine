@@ -6,11 +6,11 @@ For every external match (``--degrade`` as in ``eval_external.py``) and route (`
 
 * predicted vs true possession counts and the spellF1 / macroF1;
 * missed vs spurious **transitions** (tolerance ``--tol`` frames, matched on the destination label like the
-  official scorer) by type: ``H->A``, ``A->H``, ``->D`` (an alive team loses the ball to a stoppage) and ``D->``
-  (restart);
+  official scorer) by type: ``H->A``, ``A->H``, ``->D`` (an alive team loses the ball to a stoppage) and
+  ``D->`` (restart);
 * how the true possessions are lost: *merged* (the prediction holds one same-team spell across a true stoppage
-  or across a true opposing spell), *absorbed fast turnover* (true spell shorter than 3 s not matched), and the
-  share of the true stoppages ``D`` shorter than 3 s that the prediction does not reproduce.
+  or across a true opposing spell), *absorbed fast turnover* (true spell shorter than 3 s not matched), and
+  the share of the true stoppages ``D`` shorter than 3 s that the prediction does not reproduce.
 
 Only external open data is used and only aggregates are printed.  The learned route re-trains the
 leave-one-match-out specialists (cached as JSON under ``--cache`` to make repeated runs cheap).
@@ -152,7 +152,8 @@ def main(argv=None) -> int:
         print(f"== {route}: {int(n)} match-seed runs; mean spellF1 {t['spell_f1'] / n:.4f} "
               f"macroF1 {t['macro_f1'] / n:.4f}")
         print(f"   possessions predicted {int(t['n_pred'])} vs true {int(t['n_gt'])}; "
-              f"true spells unmatched@0.5 {int(t['gt_unmatched'])}, of which <3 s {int(t['gt_short_lt3s_unmatched'])} "
+              f"true spells unmatched@0.5 {int(t['gt_unmatched'])}, "
+              f"of which <3 s {int(t['gt_short_lt3s_unmatched'])} "
               f"(true <3 s spells: {int(t['gt_short_lt3s'])})")
         print(f"   predicted spells merging >=2 true spells {int(t['pred_spells_merging_2plus_gt'])} "
               f"(covering {int(t['gt_spells_inside_a_merged_pred'])} true spells); true D stoppages <3 s "

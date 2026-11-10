@@ -408,8 +408,8 @@ def kpi_format(path: str | Path, n_expected: int) -> dict:
 def load_external_evidence(path: str | Path | None = None, setting: str = "degraded") -> dict | None:
     """The committed external evidence (``scripts/make_external_evidence.py``) as an ``external`` dict.
 
-    Returns ``{"routes": ..., "source": ...}`` for ``decide_route`` or ``None`` when the file or the setting is
-    missing / malformed (the decision then stays ``undetermined``).  External open data only.
+    Returns ``{"routes": ..., "source": ...}`` for ``decide_route`` or ``None`` when the file or the setting
+    is missing / malformed (the decision then stays ``undetermined``).  External open data only.
     """
     import json
 
