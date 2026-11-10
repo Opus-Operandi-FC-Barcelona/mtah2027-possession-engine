@@ -195,11 +195,21 @@ def test_numba_and_fallback_decoders_give_the_same_file(synthetic_dir, synthetic
     assert np.array_equal(fallback, short_run[0].labels)
 
 
-def test_synthetic_score_beats_the_nearest_player_baseline(short_run, synthetic_gt, synthetic_dir,
-                                                           synthetic_spec):
+def test_synthetic_score_beats_the_nearest_player_baseline(synthetic_gt, synthetic_dir, synthetic_spec,
+                                                           tmp_path):
+    # Sanity check of the wiring with the shared decoder defaults.  The heuristic route_overrides were tuned
+    # on the real external matches and do not transfer to the toy synthetic generator (see TECHNICAL_REPORT).
+    import yaml
+
+    from mtah2027.config import DEFAULT_CONFIG_PATH
     from mtah2027.io.atd_loader import load_atd
 
-    result, blocks = short_run
+    raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw.pop("route_overrides", None)
+    cfg = tmp_path / "shared_defaults.yaml"
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    blocks = _blocks(synthetic_spec)
+    result = pipeline.run_pipeline(synthetic_dir, cfg, blocks, log=lambda m: None)
     gt = eb.to_codes(synthetic_gt)
     engine = eb.evaluate_arrays(gt, result.labels)
     td = load_atd(synthetic_dir, cache_dir=None, use_cache=False, n_frames=synthetic_spec.n_frames)

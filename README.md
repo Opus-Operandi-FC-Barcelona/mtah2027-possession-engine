@@ -126,6 +126,11 @@ hidden from the collective-physics (#17) and ball-memory (#18) features alone (l
 external matches); its dataset builder is reused by the specialist B work.
 
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
+The decoder parameters were swept with Optuna in `mtah2027-external-benchmarks` (`scripts/run_optuna_sweep.py`,
+nested leave-one-match-out estimate + an unused degradation seed).  The heuristic route adopts its tuned values
+through `route_overrides.heuristic` in `configs/default.yaml` (degraded IDSSE spellF1 0.396 -> 0.439 nested,
+0.384 -> 0.427 on the unused seed); the specialists keep the shared defaults (+0.0195, under the +0.02 rule).
+`reports/external_evidence.json` predates the heuristic overrides; the KPI 7 decision is unchanged (0.43 vs 0.61).
 
 ### Possession count and the KPI 7 evidence
 

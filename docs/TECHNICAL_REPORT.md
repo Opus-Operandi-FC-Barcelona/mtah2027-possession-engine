@@ -166,6 +166,26 @@ degraded matches (spellF1 / macroF1): tempering of the log-probabilities x1.5 0.
 (`ha_closed` -11.5 -> -8) changes the score by < 0.002, so the touch-based gating of Issue #23 is kept as it is
 (B's confident team changes inside long gaps already pass the -6 occlusion gate).
 
+**Optuna sweep of the decoder parameters** (`mtah2027-external-benchmarks/scripts/run_optuna_sweep.py`, reports in
+its `reports/optuna_*.json`; TPE seed 0, 300 trials per route, the 7 IDSSE matches degraded with seeds 0-1, the
+cached leave-one-match-out emissions so each trial only rebuilds transitions + Viterbi + spell optimiser; search
+space = `transition_matrix`, `spell_optimizer`, `heuristic_emissions` / specialist tempering-blend).  The honest
+estimate is nested (for each held-out match the parameters are chosen on the other six) and is checked again on
+an unused degradation seed 2.  Adoption rule fixed before the sweep: nested gain >= +0.02 spellF1 and a gain on the
+unused seed.
+
+| Route | defaults | best | nested honest | unused seed 2: defaults -> tuned |
+|---|---|---|---|---|
+| heuristic | 0.396 | 0.439 | 0.439 (+0.043) | 0.384 -> 0.427 (7/7 matches up) |
+| specialists | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+
+The heuristic parameters are adopted as `route_overrides.heuristic` in `configs/default.yaml` (merged over the shared
+sections only when the heuristic route decodes; `config.route_config`); re-measured through the full array-level
+pipeline (`eval_external.py --degrade --seeds 2 --only-complete-ball`) they give 0.4266 / 0.7734, matching the
+sweep.  The specialists keep the shared defaults (+0.0195 is under the rule).  On the toy synthetic match the tuned
+heuristic parameters score lower than the shared defaults (short match 0.348 vs baseline 0.458), another reminder
+that the synthetic physics is not football; the synthetic sanity test therefore runs on the shared defaults.
+
 **Pseudo-labelling ablation (Issue #21)** (same protocol, degraded, seeds 0-2; B adapted with the block-masked
 pseudo-labels of the held-out match's own degraded tracking, never its ground truth): without 0.606 / 0.900,
 with the specified settings (anchors P > 0.98 sustained 2 s, blocks 5-45 s) **0.590 / 0.878**.  A variant that
@@ -191,8 +211,8 @@ the score, and under occlusion it is the part that degrades.
 
 | Match | engine spellF1 / macroF1 | possessions (pred/gt) | nearest-player +-50 baseline spellF1 / macroF1 |
 |---|---|---|---|
-| short, 12,000 frames (heuristic emissions) | 0.545 / 0.716 | 24 / 23 | 0.458 / 0.479 |
-| full length, 199,319 frames (heuristic emissions, `--specialists off`) | 0.564 / 0.762 | 346 / 293 | 0.434 / 0.532 |
+| short, 12,000 frames (heuristic emissions, shared defaults) | 0.545 / 0.716 | 24 / 23 | 0.458 / 0.479 |
+| full length, 199,319 frames (heuristic emissions, shared defaults, before `route_overrides`) | 0.564 / 0.762 | 346 / 293 | 0.434 / 0.532 |
 | full length, 199,319 frames (specialists from `models/specialists.json`, the CI default) | 0.446 / 0.684 | 383 / 293 | 0.434 / 0.532 |
 
 The synthetic generator is not real football (its dead-ball and team-shape physics differ from the Bundesliga

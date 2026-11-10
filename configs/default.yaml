@@ -383,3 +383,47 @@ broadcast_sync:
   local_reach_s: 180.0          # a block is only matched to anchors at most this far away in time
   local_window_s: 60.0          # ... searching offsets within +- this of the nearest anchor's offset
   min_corr_local: 0.5           # relaxed fingerprint correlation inside that narrow window
+
+# Per-route decoder parameters, merged key by key over the sections above (config.route_config).  Tuned with the
+# Optuna sweep of mtah2027-external-benchmarks (reports/optuna_heuristic.json): 7 degraded IDSSE matches, seeds
+# 0-1; nested leave-one-match-out spellF1 0.396 -> 0.439, unused seed 2 0.384 -> 0.427.  Only the heuristic route
+# is overridden: the specialists' honest gain (+0.0195) stayed under the +0.02 adoption rule, so it keeps the
+# shared defaults.  External matches only -- never BAR-ATH.
+route_overrides:
+  heuristic:
+    transition_matrix:
+      ha_closed: -15.1775
+      ha_open: -2.066
+      touch_halfwidth: 7
+      touch_min_score: 0.834
+      touch_both_dist_m: 2.5684
+      require_both_teams: false
+      touch_gate_halfwidth: 4
+      ha_occluded: -7.6264
+      occlusion_min_s: 1.3903
+      dead_closed: -4.3176
+      dead_open: -3.4803
+      d_exit_closed: -7.8084
+      d_exit_open: -3.0919
+      dead_ramp: [0.1163, 0.3297]
+      alive_ramp: [0.3682, 0.856]
+    spell_optimizer:
+      micro_poss_s: 1.7542
+      keep_min_visible_frac: 0.8131
+      keep_min_touches: 2
+      touch_min_score: 0.8986
+      min_dead_s: 0.673
+      min_isolated_poss_s: 1.7359
+      bridge_min_poss_s: 17.0603
+      bridge_min_dead_s: 2.0846
+      bridge_dead_threshold: 0.4825
+      bridge_requires_geometry: true
+    heuristic_emissions:
+      w_evidence: 0.1137
+      dead_scale: 0.5454
+      dead_scale_no_ball: 1.0169
+      carry_conf_threshold: 0.1844
+      carry_weight: 0.9217
+      carry_tau_s: 27.2902
+      w_touch: 1.2131
+      touch_tau_s: 16.283

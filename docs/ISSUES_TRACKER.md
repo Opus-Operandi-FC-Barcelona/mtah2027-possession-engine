@@ -1,7 +1,7 @@
 # Estado de las 28 Issues
 
 Oleadas (Sección 0, regla 11): wave-1 = MVP end-to-end; wave-2 = precisión; wave-3 = opcional.
-Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` (versión funcional entregada; la Issue #28 sigue abierta para la oleada 3) / `[ ] PENDIENTE` · issue · oleada · título · rama.
+Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE` · issue · oleada · título · rama.
 
 
 ## Milestone 1: Infraestructura, CI/CD, Fixtures Sintéticas y Puente de Evaluación
@@ -48,4 +48,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` (versión funcio
 - [x] COMPLETADA · #25 · wave-1 · Post-procesador directo de spellF1: poda de micro-posesiones e inserción de puente D · `feat/issue-25-spell-pruning-and-d-bridge`
 - [x] COMPLETADA · #26 · wave-1 · Consenso MBR de fronteras y contrato estricto de las 199.319 filas · `feat/issue-26-mbr-consensus-and-contract`
 - [x] COMPLETADA · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
-- [~] OLEADA 2 · #28 · wave-1/2 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`
+- [x] COMPLETADA · #28 · wave-1/2 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`

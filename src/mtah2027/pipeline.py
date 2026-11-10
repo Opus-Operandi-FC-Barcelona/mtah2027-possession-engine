@@ -41,6 +41,7 @@ from mtah2027.config import (
     MatchConfig,
     load_section,
     params_from_mapping,
+    route_config,
 )
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
@@ -375,6 +376,11 @@ def run_core(
         if learned is not None:
             em = learned.emissions
     emission_source = "specialists" if learned is not None else "heuristic"
+    if learned is None:   # heuristic route: its own tuned decoder parameters (route_overrides.heuristic)
+        cfg_route = route_config("heuristic", cfg)
+        if cfg_route is not cfg:
+            cfg = cfg_route
+            em = heuristic_emissions(fe, fps, cfg, st)
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
