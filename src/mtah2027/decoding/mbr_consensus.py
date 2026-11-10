@@ -16,11 +16,39 @@ Everything is deterministic.  Frames outside ``blocks`` are taken from the refer
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
 
+from mtah2027.config import load_section, params_from_mapping
+
 H, A, D, X = 0, 1, 2, 3
+
+
+@dataclass(frozen=True)
+class MbrParams:
+    """Variants of the learned route decoded and merged by :func:`consensus_labels` (``run_core``).
+
+    Variant ``i`` multiplies the (already tempered) emission log-probabilities by ``scales[i]`` and adds
+    ``ha_occluded_shifts[i]`` to ``transition_matrix.ha_occluded``; the neutral variant (1, 0) should be
+    among them.  Only variants of the *specialists* route are ever combined."""
+
+    enabled: bool = False
+    scales: tuple = (0.8, 1.0, 1.25)
+    ha_occluded_shifts: tuple = (0.0, 0.0, 0.0)
+    min_iou: float = 0.3
+    min_support: float = 0.5
+
+    def __post_init__(self):
+        if len(self.scales) != len(self.ha_occluded_shifts) or not self.scales:
+            raise ValueError("scales and ha_occluded_shifts must be non-empty and of equal length")
+        if any(s <= 0 for s in self.scales):
+            raise ValueError("scales must be positive")
+
+    @classmethod
+    def from_config(cls, path=None) -> "MbrParams":
+        return params_from_mapping(cls, load_section("mbr", path), "mbr")
 
 
 def possession_segments(codes: np.ndarray, blocks: Sequence[tuple[int, int]]) -> np.ndarray:

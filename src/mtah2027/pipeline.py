@@ -44,6 +44,7 @@ from mtah2027.config import (
     route_config,
 )
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
+from mtah2027.decoding.mbr_consensus import MbrParams, consensus_labels
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
 from mtah2027.features._utils import speed_from_xy
 from mtah2027.features.ball_kinematics import BallKinParams, compute_ball_kinematics
@@ -397,14 +398,14 @@ def run_core(
         restart_frames = np.array([a.t_star for a in resolved], dtype=np.int64)
         restart_teams = np.array([a.team for a in resolved], dtype=np.int64)
 
-    def _transitions():
+    def _transitions(tp: TransitionParams | None = None):
         return build_log_transitions(
             n, touch_score=bk.touch_score if bk is not None else None,
             d_home=bk.d_home[:, 0] if bk is not None else None,
             d_away=bk.d_away[:, 0] if bk is not None else None,
             ball_visible=visible, dead_score=dead_score, ball_out=sig.ball_out if sig is not None else None,
             restart_frames=restart_frames, restart_teams=restart_teams, fps=fps,
-            params=TransitionParams.from_config(cfg),
+            params=tp or TransitionParams.from_config(cfg),
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None)
@@ -417,6 +418,26 @@ def run_core(
     codes = st.run("viterbi", lambda: decode_match_halves(
         em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
         log_init=default_log_init(cfg)), required=True)
+    mbr_info: dict = {}
+    mp = MbrParams.from_config(cfg)
+    if mp.enabled and learned is not None:     # variants of the learned route only
+        def _mbr():
+            runs = []
+            tp0 = TransitionParams.from_config(cfg)
+            for scale, shift in zip(mp.scales, mp.ha_occluded_shifts):
+                lp = np.round(em.log_probs * scale, 6)
+                lt = (log_trans if shift == 0.0 else
+                      _transitions(dataclasses.replace(tp0, ha_occluded=tp0.ha_occluded + shift)))
+                runs.append(decode_match_halves(lp, lt, play_blocks=play_blocks, dead_blocks=dead_blocks,
+                                                log_init=default_log_init(cfg)))
+            merged = consensus_labels(runs, play_blocks, min_iou=mp.min_iou, min_support=mp.min_support)
+            return merged, len(runs)
+
+        out = st.run("mbr", _mbr)
+        if out is not None:
+            codes, mbr_info = out[0], {"variants": out[1]}
+    elif mp.enabled:
+        st.skip("mbr", "heuristic route (variants are only combined within the learned route)")
     raw_summary = summarize_labels(codes, play_blocks, fps)
 
     # 10. spell optimiser ---------------------------------------------------------------------------
@@ -454,7 +475,7 @@ def run_core(
         "emission_source": emission_source,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
-        "optimizer": opt_stats,
+        "optimizer": opt_stats, "mbr": mbr_info,
     }
     if keep_features:
         feats.update({"dead_score": dead_score, "visible": visible, "log_probs": em.log_probs,

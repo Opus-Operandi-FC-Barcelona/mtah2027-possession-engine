@@ -232,3 +232,24 @@ def test_specialists_route_overrides_apply_only_to_the_learned_route(trained, ma
     ks = _core(match, specialists=trained, config_path=raw, keep_features=True).features["log_probs"]
     ks0 = _core(match, specialists=trained, keep_features=True).features["log_probs"]
     assert not np.array_equal(ks, ks0)
+
+
+def test_mbr_runs_only_on_the_learned_route_and_is_neutral_for_identical_variants(trained, match):
+    from mtah2027.config import _load_raw
+
+    raw = _load_raw()
+    raw["mbr"] = {"enabled": True, "scales": [1.0, 1.0, 1.0], "ha_occluded_shifts": [0.0, 0.0, 0.0]}
+    base = _core(match, specialists=trained)
+    same = _core(match, specialists=trained, config_path=raw)
+    assert same.diagnostics["mbr"] == {"variants": 3} and base.diagnostics["mbr"] == {}
+    assert np.array_equal(base.codes, same.codes)
+    raw["mbr"] = {"enabled": True, "scales": [0.6, 1.0, 1.6], "ha_occluded_shifts": [-1.5, 0.0, 1.5]}
+    mixed = _core(match, specialists=trained, config_path=raw)
+    assert mixed.diagnostics["mbr"] == {"variants": 3}
+    graded = np.zeros(len(mixed.codes), bool)
+    for a, b in match["blocks"]:
+        graded[a:b + 1] = True
+    assert (mixed.codes[graded] < 3).all() and (mixed.codes[~graded] == 3).all()
+    assert np.array_equal(mixed.codes, _core(match, specialists=trained, config_path=raw).codes)
+    heur = _core(match, config_path=raw)                       # heuristic route: MBR is skipped
+    assert heur.diagnostics["mbr"] == {} and np.array_equal(heur.codes, _core(match).codes)

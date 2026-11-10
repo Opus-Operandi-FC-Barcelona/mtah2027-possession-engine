@@ -287,6 +287,16 @@ specialist_fusion:
   blend_hidden: 0.0
   use_pseudo_labels: false      # Issue #21 adaptation of B; off by default: it did not help on external matches
 
+# Issue #26 / #32 -- MBR consensus over variants of the LEARNED route only (never mixed with the heuristic route):
+# each variant scales the emission log-probabilities and shifts transition_matrix.ha_occluded; the variants are
+# decoded, merged segment by segment (median boundaries) and then pass through the spell optimiser.
+mbr:
+  enabled: false
+  scales: [0.8, 1.0, 1.25]
+  ha_occluded_shifts: [0.0, 0.0, 0.0]
+  min_iou: 0.3
+  min_support: 0.5
+
 # Issue #15 -- restarting team of Throw-in set pieces tagged Team = N/A (taker on the touchline + first clear
 # controller after t*).  Fed into the transition matrix (D -> team bias at t*) and a small emission prior.
 throwin_resolver:
