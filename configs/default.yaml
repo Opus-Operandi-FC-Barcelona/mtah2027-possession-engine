@@ -202,3 +202,62 @@ ball_memory:
   touch_margin_m: 0.5           # |delta_d| at a touch needed to attribute it to a team
   clear_evidence: 0.35          # |possession_evidence| from which a visible frame is a clear possessor
   pressure_radius_m: 5.0        # radius of the pressure counts
+
+# Issues #20-#22 -- shared gradient-boosting settings of the learned specialists (LightGBM with a scikit-learn
+# HistGradientBoosting fallback).  Generic priors; tuned on external matches only (leave-one-match-out).
+specialist_model:
+  backend: auto                 # auto = LightGBM if installed, else scikit-learn
+  n_estimators: 150
+  learning_rate: 0.08
+  num_leaves: 15
+  min_child_samples: 200
+  subsample: 0.8
+  colsample: 0.7
+  reg_lambda: 5.0
+  seed: 0
+  calib_folds: 3                # group (match) folds of the temperature calibration; 0 = no calibration
+  temperature_bounds: [0.5, 4.0]
+  adapt_rounds: 40              # boosting rounds added when adapting to the target match (Issue #21)
+  adapt_learning_rate: 0.05
+
+# Issues #20 / #22 -- training rows from the degraded external matches (primary training data).
+specialist_data:
+  seeds: [0, 1, 2]              # degradation seeds of every external match (Issue #19 degrader)
+  stride: 10                    # frames between two rows (0.4 s)
+  swap_teams: true              # also train with home / away swapped (team symmetry)
+  only_complete_ball: true      # Metrica samples drop the ball while it is dead (leaks D) -> excluded
+  min_period_frames: 250
+
+# Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
+specialist_a:
+  anchor_prob: 0.98             # P(winning class) above this ...
+  anchor_min_s: 2.0             # ... without interruption for at least this long
+  min_train_rows: 2000
+
+# Issue #21 -- block-masking pseudo-labels on the target match itself (algorithmic, from A's anchors).
+pseudo_labeling:
+  block_min_s: 5.0
+  block_max_s: 45.0
+  cover_frac: 0.35              # share of the visible graded frames masked per variant
+  min_anchor_cover: 0.5         # a block needs this share of anchor frames
+  guard_s: 5.0                  # visible distance kept between two blocks
+  n_variants: 2
+  stride: 10
+  weight: 1.0
+  max_attempts: 20000
+  seed: 0
+  min_rows: 300                 # fewer pseudo rows -> no adaptation
+
+# Issue #22 -- Specialist B (ball absent).
+specialist_b:
+  min_train_rows: 2000
+  adapt: true                   # adapt to the target match with the pseudo-labelled blocks
+
+# Issue #22 -- fusion of A and B into log_probs[N, 3].
+specialist_fusion:
+  prob_floor: 0.001
+  scale_visible: 1.0            # tempering of the log-probabilities (frame correlation)
+  scale_hidden: 1.0
+  blend_visible: 0.0            # weight of the wave-1 heuristic emission (0 = learned only)
+  blend_hidden: 0.0
+  use_pseudo_labels: true
