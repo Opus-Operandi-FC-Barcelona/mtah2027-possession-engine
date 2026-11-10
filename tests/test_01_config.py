@@ -84,3 +84,30 @@ def test_import_finds_games_without_pythonpath_root():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "True"
+
+
+def test_route_config_merges_overrides_without_touching_shared_sections(tmp_path):
+    from mtah2027.config import load_section, route_config
+
+    path = tmp_path / "cfg.yaml"
+    path.write_text(
+        "transition_matrix:\n  ha_closed: -11.5\n  ha_open: -1.4\n"
+        "route_overrides:\n  heuristic:\n    transition_matrix:\n      ha_closed: -15.0\n",
+        encoding="utf-8")
+    merged = route_config("heuristic", path)
+    assert load_section("transition_matrix", merged) == {"ha_closed": -15.0, "ha_open": -1.4}
+    assert load_section("transition_matrix", path) == {"ha_closed": -11.5, "ha_open": -1.4}
+    assert route_config("specialists", path) == path
+
+
+def test_default_heuristic_overrides_are_valid_parameters():
+    from mtah2027.config import route_config
+    from mtah2027.decoding.transition_matrix import TransitionParams
+    from mtah2027.models.heuristic_emissions import EmissionParams
+    from mtah2027.postprocessing.spell_optimizer import SpellParams
+
+    cfg = route_config("heuristic")
+    assert isinstance(cfg, dict)
+    assert TransitionParams.from_config(cfg) != TransitionParams.from_config()
+    SpellParams.from_config(cfg)
+    EmissionParams.from_config(cfg)

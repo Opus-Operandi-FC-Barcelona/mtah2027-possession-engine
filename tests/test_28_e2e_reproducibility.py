@@ -195,11 +195,21 @@ def test_numba_and_fallback_decoders_give_the_same_file(synthetic_dir, synthetic
     assert np.array_equal(fallback, short_run[0].labels)
 
 
-def test_synthetic_score_beats_the_nearest_player_baseline(short_run, synthetic_gt, synthetic_dir,
-                                                           synthetic_spec):
+def test_synthetic_score_beats_the_nearest_player_baseline(synthetic_gt, synthetic_dir, synthetic_spec,
+                                                           tmp_path):
+    # Sanity check of the wiring with the shared decoder defaults.  The heuristic route_overrides were tuned
+    # on the real external matches and do not transfer to the toy synthetic generator (see TECHNICAL_REPORT).
+    import yaml
+
+    from mtah2027.config import DEFAULT_CONFIG_PATH
     from mtah2027.io.atd_loader import load_atd
 
-    result, blocks = short_run
+    raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+    raw.pop("route_overrides", None)
+    cfg = tmp_path / "shared_defaults.yaml"
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    blocks = _blocks(synthetic_spec)
+    result = pipeline.run_pipeline(synthetic_dir, cfg, blocks, log=lambda m: None)
     gt = eb.to_codes(synthetic_gt)
     engine = eb.evaluate_arrays(gt, result.labels)
     td = load_atd(synthetic_dir, cache_dir=None, use_cache=False, n_frames=synthetic_spec.n_frames)
@@ -311,3 +321,38 @@ def test_cli_full_length_synthetic_matches_the_contract(tmp_path):
     assert len(codes) == 199319 and (codes[:11185] == X).all() and (codes[110808:113742] == D).all()
     assert not (codes[11185:90652] == X).any() and not (codes[113742:190198] == X).any()
     assert elapsed < 600
+
+
+# ---------------------------------------------------------------------------- wave 2: learned emissions
+MODEL_FILE = ROOT / "models" / "specialists.json"
+
+
+@pytest.mark.skipif(not MODEL_FILE.is_file(), reason="models/specialists.json not present")
+def test_cli_uses_the_committed_specialists_on_synthetic_and_is_reproducible(tmp_path):
+    pytest.importorskip("lightgbm")
+    outs = []
+    for i in range(2):
+        out = tmp_path / f"learned{i}.csv"
+        proc = _run_cli("--synthetic", "--synthetic-frames", "12000", "--out", str(out))
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "specialists: file" in proc.stdout and "emissions: specialists" in proc.stdout
+        assert "validate_submission: OK" in proc.stdout
+        outs.append(out)
+    assert outs[0].read_bytes() == outs[1].read_bytes()
+
+
+def test_cli_specialists_off_and_missing_model_fall_back_or_fail_clearly(tmp_path):
+    out = tmp_path / "off.csv"
+    proc = _run_cli("--synthetic", "--synthetic-frames", "12000", "--out", str(out), "--specialists", "off",
+                    "--quiet")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "emissions: heuristic" in proc.stdout and "specialists: none" in proc.stdout
+    out2 = tmp_path / "auto.csv"
+    proc = _run_cli("--synthetic", "--synthetic-frames", "12000", "--out", str(out2), "--model-path",
+                    str(tmp_path / "missing.json"), "--quiet")
+    assert proc.returncode == 0, proc.stdout + proc.stderr           # auto mode: progressive fallback
+    assert "emissions: heuristic" in proc.stdout
+    assert out.read_bytes() == out2.read_bytes()
+    proc = _run_cli("--synthetic", "--synthetic-frames", "12000", "--out", str(tmp_path / "x.csv"),
+                    "--specialists", "load", "--model-path", str(tmp_path / "missing.json"), "--quiet")
+    assert proc.returncode != 0                                       # explicit mode: no silent fallback

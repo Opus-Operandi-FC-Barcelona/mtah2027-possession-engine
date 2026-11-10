@@ -11,10 +11,12 @@ so the engine optimises the *number* of possessions and the precision of their b
 description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of every issue:
 [`docs/ISSUES_TRACKER.md`](docs/ISSUES_TRACKER.md).
 
-> **Wave 1 (this version)** is the complete end-to-end route with heuristic emissions.  Wave 2 (learned
-> specialists A/B with self-supervision, throw-in resolver, collective physics, degrader, KPI dashboard) and
-> wave 3 (broadcast sync, YOLO crops, aerial ball, MBR over several models) are planned and plug into the
-> same pipeline; see the tracker.
+> **Wave 2 (this version)** adds the learned specialists: Specialist A (ball visible, #20) and Specialist B
+> (ball absent, #22) -- calibrated gradient-boosting models trained on degraded **external** open matches
+> (home/away-swap augmentation) -- fused into the decoder emissions, plus the block-masking pseudo-labelling of
+> the target match (#21).  The wave-1 heuristic emissions remain the fallback when no model is available.
+> Still planned: throw-in resolver (#15), KPI dashboard (#27) and wave 3 (broadcast sync, YOLO crops, aerial
+> ball, MBR over several models); see the tracker.
 
 ## Install
 
@@ -23,9 +25,11 @@ Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exac
 ```bash
 python -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
-pip install -r requirements.txt        # numpy, pandas, scipy, scikit-learn, PyYAML (+ pytest, ruff)
+pip install -r requirements.txt        # numpy, pandas, scipy, scikit-learn, PyYAML, numba, lightgbm (+ pytest, ruff)
 pip install -e . --no-deps             # makes `mtah2027` importable
-pip install numba==0.68.0              # optional: njit Viterbi; the pure-NumPy/Python fallback is bit-identical
+# numba and lightgbm are optional at run time: without numba the NumPy fallbacks are bit-identical (the
+# full-size hull fallback is slow, ~1 min); without lightgbm the specialists use scikit-learn when they are
+# trained in-process, and only the heuristic emissions are available from the committed model file.
 ```
 
 ## Data (never committed)
@@ -53,9 +57,40 @@ python evaluation/validate_submission.py outputs/OpusOperandi.csv
 * Self-check without the real data (what CI does): `python scripts/generate_submission.py --synthetic --out
   /tmp/sub_run1.csv` generates the full-length synthetic match with a fixed seed and also reports its score
   against the synthetic ground truth.
+* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) trains the specialists at run time
+  from the external open matches if they are on disk (`--bench-dir`, `$MTAH_BENCH_DIR` or the sibling
+  `mtah2027-external-benchmarks/cache`), otherwise loads the committed `models/specialists.json`, otherwise
+  uses the heuristic emissions.  With `--synthetic`, `auto` means `load` (deterministic and fast).  The training
+  is deterministic (LightGBM `deterministic=True`, `num_threads=1`, `seed=0`) and reproducible with
+  `python scripts/train_specialists.py` (the committed file is its output).  See "Training data" in the
+  technical report: only external open data, labelled algorithmically; nothing from BAR-ATH.
 * Progressive fallback: every optional stage (cleaning, kinematics, Smart Tagging anchors, ...) is skipped
   and logged if its input or module is missing; if the heuristic route itself fails, the nearest-player
   baseline is written, so a valid file always exists.
+
+## Quality control: the seven-KPI dashboard
+
+```bash
+python scripts/run_kpi_dashboard.py --data-dir data --submission outputs/OpusOperandi.csv
+python scripts/run_kpi_dashboard.py --data-dir data --external-lomo        # + leave-one-match-out specialists
+python scripts/run_kpi_dashboard.py --synthetic                            # full-length synthetic self-check
+python scripts/generate_submission.py --data-dir data --kpi               # submission + dashboard in one go
+```
+
+Options: `--data-dir`, `--synthetic`, `--submission`, `--bench-dir` (default: the sibling
+`mtah2027-external-benchmarks/cache` if it exists), `--skip-external`, `--external-lomo`.  Output: a table and
+`outputs/kpi_report.json` with aggregate numbers only (safe to paste), plus `outputs/audit_transitions.csv` (20
+transitions for the visual audit; git-ignored, never commit it, only its count is printed).  The seven KPIs are
+sanity alarms, artificial blindness, degraded external evaluation, a smoke test on the public 5 minutes ("pipeline
+check only - not for model selection", real data only), the audit export, the format check with SHA256, and the
+specialists-vs-heuristic route comparison.
+
+**Choosing the route without ground truth.**  The learned route lost to the heuristic one on the synthetic match
+(domain shift), so on the real match decide with `--external-lomo`: submit the specialists only if their
+leave-one-match-out spellF1 on the degraded external matches beats the heuristic route by >= 0.04; otherwise
+submit `--specialists off`.  The agreement between the two routes on the real match is a diagnostic (low
+agreement = domain-shift warning), never the criterion, and the public GT is never used to choose.  Details:
+"Quality control" in `docs/TECHNICAL_REPORT.md`.
 
 ## Evaluate on other matches
 
@@ -66,10 +101,113 @@ optional crude ball-hiding degradation:
 
 ```bash
 python scripts/eval_external.py --bench-dir ../mtah2027-external-benchmarks/cache --only-complete-ball
-python scripts/eval_external.py --only-complete-ball --hide-ball-frac 0.41 --seed 0
+python scripts/eval_external.py --only-complete-ball --hide-ball-frac 0.41 --seed 0     # crude hiding
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2            # realistic (Issue #19)
 ```
 
+`--degrade` uses `src/mtah2027/models/external_degrader.py`: 41 % of the alive frames lose the ball in
+contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially where the ball is crowded,
+plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
+(3 seeds) the wave-1 heuristic engine scores spellF1 0.392 / macroF1 0.733 and the wave-2 specialists
+(leave-one-match-out) **0.606 / 0.900**, against 0.215 / 0.440 for the official baseline recipe; with a complete
+ball 0.691 -> 0.742 (baseline 0.310).
+
+`--specialists lomo` additionally scores the learned route **leave-one-match-out** (the specialists of every
+held-out match are trained on the other six; the held-out match is the unlabelled target, so its pseudo-labels
+come only from its own degraded tracking):
+
+```bash
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2 --specialists lomo
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2 --specialists lomo --no-pseudo
+```
+
+`scripts/explore_occlusion_team.py` checks how well the team in possession can be predicted while the ball is
+hidden from the collective-physics (#17) and ball-memory (#18) features alone (leave-one-match-out, degraded
+external matches); its dataset builder is reused by the specialist B work.
+
 Hyper-parameters are only ever tuned on such external data, never on the public 5 minutes of BAR-ATH.
+The decoder parameters were swept with Optuna in `mtah2027-external-benchmarks` (`scripts/run_optuna_sweep.py`,
+nested leave-one-match-out estimate + an unused degradation seed).  The heuristic route adopts its tuned values
+through `route_overrides.heuristic` in `configs/default.yaml` (degraded IDSSE spellF1 0.396 -> 0.439 nested,
+0.384 -> 0.427 on the unused seed); the specialists keep the shared defaults (+0.0195, under the +0.02 rule).
+`reports/external_evidence.json` predates the heuristic overrides; the KPI 7 decision is unchanged (0.43 vs 0.61).
+
+### Possession count and the KPI 7 evidence
+
+On the degraded external matches the learned route predicts fewer possessions than the truth (2467 vs 3061 over
+the 7 IDSSE matches, seed 0) while the heuristic route matches the count (3057).  `scripts/diagnose_possessions.py`
+shows why: 43 % of the true possessions last < 3 s, and 976 of the 2351 true H<->A turnovers happen while the ball is
+hidden, where 81 % are missed (37 % with the ball visible).  Sweeping the transition gates (`ha_closed`, `ha_open`,
+`ha_occluded`, touch gates), the spell optimiser (`micro_poss_s`, `min_dead_s`, `keep_min_touches`) and the fusion
+temperature moves spellF1 by <= 0.003 and every extra flip is spurious, so the gap is the F1-optimal conservatism of
+an evidence-limited emission model, not a gating bug; no default was changed.
+
+`scripts/make_external_evidence.py` stores the aggregate leave-one-match-out result in the committed
+`reports/external_evidence.json` (external open data only, with seeds, date and git sha).  The KPI dashboard uses it
+for the KPI 7 route decision whenever `--external-lomo` is not run.
+
+## Real-format check (Metrica EPTS exports)
+
+The loaders are not tied to our synthetic imitation.  `load_atd_files(meta, raw)` parses any FIFA/EPTS pair,
+including Metrica's open Sample Game 3 (eleven `DataFormatSpecification` blocks, one per substitution window, 35
+player slots, no speed channel, `NaN` ball, normalised coordinates, `FieldSize` 105 x 68, periods in the provider
+parameters); positions were cross-checked against `kloppy.metrica.load_tracking_epts` (3.18.0, test-only extra
+`pip install -e .[crosscheck]`).  `scripts/check_real_format.py` runs the whole pipeline on such a pair and prints
+aggregates only; Smart Tagging and the homography are optional:
+
+```bash
+python scripts/check_real_format.py --meta Sample_Game_3_metadata.xml --raw Sample_Game_3_tracking.txt
+python scripts/check_real_format.py --meta atd.xml --raw atd.txt --smart-tagging st.xml --homography h.csv
+```
+
+`tests/test_29_real_format.py` + `tests/fixtures/metrica_sample3_structure_*` keep that structure covered in CI.
+
+## Vision recovery (optional, off by default)
+
+`vision/attention_crops.py`, `detectors.py`, `recovery.py` (Issue #11) recover the ball from the **tactical video**
+where the tracking lost it: for every ball-missing graded frame (one in `vision.every_k`) a search point is
+predicted (interpolation between the last/next seen ball pulled towards the pressure centroid), projected to
+pixels with the tactical homography, and a 640x640 crop is cut and sent to a detector; detections are
+reprojected with `H^-1`, filtered (confidence, inside the pitch, near the search point, plausible speed) and
+injected into `ball_xy` only where it is NaN (`ball_source`: 1 tracking, 2 vision, 3 vision interpolation).
+Detections are cached in `cache/vision/*.npz` (git-ignored; key = video size/mtime + plan + detector).
+`run_pipeline` merges the cache when `vision.enabled: true`; it never decodes the video itself.
+
+```bash
+pip install -e ".[vision]"            # OpenCV headless 4.13.0.92 (reads the mp4, Hough fallback detector)
+pip install -e ".[yolo]"              # + ultralytics 8.3.253 for the YOLO detector (COCO "sports ball")
+python scripts/run_vision_recovery.py --data-dir data --benchmark 2000         # time the first 2000 frames
+python scripts/run_vision_recovery.py --data-dir data --detector dryrun        # chain check, no model
+python scripts/run_vision_recovery.py --data-dir data --detector yolo --weights yolov8n.pt [--every-k 5]
+# then vision.enabled: true in configs/default.yaml and generate_submission.py as usual
+python scripts/simulate_vision_value.py --fracs 0 0.2 0.4 0.6 --noise 1.0   # value estimate on external data
+```
+
+Only aggregates are printed (crops scanned, detections kept, share of hidden frames/gaps filled, runtime).
+**Licences:** OpenCV is Apache-2.0.  `ultralytics` (and its pretrained weights, downloaded by the library) is
+**AGPL-3.0**: it is imported only by `--detector yolo`, is a separate optional extra, and nothing in the
+submission path needs it.  It stays off until validated locally on the real video.
+
+## Broadcast sync (optional, off by default)
+
+`preprocessing/broadcast_sync.py` (Issue #10) places the TV tracking (`data/broadcast/*_broadcast_atd.*` +
+`*_broadcast_homography.csv`, **not aligned** to the tactical clock) on the tactical timeline and injects its ball
+where the tactical ball is NaN (`ball_source` 4).  Continuous blocks (homography `valid` and error < 5, >= 75
+frames, split every 90 s) get a crop-invariant fingerprint (mean speed of the visible players, median distance to
+the nearest visible opponent); the offset comes from a z-normalised cross-correlation against the tactical
+fingerprint (accepted at corr >= 0.65), refined and verified with the player positions (label-free nearest
+same-team distance) and a ball-agreement test; blocks that fail the strict global test are retried in a narrow
+window around the offset of their nearest synchronised neighbour.  Without broadcast files the stage is skipped
+and logged.
+
+```bash
+# 1. set broadcast_sync.enabled: true in configs/default.yaml (needs data/broadcast/ next to data/tactical/)
+python scripts/generate_submission.py --data-dir data --out outputs/OpusOperandi.csv
+#    the log prints "broadcast: N/M blocks synchronised, K hidden frames filled"; diagnostics["broadcast"] has
+#    only aggregates (blocks, accepted, offset/corr/residual medians, fill rate, seconds)
+# 2. value estimate on other matches with a simulated camera (never BAR-ATH):
+python scripts/simulate_broadcast_value.py --seed 0 --specialists lomo
+```
 
 ## Repository layout
 
@@ -78,14 +216,21 @@ configs/default.yaml                 all parameters, one section per module
 src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
-  preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
-  features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16)
-  models/                            heuristic_emissions (#28 wave 1), baseline_labels
+  preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9), broadcast_sync (#10, off)
+  vision/                            attention_crops, detectors, recovery (#11, off); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
+  features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
+                                     throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
+  models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
+                                     frame_classifier + specialist_features / _data (shared), specialist_ball_present
+                                     (#20), pseudo_labeling (#21), specialist_ball_absent + specialist_fusion (#22)
   decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
+  validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py
   pipeline.py                        run_core (arrays) and run_pipeline (files -> contract-compliant labels)
-scripts/                             generate_submission.py, eval_external.py, generate_synthetic_fixtures.py, ...
+models/specialists.json              Specialists A/B trained on external open data (reproduced by train_specialists.py)
+scripts/                             generate_submission.py, train_specialists.py, eval_external.py,
+                                     generate_synthetic_fixtures.py, ...
 tests/                               one test module per issue + shared synthetic-match fixtures
 evaluation/  games.py  starter/      vendored official scorer, constants and starter kit (unmodified)
 docs/                                TECHNICAL_REPORT.md, ISSUES_TRACKER.md

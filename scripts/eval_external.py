@@ -8,9 +8,20 @@ Smart Tagging) and scores the result with the official metric through ``eval_bri
 those where ``gt != X``.  The official baseline recipe (nearest player + ``+-50`` majority window) is computed
 on the same arrays for reference.
 
-``--hide-ball-frac F`` blanks the ball in random contiguous 5-60 s blocks until a share ``F`` of the frames
-inside the periods is hidden (a crude degradation; the realistic degrader is Issue #19).  Only aggregate
-numbers are printed.
+``--degrade`` applies the realistic degrader of Issue #19 (``models/external_degrader.py``): the ball is
+hidden in crowding-weighted blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) covering 41 % of the alive frames
+plus tracking noise, identity cuts, duplicate tracks and dropped players.  ``--seeds 0 1 2`` repeats it per
+seed and also prints the mean over seeds.
+
+``--specialists lomo`` adds the learned route of Issues #20-#22 (Specialists A and B + fusion), evaluated
+**leave-one-match-out**: for every held-out match the specialists are trained on the *other* matches only
+(degraded with several seeds, home / away swapped copies), and the held-out match is processed as the
+unlabelled target (its pseudo-labels, Issue #21, come from its own degraded tracking, never from its ground
+truth).  ``--no-pseudo`` switches the Issue #21 adaptation off (ablation).  ``--fusion key=value ...``
+overrides ``specialist_fusion`` parameters for tuning sweeps (external matches only).
+
+``--hide-ball-frac F`` is the older crude degradation (random
+5-60 s blocks, no artefacts) and still works.  Only aggregate numbers are printed.
 """
 from __future__ import annotations
 
@@ -28,6 +39,7 @@ for extra in (REPO_ROOT / "src", REPO_ROOT):
         sys.path.insert(0, str(extra))
 
 from mtah2027.models.baseline_labels import baseline_labels  # noqa: E402
+from mtah2027.models.external_degrader import degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
 
@@ -64,14 +76,18 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
             "abstain_on_graded": int(r["n_abstain_on_graded"])}
 
 
-def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool) -> dict:
+def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
+                   degrade: bool = False, specialists=None, return_codes: bool = False) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
     fps, pitch = float(z["fps"]), tuple(float(v) for v in z["pitch"])
     periods = [(int(a), int(b)) for a, b in z["period_bounds"]]
     gt = eb.to_codes(z["gt"])
-    if hide_frac > 0:
+    if degrade:
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed)
+        players, ball = dm.players_xy, dm.ball_xy
+    elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
     t0 = time.perf_counter()
     core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
@@ -80,12 +96,23 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
     row["engine"] = score(gt, core.codes)
+    codes_spec = None
+    if specialists is not None:
+        t0 = time.perf_counter()
+        learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
+                           log=lambda m: None, specialists=specialists)
+        row["specialists"] = score(gt, learned.codes)
+        row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
+        row["specialists"]["source"] = learned.diagnostics["emission_source"]
+        codes_spec = learned.codes
     if with_baseline:
         base = np.full(len(gt), 3, dtype=np.int8)
         full = baseline_labels(players, team, ball)
         for a, b in periods:
             base[a:b + 1] = full[a:b + 1]
         row["baseline"] = score(gt, base)
+    if return_codes:     # in-memory only (used by the KPI dashboard); never serialised
+        row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps}
     return row
 
 
@@ -93,12 +120,21 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bench-dir", default=str(DEFAULT_BENCH_DIR))
     ap.add_argument("--hide-ball-frac", type=float, default=0.0)
+    ap.add_argument("--degrade", action="store_true",
+                    help="realistic degradation (Issue #19): 41%% occluded alive frames + tracking artefacts")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seeds", type=int, nargs="*", default=None,
+                    help="several seeds (mean reported); overrides --seed")
     ap.add_argument("--config", default=None, help="YAML configuration (default configs/default.yaml)")
     ap.add_argument("--matches", nargs="*", default=None, help="subset of match names (file stems)")
     ap.add_argument("--only-complete-ball", action="store_true",
                     help="skip matches whose own ball channel has gaps (Metrica samples drop the ball "
                          "while it is dead, which leaks D into the visibility)")
+    ap.add_argument("--specialists", choices=("off", "lomo"), default="off",
+                    help="lomo: also score the learned specialists, trained leave-one-match-out")
+    ap.add_argument("--no-pseudo", action="store_true", help="with --specialists: no Issue #21 adaptation")
+    ap.add_argument("--fusion", nargs="*", default=[], metavar="KEY=VALUE",
+                    help="override specialist_fusion parameters (tuning on external matches only)")
     ap.add_argument("--no-baseline", action="store_true")
     ap.add_argument("--json", default=None, help="write the aggregate rows to this JSON file")
     args = ap.parse_args(argv)
@@ -111,29 +147,78 @@ def main(argv=None) -> int:
     if not files:
         print(f"no benchmark files in {args.bench_dir}")
         return 1
-    rows = []
-    print(f"hide_ball_frac={args.hide_ball_frac} seed={args.seed}")
-    head = f"{'match':<18}{'spellF1':>8}{'macroF1':>8}{'poss':>6}{'gt_poss':>8}{'dur_s':>7}{'gt_s':>6}"
+    seeds = list(args.seeds) if args.seeds else [args.seed]
+    models: dict = {}
+    training = None
+    if args.specialists == "lomo":
+        import dataclasses
+
+        from mtah2027.models import specialist_fusion as sf
+        from mtah2027.models.specialist_data import build_training_set
+
+        overrides = {}
+        for item in args.fusion:
+            key, _, value = item.partition("=")
+            overrides[key] = json.loads(value)
+        if args.no_pseudo:
+            overrides["use_pseudo_labels"] = False
+        fusion = dataclasses.replace(sf.FusionParams.from_config(args.config), **overrides)
+        training = build_training_set(args.bench_dir, config_path=args.config, log=print)
+
+        def specialists_for(stem: str):
+            if stem not in models:
+                t0 = time.perf_counter()
+                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                                            exclude_match=stem)
+                models[stem] = dataclasses.replace(spec, fusion=fusion)
+                print(f"  trained specialists without {stem} ({time.perf_counter() - t0:.0f} s)", flush=True)
+            return models[stem]
+    all_rows = []
+    print(f"degrade={args.degrade} hide_ball_frac={args.hide_ball_frac} seeds={seeds}")
+    head = (f"{'match':<18}{'seed':>5}{'spellF1':>8}{'macroF1':>8}{'poss':>6}{'gt_poss':>8}"
+            f"{'dur_s':>7}{'gt_s':>6}")
     if not args.no_baseline:
         head += f"{'| base_sF1':>11}{'base_mF1':>9}{'b_poss':>7}"
     print(head)
-    for i, f in enumerate(files):
-        row = evaluate_match(f, args.hide_ball_frac, args.seed + i, args.config, not args.no_baseline)
-        rows.append(row)
-        e = row["engine"]
-        line = (f"{row['match']:<18}{e['spell_f1']:8.4f}{e['macro_f1']:8.4f}{e['n_pred_spells']:6d}"
-                f"{e['n_gt_spells']:8d}{e['mean_spell_s']:7.1f}{e['gt_mean_spell_s']:6.1f}")
-        if not args.no_baseline:
-            b = row["baseline"]
-            line += f"{'| ' + format(b['spell_f1'], '.4f'):>11}{b['macro_f1']:9.4f}{b['n_pred_spells']:7d}"
-        print(line, flush=True)
-    mean = {k: float(np.mean([r["engine"][k] for r in rows])) for k in ("spell_f1", "macro_f1")}
-    line = f"{'MEAN':<18}{mean['spell_f1']:8.4f}{mean['macro_f1']:8.4f}"
+    for seed in seeds:
+        for i, f in enumerate(files):
+            row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
+                                 args.degrade, specialists_for(f.stem) if training is not None else None)
+            row["seed"] = seed
+            all_rows.append(row)
+            e = row["engine"]
+            line = (f"{row['match']:<18}{seed:5d}{e['spell_f1']:8.4f}{e['macro_f1']:8.4f}"
+                    f"{e['n_pred_spells']:6d}{e['n_gt_spells']:8d}{e['mean_spell_s']:7.1f}"
+                    f"{e['gt_mean_spell_s']:6.1f}")
+            if not args.no_baseline:
+                b = row["baseline"]
+                line += (f"{'| ' + format(b['spell_f1'], '.4f'):>11}{b['macro_f1']:9.4f}"
+                         f"{b['n_pred_spells']:7d}")
+            print(line, flush=True)
+            if "specialists" in row:
+                sp = row["specialists"]
+                print(f"{'  + specialists':<18}{seed:5d}{sp['spell_f1']:8.4f}{sp['macro_f1']:8.4f}"
+                      f"{sp['n_pred_spells']:6d}{sp['n_gt_spells']:8d}{sp['mean_spell_s']:7.1f}"
+                      f"{sp['gt_mean_spell_s']:6.1f}   ({sp['source']}, {sp['seconds']} s)", flush=True)
+    rows = all_rows
+    mean = {}
+    for key in ("engine", "baseline"):
+        if key == "baseline" and args.no_baseline:
+            continue
+        for metric in ("spell_f1", "macro_f1"):
+            mean[metric if key == "engine" else f"baseline_{metric}"] = float(
+                np.mean([r[key][metric] for r in rows]))
+    if training is not None:
+        for metric in ("spell_f1", "macro_f1"):
+            mean[f"specialists_{metric}"] = float(np.mean([r["specialists"][metric] for r in rows]))
+    line = f"{'MEAN':<18}{'':>5}{mean['spell_f1']:8.4f}{mean['macro_f1']:8.4f}"
     if not args.no_baseline:
-        bm = {k: float(np.mean([r["baseline"][k] for r in rows])) for k in ("spell_f1", "macro_f1")}
-        line += f"{'':<31}{'| ' + format(bm['spell_f1'], '.4f'):>11}{bm['macro_f1']:9.4f}"
-        mean["baseline_spell_f1"], mean["baseline_macro_f1"] = bm["spell_f1"], bm["macro_f1"]
+        line += (f"{'':<26}{'| ' + format(mean['baseline_spell_f1'], '.4f'):>11}"
+                 f"{mean['baseline_macro_f1']:9.4f}")
     print(line)
+    if training is not None:
+        print(f"{'MEAN + specialists':<23}{mean['specialists_spell_f1']:8.4f}"
+              f"{mean['specialists_macro_f1']:8.4f}")
     if args.json:
         Path(args.json).write_text(json.dumps({"mean": mean, "rows": rows}, indent=2), encoding="utf-8")
     return 0

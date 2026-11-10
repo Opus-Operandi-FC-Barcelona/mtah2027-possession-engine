@@ -1,7 +1,7 @@
 # Estado de las 28 Issues
 
 Oleadas (Sección 0, regla 11): wave-1 = MVP end-to-end; wave-2 = precisión; wave-3 = opcional.
-Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` (primera versión funcional entregada, la Issue sigue abierta para la oleada 2) / `[ ] PENDIENTE` · issue · oleada · título · rama.
+Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE` · issue · oleada · título · rama.
 
 
 ## Milestone 1: Infraestructura, CI/CD, Fixtures Sintéticas y Puente de Evaluación
@@ -18,28 +18,28 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` (primera versión funcional entre
 - [x] COMPLETADA · #07 · wave-1 · Cargador vectorizado de matrices de homografía $H$ e inversas $H^{-1}$ · `feat/issue-07-homography-loader`
 - [x] COMPLETADA · #08 · wave-1 · Filtrado de suplentes en banda y fusión de tracks duplicados ($< 0.6\text{ m}$) · `feat/issue-08-track-dedup-and-bounds`
 - [x] COMPLETADA · #09 · wave-1 · Cinemática Savitzky-Golay $(\vec{v}, \vec{a})$ y normalización de orientación de ataque · `feat/issue-09-savgol-kinematics-orientation`
-- [ ] PENDIENTE · #10 · wave-3 · Sincronización de cámara de TV por bloques continuos e inyección de balón · `feat/issue-10-broadcast-block-sync`
+- [x] COMPLETADA · #10 · wave-3 · Sincronización de cámara de TV por bloques continuos e inyección de balón · `feat/issue-10-broadcast-block-sync`
 
 ## Milestone 3: Visión Guiada por Atención y Geometría 3D de Balón Aéreo
 
-- [ ] PENDIENTE · #11 · wave-3 · Generador de Attention Crops ($640\times640$) con homografía e interfaz de detector · `feat/issue-11-attention-crops-yolo`
-- [ ] PENDIENTE · #12 · wave-3 · Detector de balón aéreo (is_aerial) por velocidad aparente y curvatura · `feat/issue-12-aerial-ball-filter`
+- [x] COMPLETADA · #11 · wave-3 · Generador de Attention Crops ($640\times640$) con homografía e interfaz de detector · `feat/issue-11-attention-crops-yolo`
+- [x] COMPLETADA · #12 · wave-3 · Detector de balón aéreo (is_aerial) por velocidad aparente y curvatura · `feat/issue-12-aerial-ball-filter`
 
 ## Milestone 4: Balón Muerto (D), Anclaje de Set Pieces y Física Colectiva
 
 - [x] COMPLETADA · #13 · wave-1 · Señales cinemáticas continuas de balón muerto (D) con y sin balón visible · `feat/issue-13-dead-ball-kinematic-signals`
 - [x] COMPLETADA · #14 · wave-1 · Anclaje quirúrgico del frame de reinicio $t^*$ en los 59 SET PIECES y post-GOALS · `feat/issue-14-setpiece-exact-anchoring`
-- [ ] PENDIENTE · #15 · wave-2 · Resolución determinista del equipo lanzador en los 26 Throw-in con Team = N/A · `feat/issue-15-throwin-team-resolver`
+- [x] COMPLETADA · #15 · wave-2 · Resolución determinista del equipo lanzador en los 26 Throw-in con Team = N/A · `feat/issue-15-throwin-team-resolver`
 - [x] COMPLETADA · #16 · wave-1 · Distancias por equipo, esfera de influencia y detector de toques (touch_score) · `feat/issue-16-ball-carrier-and-touches`
-- [ ] PENDIENTE · #17 · wave-2 · Física Colectiva I: Porteros dinámicos y derivada de área (Espectral + Convex Hull Numba) · `feat/issue-17-collective-physics-hull-gk`
-- [ ] PENDIENTE · #18 · wave-2 · Física Colectiva II: Coherencia vectorial $R \in [0,1]$ y memoria del último balón visto · `feat/issue-18-phase-coherence-and-ball-memory`
+- [x] COMPLETADA · #17 · wave-2 · Física Colectiva I: Porteros dinámicos y derivada de área (Espectral + Convex Hull Numba) · `feat/issue-17-collective-physics-hull-gk`
+- [x] COMPLETADA · #18 · wave-2 · Física Colectiva II: Coherencia vectorial $R \in [0,1]$ y memoria del último balón visto · `feat/issue-18-phase-coherence-and-ball-memory`
 
 ## Milestone 5: Degradador de Validación, Auto-Supervisión y Modelos Especialistas
 
-- [ ] PENDIENTE · #19 · wave-2 · Degradador realista de partidos limpios (huecos de 5–60 s + rotura de IDs) · `feat/issue-19-realistic-atd-degrader`
-- [ ] PENDIENTE · #20 · wave-2 · Modelo Especialista A (con balón visible): entrenamiento y calibración de probabilidades · `feat/issue-20-specialist-a-ball-visible`
-- [ ] PENDIENTE · #21 · wave-2 · Generador de Pseudo-Labeling con *Block Masking* (5–45 s) sobre el propio partido · `feat/issue-21-self-supervised-block-masking`
-- [ ] PENDIENTE · #22 · wave-2 · Modelo Especialista B (sin balón) y fusor de emisiones log_probs[N, 3] · `feat/issue-22-specialist-b-ball-absent`
+- [x] COMPLETADA · #19 · wave-2 · Degradador realista de partidos limpios (huecos de 5–60 s + rotura de IDs) · `feat/issue-19-realistic-atd-degrader`
+- [x] COMPLETADA · #20 · wave-2 · Modelo Especialista A (con balón visible): entrenamiento y calibración de probabilidades · `feat/issue-20-specialist-a-ball-visible`
+- [x] COMPLETADA · #21 · wave-2 · Generador de Pseudo-Labeling con *Block Masking* (5–45 s) sobre el propio partido · `feat/issue-21-self-supervised-block-masking`
+- [x] COMPLETADA · #22 · wave-2 · Modelo Especialista B (sin balón) y fusor de emisiones log_probs[N, 3] · `feat/issue-22-specialist-b-ball-absent`
 
 ## Milestone 6: Viterbi Dinámico A_t, Optimización Directa de spellF1, KPIs y Entrega
 
@@ -47,5 +47,5 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` (primera versión funcional entre
 - [x] COMPLETADA · #24 · wave-1 · Decodificador Viterbi / CRF lineal con @numba.njit por mitad independiente · `feat/issue-24-numba-viterbi-decoder`
 - [x] COMPLETADA · #25 · wave-1 · Post-procesador directo de spellF1: poda de micro-posesiones e inserción de puente D · `feat/issue-25-spell-pruning-and-d-bridge`
 - [x] COMPLETADA · #26 · wave-1 · Consenso MBR de fronteras y contrato estricto de las 199.319 filas · `feat/issue-26-mbr-consensus-and-contract`
-- [ ] PENDIENTE · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
-- [~] OLEADA 1 · #28 · wave-1 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`
+- [x] COMPLETADA · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
+- [x] COMPLETADA · #28 · wave-1/2 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`

@@ -20,6 +20,23 @@ kpi_alarms:
   dead_pct_of_graded: [15.0, 55.0]  # % of D over graded frames (external matches: 29-52%)
   home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames
 
+# Issue #27 -- thresholds of the KPI dashboard.  The KPI targets are quality gates reported as OK / WARN; they
+# are never used to choose hyper-parameters (and the public 5 minutes only run as a pipeline check).
+kpi_dashboard:
+  blindness_minutes: 20.0       # KPI 2: first graded minutes of the target match
+  blindness_hide_frac: 0.41     # KPI 2: share of the alive frames hidden in extra synthetic blocks
+  blindness_seed: 0
+  blindness_target: 0.75        # KPI 2: spellF1 masked-vs-unmasked self-consistency
+  external_spell_target: 0.65   # KPI 3: mean spellF1 on the degraded external matches
+  latency_target_frames: 8.0    # KPI 3: median absolute transition latency
+  latency_match_window_s: 5.0   # KPI 3: predicted transitions farther than this from a true one are unmatched
+  external_seeds: [0]           # KPI 3: degrader seeds
+  bootstrap_n: 200              # KPI 4: block-bootstrap draws of the interval on the public 5 minutes
+  audit_n: 20                   # KPI 5: transitions exported for the visual audit
+  route_margin_spellf1: 0.04    # KPI 7: leave-one-match-out gain needed to prefer the specialists (spellF1 noise)
+  external_evidence: reports/external_evidence.json   # KPI 7: committed external LOMO evidence (used without --external-lomo)
+  evidence_setting: degraded    # setting of that file the decision reads
+
 # Issue #13 -- continuous dead-ball (D) signals. Defaults are generic football priors; they are
 # meant to be tuned on external matches only (never on the public 5 minutes of BAR-ATH).
 dead_ball_signals:
@@ -164,3 +181,249 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+  use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
+  use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
+
+# Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
+# artefacts).  Used only to build validation / self-supervision data, never on the competition match.
+external_degrader:
+  hide_frac: 0.41                  # share of alive (H/A) frames whose ball is hidden
+  dur_edges_s: [5.0, 20.0, 60.0, 120.0]   # block-duration classes: [5,20) [20,60) [60,120] seconds
+  dur_probs: [0.33, 0.48, 0.19]    # empirical ATD gap mix of the spec
+  density_radius_m: 5.0            # players within this distance of the ball define the crowding
+  density_floor: 0.25              # added to the mean crowding so empty areas keep some probability
+  density_gamma: 1.0               # block weight = (floor + mean crowding) ** gamma
+  noise_player_m: 0.12             # i.i.d. Gaussian jitter of every player position
+  noise_ball_m: 0.08               # ... and of the visible ball
+  noise_corr_s: 0.5                # correlation time of the jitter (AR(1)); 0 = white noise
+  cut_rate_per_min: 0.6            # identity cuts per minute of graded time (whole match)
+  cut_players: [2, 4]              # same-team players whose slots are permuted at a cut (min, max)
+  cut_gap_s: [0.2, 2.0]            # the permuted tracks are lost for this long after the cut
+  dup_rate_per_min: 0.3            # duplicate-track episodes per minute
+  dup_duration_s: [5.0, 40.0]
+  dup_offset_m: 0.4                # offset of the duplicate from the original track
+  drop_rate_per_min: 0.5           # dropped-player episodes per minute
+  drop_duration_s: [2.0, 20.0]
+
+# Issue #17 -- collective physics of each team (goalkeeper-free outfield block).
+collective_physics:
+  min_players: 4                # fewer valid outfield players -> shape features are NaN
+  deriv_span_s: 2.0             # total span of the central difference of areas / centroid
+  gk_vel_half_span: 1           # frames each side when velocities are derived from positions
+
+# Issue #18 -- velocity phase coherence, line advance and ball memory (hidden-ball features).
+ball_memory:
+  min_players: 4                # fewer valid velocities -> coherence / advance are NaN
+  smooth_s: 1.0                 # moving average of the team mean v_x
+  cap_s: 120.0                  # cap of the time since / until features
+  ball_vel_half_span: 2         # frames each side when the ball velocity is derived from positions
+  player_vel_half_span: 1
+  touch_margin_m: 0.5           # |delta_d| at a touch needed to attribute it to a team
+  clear_evidence: 0.35          # |possession_evidence| from which a visible frame is a clear possessor
+  pressure_radius_m: 5.0        # radius of the pressure counts
+
+# Issues #20-#22 -- shared gradient-boosting settings of the learned specialists (LightGBM with a scikit-learn
+# HistGradientBoosting fallback).  Generic priors; tuned on external matches only (leave-one-match-out).
+specialist_model:
+  backend: auto                 # auto = LightGBM if installed, else scikit-learn
+  n_estimators: 150
+  learning_rate: 0.08
+  num_leaves: 15
+  min_child_samples: 200
+  subsample: 0.8
+  colsample: 0.7
+  reg_lambda: 5.0
+  seed: 0
+  calib_folds: 3                # group (match) folds of the temperature calibration; 0 = no calibration
+  temperature_bounds: [0.5, 4.0]
+  adapt_rounds: 40              # boosting rounds added when adapting to the target match (Issue #21)
+  adapt_learning_rate: 0.05
+
+# Issues #20 / #22 -- training rows from the degraded external matches (primary training data).
+specialist_data:
+  seeds: [0, 1, 2]              # degradation seeds of every external match (Issue #19 degrader)
+  stride: 10                    # frames between two rows (0.4 s)
+  swap_teams: true              # also train with home / away swapped (team symmetry)
+  only_complete_ball: true      # Metrica samples drop the ball while it is dead (leaks D) -> excluded
+  min_period_frames: 250
+
+# Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
+specialist_a:
+  anchor_prob: 0.98             # P(winning class) above this ...
+  anchor_min_s: 2.0             # ... without interruption for at least this long
+  min_train_rows: 2000
+
+# Issue #21 -- block-masking pseudo-labels on the target match itself (algorithmic, from A's anchors).
+pseudo_labeling:
+  block_min_s: 5.0
+  block_max_s: 45.0
+  cover_frac: 0.35              # share of the visible graded frames masked per variant
+  min_anchor_cover: 0.5         # a block needs this share of anchor frames
+  guard_s: 5.0                  # visible distance kept between two blocks
+  n_variants: 2
+  stride: 10
+  weight: 1.0
+  max_attempts: 20000
+  seed: 0
+  min_rows: 300                 # fewer pseudo rows -> no adaptation
+  include_dead: true            # keep the anchors labelled D as pseudo-labels
+
+# Issue #22 -- Specialist B (ball absent).
+specialist_b:
+  min_train_rows: 2000
+  adapt: true                   # adapt to the target match with the pseudo-labelled blocks
+
+# Issue #22 -- fusion of A and B into log_probs[N, 3].
+specialist_fusion:
+  prob_floor: 0.001
+  scale_visible: 0.5            # tempering of the log-probabilities (frame correlation); leave-one-match-out
+  scale_hidden: 0.5             # on external matches: 1.5 -> 0.594, 1.0 -> 0.600, 0.5 -> 0.606, 0.3 -> 0.608
+  blend_visible: 0.0            # weight of the wave-1 heuristic emission (0 = learned only)
+  blend_hidden: 0.0
+  use_pseudo_labels: false      # Issue #21 adaptation of B; off by default: it did not help on external matches
+
+# Issue #15 -- restarting team of Throw-in set pieces tagged Team = N/A (taker on the touchline + first clear
+# controller after t*).  Fed into the transition matrix (D -> team bias at t*) and a small emission prior.
+throwin_resolver:
+  enabled: true
+  touchline_band_m: 1.5         # taker candidates stay within this distance of a touchline
+  taker_window_s: 3.0           # window before t* inspected for the taker (bounded by the tag start)
+  min_band_frac: 0.5            # fraction of a slot's valid frames that must be in the band
+  isolation_cap_m: 15.0         # cap of the distance to the nearest opponent
+  isolation_sat_m: 6.0          # isolation gap that saturates the taker vote
+  taker_ball_radius_m: 3.0      # candidates must hold the ball (median distance); 0 disables, dropped if none pass
+  confirm_window_frames: 35     # window after t* for the first clear controller
+  control_radius_m: 2.0         # controller within this distance of the ball ...
+  control_margin_m: 1.0         # ... and the other team at least this much farther
+  control_gap_sat_m: 4.0        # gap that saturates the controller vote
+  w_taker: 1.0
+  w_controller: 1.0
+  min_confidence: 0.3           # below this the throw-in stays unresolved (both columns stay open)
+  resolve_known_teams: false    # only Team = N/A throw-ins are resolved
+  emission_bias: 0.0            # optional log-bias towards the restart team after t* (0 = off; no gain measured)
+  emission_window_s: 2.0
+
+# Issue #12 -- aerial-ball mask from the ball track alone (apparent speed, reprojection jumps, long straight
+# flights without grass deceleration, optional ATD height channel).  Generic physical priors.
+aerial_filter:
+  speed_mps: 35.0               # apparent ground speed above which the ball is airborne
+  jump_px: 90.0                 # pixel displacement per frame (with homographies) that is a track jump
+  flight_min_speed_mps: 12.0    # a straight flight moves faster than this ...
+  straight_deg: 8.0             # ... with a heading change per frame below this ...
+  flight_min_length_m: 18.0     # ... over a path at least this long ...
+  grass_decel_mps2: 1.5         # ... and a speed slope above -this (rolling on grass loses several m/s per s)
+  edge_trim_frames: 3           # kick / landing frames of a flight that are not flagged
+  pad_frames: 2                 # growth of the speed / jump cues
+  min_run_frames: 2             # flagged runs shorter than this are dropped
+  z_min_m: 1.5                  # ball height above which it is airborne (ATD z channel, if declared)
+  z_channels: [z, ball_z, height, ballz]
+
+# Issue #11 -- ball recovery from the tactical video (attention crops + detector).  OFF by default until it has
+# been validated locally on the real video.  `enabled: true` makes run_pipeline merge the detections cached by
+# scripts/run_vision_recovery.py (cache/vision/*.npz); it never reads the video itself.
+vision:
+  enabled: false
+  crop_size: 640
+  frame_width: 1920
+  frame_height: 1080
+  every_k: 5                    # one crop every k frames of each ball-missing gap
+  max_crops: 0                  # 0 = no cap
+  max_homography_error: 5.0     # frames with a larger reprojection error are not planned
+  offscreen_margin_px: 160.0
+  interp_max_s: 20.0            # gaps longer than this: search around the nearer seen ball
+  pressure_radius_m: 12.0
+  pressure_sigma_m: 6.0
+  closing_gain_mps: 3.0
+  pressure_weight: 0.5          # 0 = pure interpolation, 1 = pressure centroid
+  vel_half_span: 2
+  detector: hough               # yolo | hough | dryrun
+  weights: yolov8n.pt           # public COCO weights downloaded by ultralytics (AGPL-3.0, optional extra yolo)
+  confidence: 0.25
+  batch_size: 16
+  device: ""
+  seek_threshold_frames: 250
+  hough_min_radius_px: 4
+  hough_max_radius_px: 14
+  hough_param1: 120.0
+  hough_param2: 10.0
+  hough_min_brightness: 170.0
+  hough_max_candidates: 5
+  pitch_margin_m: 1.0
+  max_search_dist_m: 30.0
+  max_speed_mps: 40.0
+  speed_slack_m: 1.5
+  interp_max_frames: 25         # frames interpolated between two points (at least one a detection)
+  cache_dir: cache/vision
+
+# Issue #10 -- broadcast (TV) tracking synchronised to the tactical clock by continuous blocks; its ball fills
+# the tactical holes (ball_source 4).  OFF by default until validated locally on the real broadcast files.
+broadcast_sync:
+  enabled: false
+  min_block_frames: 75          # continuous block = valid homography and reprojection_error < max_reproj_error
+  max_block_s: 90.0             # longer shots are split in pieces of at most this length (0 = no split)
+  max_reproj_error: 5.0
+  pitch_margin_m: 1.0           # players farther outside the pitch are ignored
+  min_players: 4                # visible players needed for a fingerprint sample
+  speed_half_span: 2
+  fingerprint_smooth_s: 1.0
+  min_corr: 0.65                # z-normalised cross-correlation of the fingerprints
+  min_margin: 0.0               # ... and its lead over the best peak outside margin_excl_s (0 = off; the position
+                                # residual below is the real arbiter: the margin rejected as many right as wrong blocks)
+  margin_excl_s: 2.0
+  max_offset_s: 2400.0          # search window |tactical - broadcast| (0 = unbounded)
+  std_floor_rel: 0.1
+  refine_s: 3.0                 # position refinement half-width (0 = off)
+  refine_step: 5
+  refine_max_samples: 80
+  max_refine_dist_m: 2.0        # accepted median nearest-same-team distance after the refinement
+  max_ball_disagree_m: 3.0      # accepted median ball distance where both balls are visible
+  min_ball_overlap: 25
+  ball_margin_m: 1.0
+  local_rounds: 3               # propagation rounds from the accepted blocks to their neighbours (0 = off)
+  local_reach_s: 180.0          # a block is only matched to anchors at most this far away in time
+  local_window_s: 60.0          # ... searching offsets within +- this of the nearest anchor's offset
+  min_corr_local: 0.5           # relaxed fingerprint correlation inside that narrow window
+
+# Per-route decoder parameters, merged key by key over the sections above (config.route_config).  Tuned with the
+# Optuna sweep of mtah2027-external-benchmarks (reports/optuna_heuristic.json): 7 degraded IDSSE matches, seeds
+# 0-1; nested leave-one-match-out spellF1 0.396 -> 0.439, unused seed 2 0.384 -> 0.427.  Only the heuristic route
+# is overridden: the specialists' honest gain (+0.0195) stayed under the +0.02 adoption rule, so it keeps the
+# shared defaults.  External matches only -- never BAR-ATH.
+route_overrides:
+  heuristic:
+    transition_matrix:
+      ha_closed: -15.1775
+      ha_open: -2.066
+      touch_halfwidth: 7
+      touch_min_score: 0.834
+      touch_both_dist_m: 2.5684
+      require_both_teams: false
+      touch_gate_halfwidth: 4
+      ha_occluded: -7.6264
+      occlusion_min_s: 1.3903
+      dead_closed: -4.3176
+      dead_open: -3.4803
+      d_exit_closed: -7.8084
+      d_exit_open: -3.0919
+      dead_ramp: [0.1163, 0.3297]
+      alive_ramp: [0.3682, 0.856]
+    spell_optimizer:
+      micro_poss_s: 1.7542
+      keep_min_visible_frac: 0.8131
+      keep_min_touches: 2
+      touch_min_score: 0.8986
+      min_dead_s: 0.673
+      min_isolated_poss_s: 1.7359
+      bridge_min_poss_s: 17.0603
+      bridge_min_dead_s: 2.0846
+      bridge_dead_threshold: 0.4825
+      bridge_requires_geometry: true
+    heuristic_emissions:
+      w_evidence: 0.1137
+      dead_scale: 0.5454
+      dead_scale_no_ball: 1.0169
+      carry_conf_threshold: 0.1844
+      carry_weight: 0.9217
+      carry_tau_s: 27.2902
+      w_touch: 1.2131
+      touch_tau_s: 16.283

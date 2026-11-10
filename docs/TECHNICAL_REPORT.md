@@ -1,9 +1,11 @@
 # Technical report -- Opus Operandi (More than a Hack 2027, phase 1: ball possession)
 
 Repository: `Opus-Operandi-FC-Barcelona/mtah2027-possession-engine`.  This report follows the points requested
-in the competition's `SUBMISSION.md`.  **Implemented in this version = wave 1** (a complete, deterministic,
-heuristic end-to-end route).  Everything marked *planned* belongs to waves 2/3 and is not part of the
-submitted file unless the tracker (`docs/ISSUES_TRACKER.md`) says it is completed.
+in the competition's `SUBMISSION.md`.  **Implemented in this version = waves 1 and 2** (a complete,
+deterministic end-to-end route whose emissions come from learned Specialists A/B trained on external open
+data, with the wave-1 heuristic emissions as fallback).  Everything marked *planned* belongs to wave 3 (or to
+the remaining wave-2 issues #15 and #27) and is not part of the submitted file unless the tracker
+(`docs/ISSUES_TRACKER.md`) says it is completed.
 
 ## 1. Summary of the approach and why
 
@@ -24,7 +26,13 @@ possessions* and *boundaries within a few frames*, rather than per-frame accurac
 4. **Restart anchoring**: the exact restart frame `t*` of every tagged set piece / kick-off after a goal is found
    in the tracking (ball leaves rest), never from the tag window; the dead interval before `t*` becomes a
    forced-`D` interval.
-5. **Emissions** `log_probs[N, 3]`: calibrated-ish `p(D)` from the dead score and an H-vs-A logit dominated by the
+5. **Emissions** `log_probs[N, 3]` (wave 2, `--specialists`): **Specialist A** (ball visible, Issue #20) and
+   **Specialist B** (ball absent, Issue #22) -- calibrated LightGBM classifiers over the dead-ball signals (#13),
+   ball kinematics (#16), collective physics (#17: dynamic goalkeepers, spectral / convex-hull areas and their
+   2 s derivatives), phase coherence and ball memory (#18) -- are fused per frame by ball visibility
+   (tempered x0.5, floored at 1e-3, rounded to 1e-6); Smart Tagging phase, ATD owner and status channels enter
+   as soft log-odds priors when they exist.  If no model is available the wave-1 heuristic below is used:
+   calibrated-ish `p(D)` from the dead score and an H-vs-A logit dominated by the
    **last toucher** (see below), a weak instantaneous nearest-player term (weight 0.5 vs 3 for the last toucher), a weak Smart Tagging phase prior and a
    strong term if the ATD exposes an owning-team ball channel.  When the ball is missing the last (and the next)
    toucher is carried over the gap with decaying confidence.
@@ -56,25 +64,57 @@ per-frame classifiers (the official baselines show it: raw 0.04 vs smoothed 0.33
 |---|---|---|
 | Tactical ATD (`*_tactical_atd.txt/.xml`) | **used** | positions, speeds, ball; all declared channels are parsed |
 | Tactical Smart Tagging XML | **used** | set-piece/goal windows -> restart frames; weak phase prior for H/A |
+| External open tracking matches (IDSSE / DFL Bundesliga, 7 matches) | **used for training and tuning only** | training data of Specialists A/B and all hyper-parameter choices; never BAR-ATH (section 3) |
 | Tactical homography | loader implemented (#7), **not used** in wave 1 | needed for the planned attention crops |
-| Broadcast ATD / homography | **not used** in wave 1 | planned sync (#10, wave 3) to inject a ball where the tactical one is missing |
+| Broadcast ATD / homography | **not used** in wave 1 | `preprocessing/broadcast_sync.py` (#10): block-wise sync + ball injection, OFF by default (see Limitations) |
 | Videos (tactical, broadcast) | **not used** | planned YOLO attention crops (#11, wave 3) |
 | Official scorer / `games.py` / starter | **used (vendored, unmodified)** | metric, constants, format check |
 | Public 5-minute ground truth | **not used for any decision** | only reserved as a format/alignment smoke test |
 
 ## 3. Training data
 
-* **No learned model is trained in wave 1.**  All parameters are generic football priors in
-  `configs/default.yaml`.
-* **Nothing from the provided match is used for fitting**, and the public 5 minutes are never used to choose
-  between variants.  Hyper-parameters were examined only on **open tracking data of other matches** (IDSSE
-  Bundesliga and Metrica Sports sample games 1-3, with possession labels derived algorithmically from their
-  events) kept in the sister repository `mtah2027-external-benchmarks` -- those files are not redistributed here.
+**Nothing from the provided BAR-ATH match is used as a label or for fitting, and the public 5 minutes are never
+used to choose between variants** (`RULES.md`: no hand labels on the provided game).  What is learned, and from
+what:
+
+| Model | Trained on | Labels | Amount |
+|---|---|---|---|
+| Specialist A (ball visible, #20) | **external** open tracking, degraded | algorithmic (below) | 365,664 rows (every 0.4 s) |
+| Specialist B (ball absent, #22) | **external** open tracking, degraded | algorithmic (below) | 232,354 rows |
+| B adaptation to the target match (#21) | block-masked copy of the competition match itself | algorithmic: A's ultra-confident spans | implemented, **off by default** (see below) |
+| everything else (transition costs, dead-ball thresholds, ...) | generic football priors, examined on the external matches | -- | -- |
+
+* **External dataset.**  Seven Bundesliga matches of the DFL / IDSSE open dataset (Bassek et al. 2025; ids
+  `J03WMX, J03WN1, J03WOH, J03WOY, J03WPY, J03WQQ, J03WR9`), converted to metres / 25 fps by the sister repository
+  `mtah2027-external-benchmarks` (not redistributed here).  Their per-frame labels are produced **algorithmically,
+  never by hand**, following that repository's `docs/LABELLING_RULES.md`: ball dead per the provider's
+  ball-status channel -> `D`; ball alive -> the team in the provider's possession channel; frames outside the
+  periods -> `X`.  This mirrors how the competition derives its own ground truth from tracking channels.  The
+  three Metrica sample games (labels derived from events; their ball channel disappears exactly while the ball is
+  dead, which would leak `D`) are not used for training.
+* **Degradation.**  Each match is degraded with the realistic degrader of Issue #19 (41% of the alive frames lose the
+  ball in crowding-weighted 5-60+ s blocks, correlated tracking noise, identity cuts, duplicate and dropped
+  tracks) with 3 seeds, so that the models see the conditions of the competition tracking.  The degraded tracking
+  goes through exactly the same front end as the competition match (cleaning, orientation so that the home team
+  attacks +x, #13, #16, #17, #18).
+* **Team symmetry.**  Barcelona and Athletic differ from the Bundesliga teams, so every degraded match is
+  also used with the home / away roles swapped (the orientation stage mirrors the pitch so that the new "home"
+  attacks +x; labels `H <-> A`): 42 match variants in total.  The models never see a team identity, only roles.
+* **Reproducibility.**  `python scripts/train_specialists.py --bench-dir <external cache>` rebuilds
+  `models/specialists.json` (1.6 MB, a LightGBM text dump + metadata; **no match data**).  Training is
+  deterministic (`deterministic=True`, `num_threads=1`, `seed=0`; retraining gives identical models).
+  `generate_submission.py` retrains at run time when the external matches are on disk (`auto`), otherwise loads
+  the committed file, otherwise falls back to the heuristic emissions.
+* **Calibration.**  A temperature fitted on out-of-fold predictions of whole held-out matches (A: 1.01, B: 0.93;
+  out-of-fold log-loss A 0.126, B 0.401) so that the probabilities reflect generalisation to an unseen match.
+* **Self-supervision on the target match (#21).**  A's ultra-confident spans (P > 0.98 for >= 2 s) are
+  algorithmic pseudo-labels of the competition match; blocks of 5-45 s are masked in them, the whole front end
+  (including the ball memory from the start of each mask) is recomputed on the masked copy and B is adapted with
+  a few extra boosting rounds.  This is allowed (algorithm-produced labels on the provided game) but, evaluated
+  leave-one-match-out on the external matches, it did **not** help (section 5), so it is disabled in
+  `configs/default.yaml` (`specialist_fusion.use_pseudo_labels: false`) and kept as a documented option.
 * A deterministic **synthetic match** (`scripts/generate_synthetic_fixtures.py`, fixed seed) in the exact file
   layout of the real bundle is used for tests, CI and the end-to-end determinism check.
-* *Planned (wave 2)*: a self-supervised specialist trained on high-confidence segments of the match itself with
-  block masking (the ball is hidden artificially, ground truth comes from the confident ball-visible segments),
-  plus the external matches degraded to the empirical gap structure.  No manual labelling is involved.
 
 ## 4. Possession rules implemented
 
@@ -101,11 +141,66 @@ to the ball + majority vote over +-50 frames, `D` only where nobody has the ball
 
 | Setting (mean over matches) | engine spellF1 | engine macroF1 | baseline spellF1 | baseline macroF1 |
 |---|---|---|---|---|
-| 7 IDSSE matches, complete ball | **0.691** | 0.934 | 0.310 | 0.394 |
+| 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.742**) | 0.934 (0.947) | 0.310 | 0.394 |
 | 7 IDSSE matches, 41% of the ball hidden in random 5-60 s blocks (seed 0) | **0.487** | 0.814 | 0.218 | 0.453 |
+| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.392 (wave 2: **0.606**) | 0.733 (0.900) | 0.215 | 0.440 |
 | 3 Metrica sample games (their own ball channel is missing exactly while the ball is dead, which leaks `D`) | 0.778 | 0.889 | 0.437 | 0.833 |
 | all 10 matches as they are | 0.717 | 0.920 | 0.348 | 0.526 |
 | all 10 matches, 41% of the ball additionally hidden | 0.505 | 0.802 | 0.247 | 0.517 |
+
+**Wave 2 -- learned specialists, leave-one-match-out** (`eval_external.py --only-complete-ball [--degrade --seeds 0 1 2]
+--specialists lomo`: for each of the 7 IDSSE matches the specialists are trained on the other six, degraded with
+3 seeds and home/away-swapped, and the held-out match is processed as an unlabelled target; same arrays and metric
+as the rows above; hyper-parameters examined only this way, never on BAR-ATH):
+
+| Setting (mean over 7 matches) | wave-1 heuristic spellF1 / macroF1 | wave-2 specialists spellF1 / macroF1 | official-style baseline |
+|---|---|---|---|
+| complete ball | 0.691 / 0.934 | **0.742 / 0.947** | 0.310 / 0.394 |
+| `--degrade`, seeds 0-2 (21 runs) | 0.392 / 0.733 | **0.606 / 0.900** | 0.215 / 0.440 |
+
+Every one of the 21 degraded runs improves (spellF1 +0.11 ... +0.30 per run; the learned route finds fewer, longer
+possessions: 352 vs 466 predicted for 511 true on the first match).  Choices examined leave-one-match-out on the
+degraded matches (spellF1 / macroF1): tempering of the log-probabilities x1.5 0.594, x1.0 0.600 / 0.900,
+**x0.5 0.606 / 0.900** (kept), x0.3 0.608; blending 30% of the heuristic emission back in 0.574 / 0.892 (worse, so
+0%); relaxing the H<->A transition cost inside long occlusions (`ha_occluded` -6 -> -3 or -9) or at rest
+(`ha_closed` -11.5 -> -8) changes the score by < 0.002, so the touch-based gating of Issue #23 is kept as it is
+(B's confident team changes inside long gaps already pass the -6 occlusion gate).
+
+**Optuna sweep of the decoder parameters** (`mtah2027-external-benchmarks/scripts/run_optuna_sweep.py`, reports in
+its `reports/optuna_*.json`; TPE seed 0, 300 trials per route, the 7 IDSSE matches degraded with seeds 0-1, the
+cached leave-one-match-out emissions so each trial only rebuilds transitions + Viterbi + spell optimiser; search
+space = `transition_matrix`, `spell_optimizer`, `heuristic_emissions` / specialist tempering-blend).  The honest
+estimate is nested (for each held-out match the parameters are chosen on the other six) and is checked again on
+an unused degradation seed 2.  Adoption rule fixed before the sweep: nested gain >= +0.02 spellF1 and a gain on the
+unused seed.
+
+| Route | defaults | best | nested honest | unused seed 2: defaults -> tuned |
+|---|---|---|---|---|
+| heuristic | 0.396 | 0.439 | 0.439 (+0.043) | 0.384 -> 0.427 (7/7 matches up) |
+| specialists | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+
+The heuristic parameters are adopted as `route_overrides.heuristic` in `configs/default.yaml` (merged over the shared
+sections only when the heuristic route decodes; `config.route_config`); re-measured through the full array-level
+pipeline (`eval_external.py --degrade --seeds 2 --only-complete-ball`) they give 0.4266 / 0.7734, matching the
+sweep.  The specialists keep the shared defaults (+0.0195 is under the rule).  On the toy synthetic match the tuned
+heuristic parameters score lower than the shared defaults (short match 0.348 vs baseline 0.458), another reminder
+that the synthetic physics is not football; the synthetic sanity test therefore runs on the shared defaults.
+
+**Pseudo-labelling ablation (Issue #21)** (same protocol, degraded, seeds 0-2; B adapted with the block-masked
+pseudo-labels of the held-out match's own degraded tracking, never its ground truth): without 0.606 / 0.900,
+with the specified settings (anchors P > 0.98 sustained 2 s, blocks 5-45 s) **0.590 / 0.878**.  A variant that
+drops the `D` pseudo-rows scored 0.574 (tempering x1; 0.600 without adaptation), and lighter weights / fewer
+adaptation rounds did not beat no adaptation on the folds that were run.  Reason: with a calibrated P > 0.98
+threshold the anchors are overwhelmingly `D` spans (about 4,900 of ~5,000 pseudo rows) and few H/A possessions
+(~400-1,800 rows), so adaptation mostly shifts B towards `D`.  The module is complete and tested, but
+`use_pseudo_labels` is **off** by default; whether it helps on the real, unseen BAR-ATH is not measurable
+without labels.
+
+**Occlusion-team learnability** (`scripts/explore_occlusion_team.py`, 7 degraded IDSSE matches x 3 seeds, leave-one-match-out
+HistGradientBoosting on the collective-physics (#17) and ball-memory (#18) features only, accuracy of the team on the
+alive frames whose ball is hidden): model **0.850**; physics only 0.847; memory only 0.796; constant majority team 0.529; current rule (last/next
+touch, change point in the middle) 0.621; engine decoded output 0.582.  The learned signal is mostly team shape
+(width of the attacking block, line advance), which is why the specialist B of Issue #22 should be trained on it.
 
 Diagnostic on two IDSSE matches (complete ball): giving the engine the ground-truth team with its own `D` raises
 spellF1 to ~0.96 (to ~0.87-0.89 with 41% of the ball hidden), whereas giving it the ground-truth `D` with its
@@ -116,35 +211,111 @@ the score, and under occlusion it is the part that degrades.
 
 | Match | engine spellF1 / macroF1 | possessions (pred/gt) | nearest-player +-50 baseline spellF1 / macroF1 |
 |---|---|---|---|
-| short, 12,000 frames | 0.545 / 0.716 | 24 / 23 | 0.458 / 0.479 |
-| full length, 199,319 frames | 0.564 / 0.762 | 346 / 293 | 0.434 / 0.532 |
+| short, 12,000 frames (heuristic emissions, shared defaults) | 0.545 / 0.716 | 24 / 23 | 0.458 / 0.479 |
+| full length, 199,319 frames (heuristic emissions, shared defaults, before `route_overrides`) | 0.564 / 0.762 | 346 / 293 | 0.434 / 0.532 |
+| full length, 199,319 frames (specialists from `models/specialists.json`, the CI default) | 0.446 / 0.684 | 383 / 293 | 0.434 / 0.532 |
+
+The synthetic generator is not real football (its dead-ball and team-shape physics differ from the Bundesliga
+data the specialists are trained on), so the learned route scores below the heuristic on it; this is a
+domain-shift warning, not a quality measure -- its purpose is the determinism / contract check.
 
 **Runtime** of the full-length synthetic end-to-end run (`generate_submission.py --synthetic`, generation of the
-match included, 16 cores laptop): 35 s with numba, 35 s with the pure-Python fallback decoder (identical SHA256);
-the engine itself (loading, features, decoding, post-processing) takes ~18 s.  Viterbi: 0.03 s (numba), 0.6 s
-(fallback).
+match included, 16 cores laptop, numba + LightGBM): 50-56 s with the committed specialists (generation 24 s, model
+loading 0.2 s, engine ~30 s including the extra collective-physics / ball-memory features); two runs give the
+same SHA256.  Wave-1 heuristic route: 35 s.  Training from scratch (`scripts/train_specialists.py`: 42 degraded
+variants + calibration folds + final fit, single-threaded) takes ~10-17 min.  Without numba the convex-hull
+fallback alone needs ~58 s at full size, which is why CI installs numba.
 
 The published floor for the real match is `baseline_smooth50` spellF1 0.2433; the real-match score of this
 version is not known to the authors at the time of writing (the data is processed only locally).
 
 ## 6. Limitations (honest list)
 
-* **Ball occlusions** (41% of graded frames) are handled only by carrying the last/next touch and by player
-  speeds for `D`; real possession changes inside an occlusion are located at the middle of the gap.  This is the
-  largest source of lost spellF1 (see section 5) and the main target of the planned specialist B.
+* **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
+  most of the team information from the collective physics and the ball memory (0.39 -> 0.61 degraded) but still
+  leaves a gap to the complete-ball score (0.74); the learned route also predicts fewer possessions than the truth.
+* **Domain shift.**  The specialists are trained on Bundesliga open data degraded by our own model of the ATD gaps
+  (blocks hide alive play; the real gap statistics and the real tracking noise of BAR-ATH are known only through
+  the task description).  If the real ATD loses the ball differently (e.g. mostly while it is dead) the learned
+  `D`/team behaviour while the ball is absent may transfer worse; the synthetic match (different physics) already
+  shows a drop for the learned route.  The heuristic route is one flag away (`--specialists off`) and goes through
+  the same hash-checked pipeline.
+* The block-masking pseudo-labelling (#21) did not help on external matches and is off by default.
 * Touch detection depends on the ball track quality; noisy or interpolated ball positions produce missed or
-  spurious touches.  Aerial balls are not modelled (`is_aerial` is all false until Issue #12).
-* The throw-in team resolver (#15) and collective-physics / ball-memory features (#17, #18) are planned; throw-ins
-  with `Team = N/A` are anchored in time but their team is inferred from the first touch only.
+  spurious touches.  Aerial balls: `vision/aerial_filter.py` (#12) derives `is_aerial` from the ball track alone (apparent speed > 35 m/s, reprojection jumps with homographies, straight flights > 18 m without grass deceleration, optional ATD z channel; the IDSSE benchmark has no z, so only the 2-D cues were measured) and suppresses touches there. It is OFF by default (`pipeline.use_aerial_filter`): on the 7 degraded IDSSE matches it lowered spellF1 (heuristic route 0.3968 -> 0.3806, leave-one-match-out specialists 0.6105 -> 0.6045), because the touches it removes at kicks/landings are real boundaries.
+* Throw-ins with `Team = N/A` get their team from the tracking (`features/throwin_resolver.py`, #15): the player
+  within 1.5 m of a touchline who is most isolated from opponents (and holds the ball) in `[start, t*]`, and the
+  first clear controller in `[t*, t*+35]`, vote; below the confidence floor the throw-in stays unresolved and
+  the decoder keeps both `D -> H` / `D -> A` open.  The team feeds the transition matrix (`D -> team` bias at
+  `t*`) and an optional emission prior (`throwin_resolver.emission_bias`, off: no gain measured).  On the
+  synthetic match 55 of 56 gradable throw-ins are right and none is wrong (one abstains); its effect on spellF1
+  is nil there (the transition columns were already open), so the resolver is a safety net, not a gain claim.
+* Video ball recovery (`vision/`, #11) is built and tested on synthetic video only and is OFF by default
+  (`vision.enabled: false`); the real tactical video has not been processed.  Simulated value on the 7 degraded
+  IDSSE matches (a detector that recovers the true ball on X % of the planned crops, one per 5 frames of each
+  gap, then the same interpolating injection; 77 % of the hidden frames end up filled at X = 40 %), mean
+  spellF1 (paired, seed 0): with 1 m noise the heuristic route gains +0.021 (X = 20), +0.010 (40), -0.020 (60)
+  and the learned route LOSES 0.058 / 0.086 / 0.087 (its training data never had a noisy "recovered" ball);
+  with 0.3 m noise at X = 40 the heuristic route gains +0.061 (0.3968 -> 0.4575) and the learned one +0.014
+  (0.6105 -> 0.6248).  So it only pays with an accurate detector (about 0.3 m) and is no use at 1 m; the
+  AGPL-3.0 `ultralytics` dependency is an optional extra and nothing in the submission path needs it.
+* Broadcast sync (`preprocessing/broadcast_sync.py`, #10) is built and tested on synthetic data only and is OFF by
+  default (`broadcast_sync.enabled: false`); the real broadcast files have not been processed.  Simulated value
+  (`scripts/simulate_broadcast_value.py`, seed 0, the 10 external matches degraded with the #19 degrader; the TV
+  view follows the ball with a 35 m window, shots of 3-12 s, cuts, replay-induced clock drift, permuted slots, 0.3 m
+  player / 0.5 m ball noise): 38 % of the blocks are accepted, 94.5 % of them within 2 frames of the true offset
+  (median error 0 frames; the other 5.5 % are wrong placements), 13.9 % of the hidden graded frames get a ball
+  (median error 0.60 m, i.e. the injected noise).  Heuristic-route spellF1 0.4127 -> 0.4224 (+0.010; 7 matches up,
+  3 down by up to 0.012), the learned route on the first two matches only (leave-one-match-out training is slow)
+  0.5621 -> 0.5592 (-0.003).  A +0.01 is within the spellF1 noise (~0.04), so it stays off until a local run on the
+  real files shows a high accepted share and a small position residual.
 * Parameters are generic priors validated on other competitions' data; the tracking noise of BAR-ATH may be
   different.  No parameter was fitted to BAR-ATH.
-* The KPI dashboard (#27, planned) will flag sanity alarms; in wave 1 only aggregate statistics are printed.
+* The KPI dashboard (#27) only flags alarms; its ranges and targets are never used to tune parameters.
 
-## 7. Reproduction
+## 7. Quality control: the seven KPIs and the route decision
+
+`python scripts/run_kpi_dashboard.py --data-dir data` (or `generate_submission.py --kpi`) prints a table and writes
+`outputs/kpi_report.json`; both contain only aggregate numbers (counts, shares, scores, SHA256, timings), so they
+can be shared without exposing match data.  The thresholds live in `configs/default.yaml` (`kpi_alarms`,
+`kpi_dashboard`).
+
+| KPI | What | Gate |
+|---|---|---|
+| 1 | Macroscopic sanity alarms: possessions, mean duration, %D of graded, %H of alive | WARN outside the generic ranges (alarms, never targets) |
+| 2 | Artificial blindness, no ground truth: on the first 20 graded minutes hide the ball in extra synthetic blocks, rerun, compare with the unmasked run | spellF1 >= 0.75 |
+| 3 | Degraded external evaluation (other matches, Issue #19 degrader), heuristic route and, with `--external-lomo`, the leave-one-match-out specialists | spellF1 >= 0.65, median transition latency < 8 frames |
+| 4 | Smoke test on the public 5 minutes, only with real data, block-bootstrap interval | printed as "pipeline check only - not for model selection" |
+| 5 | 20 transitions (frame, time, from/to) for the visual audit, written to the git-ignored `outputs/audit_transitions.csv` | only the count is printed |
+| 6 | Official `validate_submission` and SHA256 of the file | OK / FAIL |
+| 7 | Route comparison without ground truth: specialists vs heuristic on the target match (spellF1 of one vs the other, possession counts, frame agreement) | decision rule below |
+
+**Which route to submit (decision procedure).**  The learned route scored lower than the heuristic one on the
+synthetic match (domain shift), so on the real match the choice is made without looking at the public ground truth:
+
+1. Run the external benchmark with `--external-lomo`: the specialists are trained leave-one-match-out on the other
+   matches and scored on the held-out degraded match, next to the heuristic route (KPI 3).
+2. Prefer the specialists only if their mean spellF1 beats the heuristic route by at least
+   `kpi_dashboard.route_margin_spellf1` (0.04, the metric's noise level); a smaller difference, or a loss,
+   selects the training-free heuristic route.  Without external evidence the rule answers `undetermined`.
+3. KPI 7 on the target match (agreement of the two routes, possession counts) is a *diagnostic*: low agreement
+   (spellF1 of one vs the other below 0.5) warns of a domain shift and means "trust only the external evidence";
+   it never selects a route by itself.  The public 5 minutes (KPI 4) check alignment and format only.
+4. The chosen route is submitted with `--specialists auto|load` (learned) or `--specialists off` (heuristic).
+
+Example (`run_kpi_dashboard.py --synthetic`, full-length synthetic match, 108 s; WARN lines are expected there:
+the synthetic match has a different physics and more dead time than the generic priors): sanity alarms 383
+possessions / 6.7 s / 59.6 % D / 51.6 % H; blindness spellF1 0.695; degraded external (heuristic route, 10 matches)
+spellF1 0.413, median latency 5.0 frames; format OK; route agreement spellF1 0.597 (heuristic 346 vs specialists
+383 possessions); against the synthetic truth heuristic 0.564 vs specialists 0.446.  `--external-lomo` retrains the
+specialists once per held-out match and takes tens of minutes.
+
+## 8. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt && pip install -e . --no-deps       # numba==0.68.0 optional
+pip install -r requirements.txt && pip install -e . --no-deps       # numba / lightgbm pinned, optional at run time
+python scripts/train_specialists.py --bench-dir <external cache>      # optional: regenerates models/specialists.json
 python scripts/generate_submission.py --data-dir data --team OpusOperandi
 python evaluation/validate_submission.py outputs/OpusOperandi.csv
 ```

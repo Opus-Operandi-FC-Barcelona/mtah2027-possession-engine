@@ -218,14 +218,43 @@ cross_check_games()
 # --------------------------------------------------------------------------------------------
 # Per-module parameter sections (``configs/default.yaml``)
 # --------------------------------------------------------------------------------------------
-def load_section(name: str, path: str | os.PathLike | None = None) -> dict[str, Any]:
-    """Raw mapping of one top-level YAML section (``{}`` when the section is absent)."""
+def _load_raw(path: str | os.PathLike | Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Parsed YAML mapping of ``path`` (default file when ``None``); a mapping is returned as is."""
+    if isinstance(path, Mapping):
+        return dict(path)
     target = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     with open(target, encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
     if not isinstance(raw, Mapping):
         raise ConfigError(f"{target}: top level must be a mapping")
-    return dict(_section(raw, name))
+    return dict(raw)
+
+
+def load_section(name: str, path: str | os.PathLike | Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Raw mapping of one top-level YAML section (``{}`` when the section is absent).
+
+    ``path`` may also be an already parsed configuration mapping (see :func:`route_config`)."""
+    return dict(_section(_load_raw(path), name))
+
+
+def route_config(route: str, path: str | os.PathLike | Mapping[str, Any] | None = None):
+    """Configuration of one decoding route: ``route_overrides.<route>`` merged key by key into its sections.
+
+    The heuristic and the learned routes share the decoder sections (``transition_matrix``,
+    ``spell_optimizer``, ...) but were tuned separately on the external matches, so a route may override
+    them.  Returns ``path`` unchanged when the route has no overrides, else the merged in-memory mapping
+    (accepted by :func:`load_section` and every ``from_config``).
+    """
+    raw = _load_raw(path)
+    overrides = (raw.get("route_overrides") or {}).get(route) or {}
+    if not overrides:
+        return path
+    merged = dict(raw)
+    for section, values in overrides.items():
+        if not isinstance(values, Mapping):
+            raise ConfigError(f"route_overrides.{route}.{section} must be a mapping")
+        merged[section] = {**dict(raw.get(section) or {}), **dict(values)}
+    return merged
 
 
 def params_from_mapping(cls: type, mapping: Mapping[str, Any], section: str = "") -> Any:

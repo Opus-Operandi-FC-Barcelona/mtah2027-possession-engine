@@ -6,6 +6,11 @@ scikit-learn==1.7.2
 PyYAML==6.0.3
 pytest==9.1.1
 ruff==0.17.2
-# Optional accelerators (fallbacks give identical results): pip install -e .[fast]
-# numba==0.68.0
-# lightgbm==4.7.0
+# Accelerators, installed by CI (fast hull / Viterbi path, LightGBM specialists).  Both are optional at run
+# time: without numba the NumPy fallbacks give identical results; without lightgbm the specialists fall back
+# to scikit-learn when training in-process and to the heuristic emissions when only the model file exists.
+numba==0.68.0
+lightgbm==4.7.0
+# Optional extra "vision" (Issue #11): reads the tactical mp4; installed by CI so the synthetic-video tests run.
+# (ultralytics, the AGPL-3.0 YOLO detector, is the separate extra "yolo" and is not installed by CI.)
+opencv-python-headless==4.13.0.92
