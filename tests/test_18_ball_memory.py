@@ -8,6 +8,7 @@ import pytest
 
 from mtah2027.config import ConfigError, params_from_mapping
 from mtah2027.features import ball_memory as bm
+from mtah2027.features._utils import velocity_from_xy
 
 FPS = 25.0
 PARAMS = bm.BallMemoryParams()
@@ -201,10 +202,10 @@ def test_full_size_computation_is_fast():
     ball[rng.random(n) < 0.4] = np.nan
     team = np.array([0] * 23 + [1] * 23)
     touch = rng.random(n) < 0.01
-    from mtah2027.features._utils import velocity_from_xy
-    pvel, bvel = velocity_from_xy(xy, FPS, 1), velocity_from_xy(ball, FPS, 2)       # the pipeline supplies them
+    pvel, bvel = velocity_from_xy(xy, FPS, 1), velocity_from_xy(ball, FPS, 2)   # supplied by the pipeline
+    delta, evidence = rng.normal(0, 3, n), rng.uniform(-1, 1, n)
     t0 = time.perf_counter()
-    r = bm.compute_ball_memory(xy, team, ball, players_vel=pvel, ball_vel=bvel, touch_mask=touch, delta_d=rng.normal(0, 3, n),
-                               possession_evidence=rng.uniform(-1, 1, n), params=PARAMS)
+    r = bm.compute_ball_memory(xy, team, ball, players_vel=pvel, ball_vel=bvel, touch_mask=touch,
+                               delta_d=delta, possession_evidence=evidence, params=PARAMS)
     assert time.perf_counter() - t0 < 5.0
     assert r.phase_R_home.shape == (n,)
