@@ -56,6 +56,8 @@ class KpiParams:
     bootstrap_n: int = 200
     audit_n: int = 20
     route_margin_spellf1: float = 0.04
+    external_evidence: str = "reports/external_evidence.json"
+    evidence_setting: str = "degraded"
 
     @classmethod
     def from_config(cls, path=None) -> "KpiParams":
@@ -403,6 +405,30 @@ def kpi_format(path: str | Path, n_expected: int) -> dict:
 # --------------------------------------------------------------------------------------------
 # KPI 7: route comparison without ground truth
 # --------------------------------------------------------------------------------------------
+def load_external_evidence(path: str | Path | None = None, setting: str = "degraded") -> dict | None:
+    """The committed external evidence (``scripts/make_external_evidence.py``) as an ``external`` dict.
+
+    Returns ``{"routes": ..., "source": ...}`` for ``decide_route`` or ``None`` when the file or the setting is
+    missing / malformed (the decision then stays ``undetermined``).  External open data only.
+    """
+    import json
+
+    target = Path(path) if path is not None else REPO_ROOT / "reports" / "external_evidence.json"
+    if not target.is_absolute():
+        target = REPO_ROOT / target
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        block = data["settings"][setting]
+        routes = {k: dict(v) for k, v in block["routes"].items()}
+        source = f"committed external evidence {data.get('date', '?')} @ {str(data.get('git_sha', '?'))[:8]}"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if "heuristic" not in routes or "specialists_lomo" not in routes:
+        return None
+    return {"routes": routes, "source": source, "setting": setting, "seeds": block.get("seeds"),
+            "n_matches": block.get("n_matches")}
+
+
 def decide_route(external: dict | None, agreement: dict | None, margin: float) -> dict:
     """Which route to submit, from the external-benchmark evidence only (never the public GT).
 
@@ -430,12 +456,15 @@ def decide_route(external: dict | None, agreement: dict | None, margin: float) -
         choice, why = "heuristic", f"LOMO gain {gain:+.4f} <= -{margin:.2f}"
     else:
         choice, why = "heuristic", f"LOMO gain {gain:+.4f} within the noise (+-{margin:.2f}); simpler route"
-    return {
+    out = {
         "recommended": choice,
         "basis": why,
         "external_gain_spell_f1": float(gain),
         "agreement_note": note,
     }
+    if external and external.get("source"):
+        out["evidence"] = external["source"]
+    return out
 
 
 def kpi_routes(
@@ -602,6 +631,9 @@ def run_dashboard(
             lambda: kpi_external(bench, config_path=cfg_path, params=p, lomo=external_lomo, log=say),
         )
     external = report["kpis"]["3_external"] if report["kpis"]["3_external"].get("routes") else None
+    if external is None or "specialists_lomo" not in external["routes"]:
+        # no live leave-one-match-out run: the route decision rests on the committed external evidence
+        external = load_external_evidence(p.external_evidence, p.evidence_setting) or external
 
     from mtah2027.config import N_VIDEO_FRAMES
 
@@ -745,7 +777,7 @@ def format_report(report: dict) -> str:
         row(
             "  decision",
             "",
-            f"{d['recommended']} ({d['basis']})"
+            f"{d['recommended']} ({d['basis']}{'; ' + d['evidence'] if d.get('evidence') else ''})"
             + (f"; {d['agreement_note']}" if d.get("agreement_note") else ""),
         )
     else:

@@ -34,6 +34,8 @@ kpi_dashboard:
   bootstrap_n: 200              # KPI 4: block-bootstrap draws of the interval on the public 5 minutes
   audit_n: 20                   # KPI 5: transitions exported for the visual audit
   route_margin_spellf1: 0.04    # KPI 7: leave-one-match-out gain needed to prefer the specialists (spellF1 noise)
+  external_evidence: reports/external_evidence.json   # KPI 7: committed external LOMO evidence (used without --external-lomo)
+  evidence_setting: degraded    # setting of that file the decision reads
 
 # Issue #13 -- continuous dead-ball (D) signals. Defaults are generic football priors; they are
 # meant to be tuned on external matches only (never on the public 5 minutes of BAR-ATH).
