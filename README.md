@@ -68,6 +68,30 @@ python evaluation/validate_submission.py outputs/OpusOperandi.csv
   and logged if its input or module is missing; if the heuristic route itself fails, the nearest-player
   baseline is written, so a valid file always exists.
 
+## Quality control: the seven-KPI dashboard
+
+```bash
+python scripts/run_kpi_dashboard.py --data-dir data --submission outputs/OpusOperandi.csv
+python scripts/run_kpi_dashboard.py --data-dir data --external-lomo        # + leave-one-match-out specialists
+python scripts/run_kpi_dashboard.py --synthetic                            # full-length synthetic self-check
+python scripts/generate_submission.py --data-dir data --kpi               # submission + dashboard in one go
+```
+
+Options: `--data-dir`, `--synthetic`, `--submission`, `--bench-dir` (default: the sibling
+`mtah2027-external-benchmarks/cache` if it exists), `--skip-external`, `--external-lomo`.  Output: a table and
+`outputs/kpi_report.json` with aggregate numbers only (safe to paste), plus `outputs/audit_transitions.csv` (20
+transitions for the visual audit; git-ignored, never commit it, only its count is printed).  The seven KPIs are
+sanity alarms, artificial blindness, degraded external evaluation, a smoke test on the public 5 minutes ("pipeline
+check only - not for model selection", real data only), the audit export, the format check with SHA256, and the
+specialists-vs-heuristic route comparison.
+
+**Choosing the route without ground truth.**  The learned route lost to the heuristic one on the synthetic match
+(domain shift), so on the real match decide with `--external-lomo`: submit the specialists only if their
+leave-one-match-out spellF1 on the degraded external matches beats the heuristic route by >= 0.04; otherwise
+submit `--specialists off`.  The agreement between the two routes on the real match is a diagnostic (low
+agreement = domain-shift warning), never the criterion, and the public GT is never used to choose.  Details:
+"Quality control" in `docs/TECHNICAL_REPORT.md`.
+
 ## Evaluate on other matches
 
 `scripts/eval_external.py` scores the array-level core of the pipeline on open tracking data of **other**
@@ -112,13 +136,14 @@ src/mtah2027/
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
-                                     collective_physics (#17), ball_memory (#18)
+                                     throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
                                      frame_classifier + specialist_features / _data (shared), specialist_ball_present
                                      (#20), pseudo_labeling (#21), specialist_ball_absent + specialist_fusion (#22)
   decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
+  validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py
   pipeline.py                        run_core (arrays) and run_pipeline (files -> contract-compliant labels)
 models/specialists.json              Specialists A/B trained on external open data (reproduced by train_specialists.py)
 scripts/                             generate_submission.py, train_specialists.py, eval_external.py,

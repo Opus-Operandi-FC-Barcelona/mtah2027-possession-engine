@@ -223,13 +223,55 @@ version is not known to the authors at the time of writing (the data is processe
 * The block-masking pseudo-labelling (#21) did not help on external matches and is off by default.
 * Touch detection depends on the ball track quality; noisy or interpolated ball positions produce missed or
   spurious touches.  Aerial balls are not modelled (`is_aerial` is all false until Issue #12).
-* The throw-in team resolver (#15) is planned; throw-ins with `Team = N/A` are anchored in time but their team
-  is inferred from the first touch only.
+* Throw-ins with `Team = N/A` get their team from the tracking (`features/throwin_resolver.py`, #15): the player
+  within 1.5 m of a touchline who is most isolated from opponents (and holds the ball) in `[start, t*]`, and the
+  first clear controller in `[t*, t*+35]`, vote; below the confidence floor the throw-in stays unresolved and
+  the decoder keeps both `D -> H` / `D -> A` open.  The team feeds the transition matrix (`D -> team` bias at
+  `t*`) and an optional emission prior (`throwin_resolver.emission_bias`, off: no gain measured).  On the
+  synthetic match 55 of 56 gradable throw-ins are right and none is wrong (one abstains); its effect on spellF1
+  is nil there (the transition columns were already open), so the resolver is a safety net, not a gain claim.
 * Parameters are generic priors validated on other competitions' data; the tracking noise of BAR-ATH may be
   different.  No parameter was fitted to BAR-ATH.
-* The KPI dashboard (#27, planned) will flag sanity alarms; only aggregate statistics are printed so far.
+* The KPI dashboard (#27) only flags alarms; its ranges and targets are never used to tune parameters.
 
-## 7. Reproduction
+## 7. Quality control: the seven KPIs and the route decision
+
+`python scripts/run_kpi_dashboard.py --data-dir data` (or `generate_submission.py --kpi`) prints a table and writes
+`outputs/kpi_report.json`; both contain only aggregate numbers (counts, shares, scores, SHA256, timings), so they
+can be shared without exposing match data.  The thresholds live in `configs/default.yaml` (`kpi_alarms`,
+`kpi_dashboard`).
+
+| KPI | What | Gate |
+|---|---|---|
+| 1 | Macroscopic sanity alarms: possessions, mean duration, %D of graded, %H of alive | WARN outside the generic ranges (alarms, never targets) |
+| 2 | Artificial blindness, no ground truth: on the first 20 graded minutes hide the ball in extra synthetic blocks, rerun, compare with the unmasked run | spellF1 >= 0.75 |
+| 3 | Degraded external evaluation (other matches, Issue #19 degrader), heuristic route and, with `--external-lomo`, the leave-one-match-out specialists | spellF1 >= 0.65, median transition latency < 8 frames |
+| 4 | Smoke test on the public 5 minutes, only with real data, block-bootstrap interval | printed as "pipeline check only - not for model selection" |
+| 5 | 20 transitions (frame, time, from/to) for the visual audit, written to the git-ignored `outputs/audit_transitions.csv` | only the count is printed |
+| 6 | Official `validate_submission` and SHA256 of the file | OK / FAIL |
+| 7 | Route comparison without ground truth: specialists vs heuristic on the target match (spellF1 of one vs the other, possession counts, frame agreement) | decision rule below |
+
+**Which route to submit (decision procedure).**  The learned route scored lower than the heuristic one on the
+synthetic match (domain shift), so on the real match the choice is made without looking at the public ground truth:
+
+1. Run the external benchmark with `--external-lomo`: the specialists are trained leave-one-match-out on the other
+   matches and scored on the held-out degraded match, next to the heuristic route (KPI 3).
+2. Prefer the specialists only if their mean spellF1 beats the heuristic route by at least
+   `kpi_dashboard.route_margin_spellf1` (0.04, the metric's noise level); a smaller difference, or a loss,
+   selects the training-free heuristic route.  Without external evidence the rule answers `undetermined`.
+3. KPI 7 on the target match (agreement of the two routes, possession counts) is a *diagnostic*: low agreement
+   (spellF1 of one vs the other below 0.5) warns of a domain shift and means "trust only the external evidence";
+   it never selects a route by itself.  The public 5 minutes (KPI 4) check alignment and format only.
+4. The chosen route is submitted with `--specialists auto|load` (learned) or `--specialists off` (heuristic).
+
+Example (`run_kpi_dashboard.py --synthetic`, full-length synthetic match, 108 s; WARN lines are expected there:
+the synthetic match has a different physics and more dead time than the generic priors): sanity alarms 383
+possessions / 6.7 s / 59.6 % D / 51.6 % H; blindness spellF1 0.695; degraded external (heuristic route, 10 matches)
+spellF1 0.413, median latency 5.0 frames; format OK; route agreement spellF1 0.597 (heuristic 346 vs specialists
+383 possessions); against the synthetic truth heuristic 0.564 vs specialists 0.446.  `--external-lomo` retrains the
+specialists once per held-out match and takes tens of minutes.
+
+## 8. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

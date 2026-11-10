@@ -20,6 +20,21 @@ kpi_alarms:
   dead_pct_of_graded: [15.0, 55.0]  # % of D over graded frames (external matches: 29-52%)
   home_pct_of_alive: [35.0, 75.0]   # % of H over alive (H+A) frames
 
+# Issue #27 -- thresholds of the KPI dashboard.  The KPI targets are quality gates reported as OK / WARN; they
+# are never used to choose hyper-parameters (and the public 5 minutes only run as a pipeline check).
+kpi_dashboard:
+  blindness_minutes: 20.0       # KPI 2: first graded minutes of the target match
+  blindness_hide_frac: 0.41     # KPI 2: share of the alive frames hidden in extra synthetic blocks
+  blindness_seed: 0
+  blindness_target: 0.75        # KPI 2: spellF1 masked-vs-unmasked self-consistency
+  external_spell_target: 0.65   # KPI 3: mean spellF1 on the degraded external matches
+  latency_target_frames: 8.0    # KPI 3: median absolute transition latency
+  latency_match_window_s: 5.0   # KPI 3: predicted transitions farther than this from a true one are unmatched
+  external_seeds: [0]           # KPI 3: degrader seeds
+  bootstrap_n: 200              # KPI 4: block-bootstrap draws of the interval on the public 5 minutes
+  audit_n: 20                   # KPI 5: transitions exported for the visual audit
+  route_margin_spellf1: 0.04    # KPI 7: leave-one-match-out gain needed to prefer the specialists (spellF1 noise)
+
 # Issue #13 -- continuous dead-ball (D) signals. Defaults are generic football priors; they are
 # meant to be tuned on external matches only (never on the public 5 minutes of BAR-ATH).
 dead_ball_signals:
