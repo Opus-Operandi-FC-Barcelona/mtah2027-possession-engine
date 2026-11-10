@@ -77,7 +77,7 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
 
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
-                   degrade: bool = False, specialists=None) -> dict:
+                   degrade: bool = False, specialists=None, return_codes: bool = False) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
@@ -96,6 +96,7 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
     row["engine"] = score(gt, core.codes)
+    codes_spec = None
     if specialists is not None:
         t0 = time.perf_counter()
         learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
@@ -103,12 +104,15 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
         row["specialists"] = score(gt, learned.codes)
         row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
         row["specialists"]["source"] = learned.diagnostics["emission_source"]
+        codes_spec = learned.codes
     if with_baseline:
         base = np.full(len(gt), 3, dtype=np.int8)
         full = baseline_labels(players, team, ball)
         for a, b in periods:
             base[a:b + 1] = full[a:b + 1]
         row["baseline"] = score(gt, base)
+    if return_codes:     # in-memory only (used by the KPI dashboard); never serialised
+        row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps}
     return row
 
 

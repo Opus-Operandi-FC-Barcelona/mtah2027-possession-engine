@@ -5,6 +5,7 @@ Examples::
 
     python scripts/generate_submission.py --data-dir data --team OpusOperandi
     python scripts/generate_submission.py --synthetic --out /tmp/sub_run1.csv     # CI determinism check
+    python scripts/generate_submission.py --data-dir data --kpi                   # + the 7-KPI dashboard
 
 Only aggregate information is printed (row count, label shares, number and mean duration of possessions,
 SHA256, runtime) -- never per-frame rows -- so the command is safe to run on the real match.  Without any
@@ -58,6 +59,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
                          "mtah2027-external-benchmarks/cache)")
     ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
+    ap.add_argument("--kpi", action="store_true",
+                    help="after writing the CSV run the KPI dashboard (Issue #27): aggregate numbers + "
+                         "outputs/kpi_report.json")
+    ap.add_argument("--kpi-skip-external", action="store_true", help="with --kpi: skip the external KPI 3")
+    ap.add_argument("--kpi-lomo", action="store_true",
+                    help="with --kpi: also score the leave-one-match-out specialists on the external matches")
     ap.add_argument("--no-cache", action="store_true", help="do not cache the parsed ATD under cache/")
     ap.add_argument("--quiet", action="store_true", help="do not print the per-stage log")
     return ap.parse_args(argv)
@@ -152,6 +159,18 @@ def main(argv=None) -> int:
             r = eb.evaluate_arrays(gt, result.labels)
             print(f"synthetic ground truth: spellF1={r['spell_f1_mean']:.4f}  macroF1={r['macro_f1']:.4f}  "
                   f"possessions pred/gt={r['n_pred_spells']}/{r['n_gt_spells']}")
+        if args.kpi:
+            from mtah2027.models.specialist_fusion import find_bench_dir
+            from mtah2027.validation.kpi_dashboard import format_report, run_dashboard
+
+            report = run_dashboard(
+                data_dir=data_dir, blocks=blocks, specialists=specialists, submission_path=out,
+                config_path=cfg_path, bench_dir=find_bench_dir(args.bench_dir),
+                skip_external=args.kpi_skip_external, external_lomo=args.kpi_lomo,
+                real_data=not args.synthetic,
+                out_json=REPO_ROOT / "outputs" / "kpi_report.json", cache_dir=cache_dir,
+                truth=gt if gt_path is not None else None, log=print)
+            print(format_report(report))
         return 0 if check else 1
     finally:
         if tmp is not None:

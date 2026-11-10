@@ -47,5 +47,5 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` (versión funcio
 - [x] COMPLETADA · #24 · wave-1 · Decodificador Viterbi / CRF lineal con @numba.njit por mitad independiente · `feat/issue-24-numba-viterbi-decoder`
 - [x] COMPLETADA · #25 · wave-1 · Post-procesador directo de spellF1: poda de micro-posesiones e inserción de puente D · `feat/issue-25-spell-pruning-and-d-bridge`
 - [x] COMPLETADA · #26 · wave-1 · Consenso MBR de fronteras y contrato estricto de las 199.319 filas · `feat/issue-26-mbr-consensus-and-contract`
-- [ ] PENDIENTE · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
+- [x] COMPLETADA · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
 - [~] OLEADA 2 · #28 · wave-1/2 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`
