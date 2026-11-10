@@ -137,7 +137,7 @@ def build_pseudo_dataset(
             masked[a:b + 1] = np.nan
             in_block[a:b + 1] = True
         fe = rebuild(masked)
-        fm = build_feature_matrix(fe, heuristic(fe))
+        fm = build_feature_matrix(fe, heuristic(fe), play_blocks=periods)
         if not feat_names:
             feat_names = list(fm.names)
         elif list(fm.names) != feat_names:

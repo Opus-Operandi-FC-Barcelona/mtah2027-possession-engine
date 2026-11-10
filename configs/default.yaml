@@ -222,6 +222,11 @@ ball_memory:
   clear_evidence: 0.35          # |possession_evidence| from which a visible frame is a clear possessor
   pressure_radius_m: 5.0        # radius of the pressure counts
 
+# Issue #22 -- past / future context of the collective signals as extra specialist features: centred means over
+# +-W frames and mean(t..t+W) - mean(t-W..t), block-local.  Empty list = off (then the stored model must match).
+specialist_features:
+  context_windows: [50, 100]
+
 # Issues #20-#22 -- shared gradient-boosting settings of the learned specialists (LightGBM with a scikit-learn
 # HistGradientBoosting fallback).  Generic priors; tuned on external matches only (leave-one-match-out).
 specialist_model:

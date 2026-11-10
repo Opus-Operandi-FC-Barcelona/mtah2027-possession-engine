@@ -399,7 +399,10 @@ def run_core(
             d_away=bk.d_away[:, 0] if bk is not None else None,
             ball_visible=visible, dead_score=dead_score, ball_out=sig.ball_out if sig is not None else None,
             restart_frames=restart_frames, restart_teams=restart_teams, fps=fps,
-            params=TransitionParams.from_config(cfg))
+            params=TransitionParams.from_config(cfg),
+            spec_home_logit=em.home_logit if learned is not None else None,
+            spec_p_dead=em.p_dead if learned is not None else None,
+            spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None)
 
     log_trans = st.run("transitions", _transitions)
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive
