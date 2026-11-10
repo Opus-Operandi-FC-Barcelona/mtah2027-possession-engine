@@ -109,7 +109,7 @@ python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2    
 contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially where the ball is crowded,
 plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
 (3 seeds) the wave-1 heuristic engine scores spellF1 0.392 / macroF1 0.733 and the wave-2 specialists
-(leave-one-match-out) **0.606 / 0.900**, against 0.215 / 0.440 for the official baseline recipe; with a complete
+(leave-one-match-out) **0.631 / 0.909**, against 0.215 / 0.440 for the official baseline recipe; with a complete
 ball 0.691 -> 0.742 (baseline 0.310).
 
 `--specialists lomo` additionally scores the learned route **leave-one-match-out** (the specialists of every
@@ -132,12 +132,23 @@ through `route_overrides.heuristic` in `configs/default.yaml` (degraded IDSSE sp
 0.384 -> 0.427 on the unused seed); the specialists keep the shared defaults (+0.0195, under the +0.02 rule).
 `reports/external_evidence.json` predates the heuristic overrides; the KPI 7 decision is unchanged (0.43 vs 0.61).
 
+### Improvement round after the Optuna sweep
+
+Because the learned route under-segments (2467 vs 3061 possessions, 81 % of the hidden-ball turnovers missed), a
+round of changes was measured with the LOMO protocol above (seeds 0-2) under one adoption rule: mean spellF1 gain
+>= +0.01 and no seed worse than -0.003, else the code stays but is off by configuration.  Issue #30: past / future
+window features (+-50 / +-100 frames; non-causal smoothing is legitimate offline) for Specialist B: **adopted**,
+0.6059 -> 0.6307 spellF1 (every seed about +0.025), macroF1 0.9003 -> 0.9089, hidden-ball turnovers missed 81 -> 71 %;
+opening H<->A / H/A->D inside occlusions at the specialists' logit sign changes or P(D) peaks: no gain (+-0.003),
+**off** (`transition_matrix.spec_open`).  Details, negative results and the other items (specialists overrides, MBR)
+in `docs/TECHNICAL_REPORT.md` section 5.x.
+
 ### Possession count and the KPI 7 evidence
 
 On the degraded external matches the learned route predicts fewer possessions than the truth (2467 vs 3061 over
 the 7 IDSSE matches, seed 0) while the heuristic route matches the count (3057).  `scripts/diagnose_possessions.py`
 shows why: 43 % of the true possessions last < 3 s, and 976 of the 2351 true H<->A turnovers happen while the ball is
-hidden, where 81 % are missed (37 % with the ball visible).  Sweeping the transition gates (`ha_closed`, `ha_open`,
+hidden, where 81 % are missed (37 % with the ball visible; 71 % after the context features of Issue #30).  Sweeping the transition gates (`ha_closed`, `ha_open`,
 `ha_occluded`, touch gates), the spell optimiser (`micro_poss_s`, `min_dead_s`, `keep_min_touches`) and the fusion
 temperature moves spellF1 by <= 0.003 and every extra flip is spurious, so the gap is the F1-optimal conservatism of
 an evidence-limited emission model, not a gating bug; no default was changed.

@@ -229,6 +229,52 @@ fallback alone needs ~58 s at full size, which is why CI installs numba.
 The published floor for the real match is `baseline_smooth50` spellF1 0.2433; the real-match score of this
 version is not known to the authors at the time of writing (the data is processed only locally).
 
+### 5.x Improvement round after the Optuna sweep (occlusion turnovers, specialists overrides, MBR)
+
+**Motivation.**  On the degraded external matches the learned route under-segments: 2467 predicted vs 3061 true
+possessions (seed 0) and 81 % of the H<->A turnovers that happen while the ball is hidden are missed (37 % with the
+ball visible).  That is the largest remaining source of lost spellF1.  The adoption rule used for every change in
+this round: the mean leave-one-match-out (LOMO) spellF1 over seeds 0-2 must gain at least +0.01 and no seed may be
+worse beyond -0.003 (improving on every seed, or on two with the third within -0.003); otherwise the code stays
+but is **off** by configuration and the result is reported.  Protocol: the 7 IDSSE matches with a complete ball,
+`--degrade`, seeds 0-2, LOMO specialists, official metric; reference = 0.6059 / 0.9003 (seeds 0/1/2: 0.6105 / 0.5994 /
+0.6079).  External matches only, never BAR-ATH.
+
+**Item 3 (Issue #30): occlusion turnovers.**  Past / future windows are legitimate because the match is processed
+offline as a whole (non-causal smoothing is allowed).  `specialist_features.py` adds, for 21 ball-free signals
+(collective physics #17: centroid speed, depth, width, spectral area of both teams; coherence / line advance #18; the
+player-speed signals and `dead_score` of #13; home-minus-away differences), the centred mean over +-W frames and the
+difference `mean(t..t+W) - mean(t-W..t)` for W = 50 and 100 frames (vectorised cumulative sums, NaN-safe, computed per
+graded block so nothing crosses a half or block boundary): 84 extra columns that let Specialist B see the reversal of
+the collective movement and short stops without the ball (`specialist_features.context_windows`, empty = off).
+
+| LOMO, 7 IDSSE matches, `--degrade` | seed 0 | seed 1 | seed 2 | mean spellF1 / macroF1 | possessions (seed 0, true 3061) | hidden-ball turnovers missed (seed 0) |
+|---|---|---|---|---|---|---|
+| reference (develop) | 0.6105 | 0.5994 | 0.6079 | 0.6059 / 0.9003 | 2467 | 81.0 % |
+| A1: context windows (**adopted**) | 0.6355 | 0.6240 | 0.6326 | **0.6307 / 0.9089** (+0.0248) | 2458 | 71.1 % |
+
+A1 improves every seed by about +0.025 and removes ten points of missed hidden-ball turnovers, while the number of
+predicted possessions hardly changes (the gain comes from better-placed, not more, flips).  `models/specialists.json`
+was retrained with the new layout.
+
+A2 (`transition_matrix.spec_*`, learned route only): inside occlusions H<->A is opened around the frames where the
+specialists' H-vs-A logit changes sign (Schmitt trigger) towards the team the new sign names, H/A->D around P(D) peaks,
+and both at collective-speed accelerations.  It is risky because earlier sweeps relaxing those gates only added
+spurious flips, so it is measured and kept **off** (`spec_open: false`):
+
+| variant (opening strength, window) | mean spellF1 / macroF1 | possessions (seed 0) | hidden turnovers missed |
+|---|---|---|---|
+| on the reference model: -4 / -4 / -5 (defaults) | 0.6061 / 0.9001 | 2484 | 80.3 % |
+| -2 / -3 / -3, accel 0.7 | 0.6054 / 0.9002 | 2533 | 78.8 % |
+| logit only, -1.4, +-25 frames | 0.6062 / 0.9008 | 2537 | 78.9 % |
+| logit only, -2.5, hysteresis 1.0 | 0.6038 / 0.8996 | 2478 | 81.7 % |
+| logit only, -0.7, +-40 frames | 0.6047 / 0.9009 | 2573 | 77.9 % |
+| on A1: defaults | 0.6305 / 0.9089 | 2478 | 70.5 % |
+| on A1: logit only, -1.4, +-25 frames | 0.6292 / 0.9091 | 2515 | 69.3 % |
+
+Every extra flip is as likely wrong as right: the possession count rises towards the truth but spellF1 stays within
++-0.003 (noise ~0.04 across matches, ~0.002 across seeds), so A2 fails the rule and stays off.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
