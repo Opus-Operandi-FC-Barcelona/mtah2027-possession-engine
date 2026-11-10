@@ -11,10 +11,12 @@ so the engine optimises the *number* of possessions and the precision of their b
 description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of every issue:
 [`docs/ISSUES_TRACKER.md`](docs/ISSUES_TRACKER.md).
 
-> **Wave 1 (this version)** is the complete end-to-end route with heuristic emissions.  Wave 2 (learned
-> specialists A/B with self-supervision, throw-in resolver, collective physics, degrader, KPI dashboard) and
-> wave 3 (broadcast sync, YOLO crops, aerial ball, MBR over several models) are planned and plug into the
-> same pipeline; see the tracker.
+> **Wave 2 (this version)** adds the learned specialists: Specialist A (ball visible, #20) and Specialist B
+> (ball absent, #22) -- calibrated gradient-boosting models trained on degraded **external** open matches
+> (home/away-swap augmentation) -- fused into the decoder emissions, plus the block-masking pseudo-labelling of
+> the target match (#21).  The wave-1 heuristic emissions remain the fallback when no model is available.
+> Still planned: throw-in resolver (#15), KPI dashboard (#27) and wave 3 (broadcast sync, YOLO crops, aerial
+> ball, MBR over several models); see the tracker.
 
 ## Install
 
@@ -23,9 +25,11 @@ Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exac
 ```bash
 python -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
-pip install -r requirements.txt        # numpy, pandas, scipy, scikit-learn, PyYAML (+ pytest, ruff)
+pip install -r requirements.txt        # numpy, pandas, scipy, scikit-learn, PyYAML, numba, lightgbm (+ pytest, ruff)
 pip install -e . --no-deps             # makes `mtah2027` importable
-pip install numba==0.68.0              # optional: njit Viterbi; the pure-NumPy/Python fallback is bit-identical
+# numba and lightgbm are optional at run time: without numba the NumPy fallbacks are bit-identical (the
+# full-size hull fallback is slow, ~1 min); without lightgbm the specialists use scikit-learn when they are
+# trained in-process, and only the heuristic emissions are available from the committed model file.
 ```
 
 ## Data (never committed)
@@ -53,6 +57,13 @@ python evaluation/validate_submission.py outputs/OpusOperandi.csv
 * Self-check without the real data (what CI does): `python scripts/generate_submission.py --synthetic --out
   /tmp/sub_run1.csv` generates the full-length synthetic match with a fixed seed and also reports its score
   against the synthetic ground truth.
+* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) trains the specialists at run time
+  from the external open matches if they are on disk (`--bench-dir`, `$MTAH_BENCH_DIR` or the sibling
+  `mtah2027-external-benchmarks/cache`), otherwise loads the committed `models/specialists.json`, otherwise
+  uses the heuristic emissions.  With `--synthetic`, `auto` means `load` (deterministic and fast).  The training
+  is deterministic (LightGBM `deterministic=True`, `num_threads=1`, `seed=0`) and reproducible with
+  `python scripts/train_specialists.py` (the committed file is its output).  See "Training data" in the
+  technical report: only external open data, labelled algorithmically; nothing from BAR-ATH.
 * Progressive fallback: every optional stage (cleaning, kinematics, Smart Tagging anchors, ...) is skipped
   and logged if its input or module is missing; if the heuristic route itself fails, the nearest-player
   baseline is written, so a valid file always exists.
@@ -73,7 +84,18 @@ python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2    
 `--degrade` uses `src/mtah2027/models/external_degrader.py`: 41 % of the alive frames lose the ball in
 contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially where the ball is crowded,
 plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
-(3 seeds) the engine scores spellF1 0.392 / macroF1 0.733 against 0.215 / 0.440 for the official baseline recipe.
+(3 seeds) the wave-1 heuristic engine scores spellF1 0.392 / macroF1 0.733 and the wave-2 specialists
+(leave-one-match-out) **0.606 / 0.900**, against 0.215 / 0.440 for the official baseline recipe; with a complete
+ball 0.691 -> 0.742 (baseline 0.310).
+
+`--specialists lomo` additionally scores the learned route **leave-one-match-out** (the specialists of every
+held-out match are trained on the other six; the held-out match is the unlabelled target, so its pseudo-labels
+come only from its own degraded tracking):
+
+```bash
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2 --specialists lomo
+python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2 --specialists lomo --no-pseudo
+```
 
 `scripts/explore_occlusion_team.py` checks how well the team in possession can be predicted while the ball is
 hidden from the collective-physics (#17) and ball-memory (#18) features alone (leave-one-match-out, degraded
@@ -91,12 +113,16 @@ src/mtah2027/
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      collective_physics (#17), ball_memory (#18)
-  models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19)
+  models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
+                                     frame_classifier + specialist_features / _data (shared), specialist_ball_present
+                                     (#20), pseudo_labeling (#21), specialist_ball_absent + specialist_fusion (#22)
   decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
   pipeline.py                        run_core (arrays) and run_pipeline (files -> contract-compliant labels)
-scripts/                             generate_submission.py, eval_external.py, generate_synthetic_fixtures.py, ...
+models/specialists.json              Specialists A/B trained on external open data (reproduced by train_specialists.py)
+scripts/                             generate_submission.py, train_specialists.py, eval_external.py,
+                                     generate_synthetic_fixtures.py, ...
 tests/                               one test module per issue + shared synthetic-match fixtures
 evaluation/  games.py  starter/      vendored official scorer, constants and starter kit (unmodified)
 docs/                                TECHNICAL_REPORT.md, ISSUES_TRACKER.md
