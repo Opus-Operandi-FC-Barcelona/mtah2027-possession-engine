@@ -25,6 +25,7 @@ emissions stay as the fallback) and add the collective-physics / ball-memory fea
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,12 @@ from mtah2027.features.ball_memory import BallMemoryParams, compute_ball_memory
 from mtah2027.features.collective_physics import CollectivePhysicsParams, compute_collective_physics
 from mtah2027.features.dead_ball_signals import DeadBallParams, compute_dead_ball_signals
 from mtah2027.features.setpiece_anchor import AnchorParams, anchor_set_pieces
+from mtah2027.features.throwin_resolver import (
+    ThrowInParams,
+    apply_resolutions,
+    resolve_throw_ins,
+    restart_emission_prior,
+)
 from mtah2027.models.baseline_labels import baseline_labels
 from mtah2027.models.heuristic_emissions import (
     EmissionParams,
@@ -178,6 +185,7 @@ class FrontEnd:
     touches: np.ndarray | None
     phys: Any = None
     mem: Any = None
+    throwins: Any = None          # list of ThrowInResolution (Issue #15), None when not run
 
 
 def compute_front_end(
@@ -241,6 +249,20 @@ def compute_front_end(
         reason = "no Smart Tagging" if smart_tagging is None else "disabled by configuration"
         st.skip("set_piece_anchors", reason)
 
+    # 6b. throw-in restart team (Issue #15): Team = N/A throw-ins get a team from the taker / first controller
+    throwins = None
+    tp = ThrowInParams.from_config(cfg)
+    if anchors is not None and tp.enabled:
+        def _resolve_throw_ins():
+            res = resolve_throw_ins(anchors, pxy, team, bxy, pitch=pitch, fps=fps, params=tp)
+            return res, apply_resolutions(anchors, res)
+
+        out = st.run("throwin_resolver", _resolve_throw_ins)
+        if out is not None:
+            throwins, anchors = out
+    else:
+        st.skip("throwin_resolver", "no anchors" if anchors is None else "disabled by configuration")
+
     # priors for the emissions ----------------------------------------------------------------------
     owner, owner_key = None, None
     if pp.use_owner_channel and ball_channels:
@@ -268,7 +290,8 @@ def compute_front_end(
             params=BallMemoryParams.from_config(cfg)))
     return FrontEnd(pxy=pxy, bxy=bxy, team=team, pvel=pvel, bvel=bvel, bacc=bacc, pspeed=pspeed,
                     bspeed=bspeed, visible=visible, sig=sig, bk=bk, anchors=anchors, dead_score=dead_score,
-                    owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem)
+                    owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem,
+                    throwins=throwins)
 
 
 def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_Stages | None" = None):
@@ -335,6 +358,9 @@ def run_core(
         if learned is not None:
             em = learned.emissions
     emission_source = "specialists" if learned is not None else "heuristic"
+    if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
+        em = dataclasses.replace(em, log_probs=restart_emission_prior(
+            em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
 
     # 8. transitions -------------------------------------------------------------------------------
     restart_frames = restart_teams = None
@@ -391,6 +417,8 @@ def run_core(
         "has_status_channel": bool(sig is not None and sig.has_status),
         "owner_channel": owner_key, "n_anchors": len(anchors.anchors) if anchors is not None else 0,
         "n_anchors_resolved": anchors.n_resolved if anchors is not None else 0,
+        "throw_ins": {"resolved": sum(r.resolved for r in fe.throwins), "total": len(fe.throwins)}
+        if fe.throwins is not None else None,
         "emission_source": emission_source,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),

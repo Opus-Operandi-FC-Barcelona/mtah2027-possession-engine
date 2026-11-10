@@ -262,3 +262,24 @@ specialist_fusion:
   blend_visible: 0.0            # weight of the wave-1 heuristic emission (0 = learned only)
   blend_hidden: 0.0
   use_pseudo_labels: false      # Issue #21 adaptation of B; off by default: it did not help on external matches
+
+# Issue #15 -- restarting team of Throw-in set pieces tagged Team = N/A (taker on the touchline + first clear
+# controller after t*).  Fed into the transition matrix (D -> team bias at t*) and a small emission prior.
+throwin_resolver:
+  enabled: true
+  touchline_band_m: 1.5         # taker candidates stay within this distance of a touchline
+  taker_window_s: 3.0           # window before t* inspected for the taker (bounded by the tag start)
+  min_band_frac: 0.5            # fraction of a slot's valid frames that must be in the band
+  isolation_cap_m: 15.0         # cap of the distance to the nearest opponent
+  isolation_sat_m: 6.0          # isolation gap that saturates the taker vote
+  taker_ball_radius_m: 3.0      # candidates must hold the ball (median distance); 0 disables, dropped if none pass
+  confirm_window_frames: 35     # window after t* for the first clear controller
+  control_radius_m: 2.0         # controller within this distance of the ball ...
+  control_margin_m: 1.0         # ... and the other team at least this much farther
+  control_gap_sat_m: 4.0        # gap that saturates the controller vote
+  w_taker: 1.0
+  w_controller: 1.0
+  min_confidence: 0.3           # below this the throw-in stays unresolved (both columns stay open)
+  resolve_known_teams: false    # only Team = N/A throw-ins are resolved
+  emission_bias: 0.0            # optional log-bias towards the restart team after t* (0 = off; no gain measured)
+  emission_window_s: 2.0
