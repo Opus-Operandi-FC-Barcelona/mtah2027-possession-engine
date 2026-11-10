@@ -68,6 +68,7 @@ from mtah2027.postprocessing.submission_contract import enforce_submission_contr
 from mtah2027.preprocessing.clean_tracks import clean_tracks
 from mtah2027.preprocessing.kinematics_and_orientation import compute_kinematics_and_orientation
 from mtah2027.vision.aerial_filter import AerialParams, compute_is_aerial, find_z_channel
+from mtah2027.vision.attention_crops import VisionParams
 
 H, A, D, X = 0, 1, 2, 3
 
@@ -488,13 +489,37 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
                                              n_frames=n), required=True)
     smart = st.run("load_smart_tagging", lambda: load_smart_tagging(data_dir, n_frames=n))
     pp = PipelineParams.from_config(cfg_path)
-    homography = None
-    if pp.use_aerial_filter and pp.use_homography:
+    vp = VisionParams.from_config(cfg_path)
+    homography, hom = None, None
+    if (pp.use_aerial_filter and pp.use_homography) or vp.enabled:
         from mtah2027.io.homography_loader import load_homography
 
         hom = st.run("load_homography", lambda: load_homography(data_dir))
-        homography = _fit_length(hom.H, n) if hom is not None else None
-    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography)
+        homography = _fit_length(hom.H, n) if (hom is not None and pp.use_aerial_filter
+                                               and pp.use_homography) else None
+    vision = None
+    if vp.enabled and hom is not None:
+        vision = st.run("vision_recovery", lambda: _merge_cached_vision(td, hom, data_dir, match, vp, n))
+        if vision is not None:
+            st.log(f"vision: {vision.stats['status']}, {vision.stats['frames_filled']} hidden frames filled "
+                   f"({100 * vision.stats['fill_rate']:.1f}%)")
+    elif not vp.enabled:
+        st.skip("vision_recovery", "disabled by configuration")
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision)
+
+
+def _merge_cached_vision(td, hom, data_dir, match: MatchConfig, vp: VisionParams, n: int):
+    """Cached video detections (``scripts/run_vision_recovery.py``) merged into the tracked ball.
+
+    Only the cache is read (``detector=None``): the video is never decoded here.  Without a cache the ball is
+    returned unchanged and ``stats['status']`` says why."""
+    import games
+    from mtah2027.vision.recovery import recover_ball
+
+    video = games.asset_paths(data_dir=str(data_dir) if data_dir is not None else None)["video"]
+    return recover_ball(_fit_length(td.ball_xy, n), _fit_length(td.players_xy, n), hom,
+                        [match.half1, match.half2_play], video, detector=None, params=vp, fps=float(td.fps),
+                        pitch=tuple(td.pitch))
 
 
 def match_from_periods(periods: Sequence[tuple[int, int]], n_frames: int, fps: float = FPS,
@@ -535,13 +560,15 @@ def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
 
 
 def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any,
-                   homography: np.ndarray | None = None) -> PipelineResult:
+                   homography: np.ndarray | None = None, vision: Any = None) -> PipelineResult:
     """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
     n = match.n_video_frames
     t_total = time.perf_counter()
     play_blocks = [match.half1, match.half2_play]
     dead_blocks = [match.half2_dead] if match.half2_dead[1] >= match.half2_dead[0] else []
     players, ball = _fit_length(td.players_xy, n), _fit_length(td.ball_xy, n)
+    if vision is not None and vision.stats.get("status") == "ok":
+        ball = vision.ball_xy       # tracking where seen, recovered video points where it was missing
 
     core_diag: dict = {}
     try:
@@ -566,6 +593,7 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
     diagnostics = {
         "route": route, "loader_stages": dict(st.info), "core": core_diag,
         "n_frames": n, "team_names": list(td.team_names),
+        "vision": dict(vision.stats) if vision is not None else None,
         "final": summarize_labels(labels, play_blocks, td.fps),
         "seconds_total": round(time.perf_counter() - t_total, 3),
     }

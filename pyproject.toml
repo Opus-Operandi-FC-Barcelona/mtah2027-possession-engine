@@ -21,6 +21,8 @@ fast = ["numba==0.68.0", "lightgbm==4.7.0"]
 numba = ["numba==0.68.0"]
 lightgbm = ["lightgbm==4.7.0"]
 dev = ["pytest==9.1.1", "ruff==0.17.2"]
+vision = ["opencv-python-headless==4.13.0.92"]   # Issue #11: read the tactical mp4, Hough fallback detector
+yolo = ["opencv-python-headless==4.13.0.92", "ultralytics==8.3.253"]   # + YOLO detector (ultralytics is AGPL-3.0)
 crosscheck = ["kloppy==3.18.0"]   # test-only: positions of the EPTS loader are compared with kloppy
 
 [tool.setuptools.packages.find]
