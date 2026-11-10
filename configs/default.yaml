@@ -247,6 +247,7 @@ pseudo_labeling:
   max_attempts: 20000
   seed: 0
   min_rows: 300                 # fewer pseudo rows -> no adaptation
+  include_dead: true            # keep the anchors labelled D as pseudo-labels
 
 # Issue #22 -- Specialist B (ball absent).
 specialist_b:
@@ -256,8 +257,8 @@ specialist_b:
 # Issue #22 -- fusion of A and B into log_probs[N, 3].
 specialist_fusion:
   prob_floor: 0.001
-  scale_visible: 1.0            # tempering of the log-probabilities (frame correlation)
-  scale_hidden: 1.0
+  scale_visible: 0.5            # tempering of the log-probabilities (frame correlation); leave-one-match-out
+  scale_hidden: 0.5             # on external matches: 1.5 -> 0.594, 1.0 -> 0.600, 0.5 -> 0.606, 0.3 -> 0.608
   blend_visible: 0.0            # weight of the wave-1 heuristic emission (0 = learned only)
   blend_hidden: 0.0
-  use_pseudo_labels: true
+  use_pseudo_labels: false      # Issue #21 adaptation of B; off by default: it did not help on external matches
