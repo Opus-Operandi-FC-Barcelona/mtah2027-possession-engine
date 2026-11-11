@@ -99,8 +99,10 @@ def test_issue_template_and_tracker():
     assert template.startswith("---")
     tracker = (ROOT / "docs" / "ISSUES_TRACKER.md").read_text(encoding="utf-8")
     pattern = r"^- \[( |x|~)\] (?:COMPLETADA|PENDIENTE|OLEADA [12]) · #(\d\d) · (wave-\d)"
-    rows = re.findall(pattern, tracker, re.M)
-    assert [int(n) for _, n, _ in rows] == list(range(1, 29))
+    all_rows = re.findall(pattern, tracker, re.M)
+    assert [int(n) for _, n, _ in all_rows] == list(range(1, 35))        # 28 original + Milestone 7 (#29-#34)
+    assert "## Milestone 7" in tracker
+    rows = [r for r in all_rows if int(r[1]) <= 28]
     waves = {int(n): w for _, n, w in rows}
     assert {n for n, w in waves.items() if w == "wave-3"} == {10, 11, 12}
     wave1 = {1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 16, 23, 24, 25, 26, 28}
