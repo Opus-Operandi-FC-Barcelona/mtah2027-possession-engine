@@ -275,6 +275,26 @@ spurious flips, so it is measured and kept **off** (`spec_open: false`):
 Every extra flip is as likely wrong as right: the possession count rises towards the truth but spellF1 stays within
 +-0.003 (noise ~0.04 across matches, ~0.002 across seeds), so A2 fails the rule and stays off.
 
+**Item 1 (Issue #31): `route_overrides.specialists`.**  The earlier Optuna specialists gain (+0.0195 nested,
++0.018 on the unused seed 2) was consistent but under the pre-set +0.02 rule.  Because the features changed
+(Issue #30) the sweep was refreshed first (`run_optuna_sweep.py --route specialists`, 300 trials, search seeds 0-1,
+LOMO emissions recomputed with the new model; reports `optuna_specialists*.{json,yaml}` of the benchmarks repo): default
+0.6297, best 0.6415 on the search seeds, nested honest 0.6399 (+0.0102), unused seed 2: default 0.6326 -> best 0.6389
+(nested-selected 0.6391).  Since seeds 0-1 were used by the search, adoption was re-checked through the real
+pipeline (`diagnose_possessions.py`, LOMO specialists, seeds 0-2), which now applies `route_config("specialists")`
+(decoder sections and `specialist_fusion`) in `run_core` whenever the learned emissions are used (the heuristic
+route is unaffected):
+
+| LOMO, `--degrade` | seed 0 | seed 1 | seed 2 (unused by the search) | mean spellF1 / macroF1 | possessions (seed 0) | hidden turnovers missed (seed 0) |
+|---|---|---|---|---|---|---|
+| shared defaults (after #30) | 0.6355 | 0.6240 | 0.6326 | 0.6307 / 0.9089 | 2458 | 71.1 % |
+| `route_overrides.specialists` (**adopted**) | 0.6475 | 0.6381 | 0.6389 | **0.6415 / 0.9099** (+0.0108) | 2409 | 70.5 % |
+
+The gain is positive on all three seeds (+0.012, +0.014, +0.006), so the overrides pass the rule (mean >= +0.01, no seed
+worse) and are committed in `configs/default.yaml` (`route_overrides.specialists`); the biggest changes are a looser
+`ha_occluded` (-7.57), `d_exit` / `dead_ramp` ramps and tempering x0.80 / x0.87 with 15 % heuristic blend on visible
+frames.  The seed-2 gain (+0.006) is smaller than on the search seeds, which is the expected optimism of the search.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

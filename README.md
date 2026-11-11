@@ -141,6 +141,9 @@ window features (+-50 / +-100 frames; non-causal smoothing is legitimate offline
 0.6059 -> 0.6307 spellF1 (every seed about +0.025), macroF1 0.9003 -> 0.9089, hidden-ball turnovers missed 81 -> 71 %;
 opening H<->A / H/A->D inside occlusions at the specialists' logit sign changes or P(D) peaks: no gain (+-0.003),
 **off** (`transition_matrix.spec_open`).  Details, negative results and the other items (specialists overrides, MBR)
+Issue #31: `route_overrides.specialists` from the refreshed Optuna sweep (benchmarks repo), applied by `run_core` to the
+learned route only: **adopted**, 0.6307 -> 0.6415 spellF1 through the real LOMO pipeline, better on every seed (the
+search used seeds 0-1; the unused seed 2 gains +0.006).  Details, negative results and the other items (MBR)
 in `docs/TECHNICAL_REPORT.md` section 5.x.
 
 ### Possession count and the KPI 7 evidence

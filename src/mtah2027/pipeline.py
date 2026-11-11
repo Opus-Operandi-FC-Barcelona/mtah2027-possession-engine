@@ -366,15 +366,20 @@ def run_core(
     # 7. emissions ---------------------------------------------------------------------------------
     em = heuristic_emissions(fe, fps, cfg, st)
     learned = None
+    cfg_spec = route_config("specialists", cfg)  # route_overrides.specialists
     if specialists is not None:
-        from mtah2027.models.specialist_fusion import fuse_emissions
+        from mtah2027.models.specialist_fusion import FusionParams, fuse_emissions
 
+        if cfg_spec is not cfg and load_section("specialist_fusion", cfg_spec) != load_section(
+                "specialist_fusion", cfg):
+            specialists = dataclasses.replace(specialists, fusion=FusionParams.from_config(cfg_spec))
         learned = st.run("specialists", lambda: fuse_emissions(
             specialists, fe, em, play_blocks=play_blocks, fps=fps,
             rebuild=lambda ball: front_end(ball, quiet=True), raw_ball=np.asarray(ball_xy, np.float32),
             config_path=cfg))
         if learned is not None:
             em = learned.emissions
+            cfg = cfg_spec        # the learned route decodes with its own tuned parameters
     emission_source = "specialists" if learned is not None else "heuristic"
     if learned is None:   # heuristic route: its own tuned decoder parameters (route_overrides.heuristic)
         cfg_route = route_config("heuristic", cfg)
