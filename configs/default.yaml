@@ -390,10 +390,11 @@ broadcast_sync:
   min_corr_local: 0.5           # relaxed fingerprint correlation inside that narrow window
 
 # Per-route decoder parameters, merged key by key over the sections above (config.route_config).  Tuned with the
-# Optuna sweep of mtah2027-external-benchmarks (reports/optuna_heuristic.json): 7 degraded IDSSE matches, seeds
-# 0-1; nested leave-one-match-out spellF1 0.396 -> 0.439, unused seed 2 0.384 -> 0.427.  Only the heuristic route
-# is overridden: the specialists' honest gain (+0.0195) stayed under the +0.02 adoption rule, so it keeps the
-# shared defaults.  External matches only -- never BAR-ATH.
+# Optuna sweeps of mtah2027-external-benchmarks (reports/optuna_<route>.json): 7 degraded IDSSE matches, seeds 0-1,
+# external matches only -- never BAR-ATH.
+#  * heuristic: nested leave-one-match-out spellF1 0.396 -> 0.439, unused seed 2 0.384 -> 0.427.
+#  * specialists (Issue #31, re-run after the window features of Issue #30): nested +0.0102, unused seed 2
+#    0.6326 -> 0.6389; through the real LOMO pipeline (seeds 0-2) 0.6307 -> 0.6415 spellF1, better on every seed.
 route_overrides:
   heuristic:
     transition_matrix:
@@ -432,3 +433,36 @@ route_overrides:
       carry_tau_s: 27.2902
       w_touch: 1.2131
       touch_tau_s: 16.283
+  specialists:
+    transition_matrix:
+      ha_closed: -8.76
+      ha_open: -2.5038
+      touch_halfwidth: 8
+      touch_min_score: 0.7778
+      touch_both_dist_m: 1.3128
+      require_both_teams: false
+      touch_gate_halfwidth: 0
+      ha_occluded: -7.5746
+      occlusion_min_s: 1.7274
+      dead_closed: -11.5876
+      dead_open: -1.208
+      d_exit_closed: -12.33
+      d_exit_open: -1.7022
+      dead_ramp: [0.4741, 0.8429]
+      alive_ramp: [0.2194, 0.4851]
+    spell_optimizer:
+      micro_poss_s: 0.9847
+      keep_min_visible_frac: 0.3708
+      keep_min_touches: 2
+      touch_min_score: 0.6957
+      min_dead_s: 1.863
+      min_isolated_poss_s: 1.2596
+      bridge_min_poss_s: 31.6747
+      bridge_min_dead_s: 2.8497
+      bridge_dead_threshold: 0.5474
+      bridge_requires_geometry: false
+    specialist_fusion:
+      scale_visible: 0.8028
+      scale_hidden: 0.8652
+      blend_visible: 0.1515
+      blend_hidden: 0.0229

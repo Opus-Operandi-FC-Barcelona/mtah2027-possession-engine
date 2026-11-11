@@ -54,7 +54,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 
 - [x] COMPLETADA · #29 · wave-4 · Overrides de ruta heurística desde el barrido Optuna externo · `feat/issue-29-heuristic-route-overrides`
 - [x] COMPLETADA · #30 · wave-4 · Giros de posesión con balón oculto: ventanas pasado/futuro para el Especialista B (adoptado) y apertura de transiciones guiada por B (medida, desactivada) · `feat/issue-30-occlusion-turnovers`
-- [ ] PENDIENTE · #31 · wave-4 · Overrides de ruta `specialists` · `feat/issue-31-specialists-route-overrides`
+- [x] COMPLETADA · #31 · wave-4 · Overrides de ruta `specialists` · `feat/issue-31-specialists-route-overrides`
 - [ ] PENDIENTE · #32 · wave-4 · Consenso MBR sobre variantes de la ruta especialistas · `feat/issue-32-mbr-specialists`
 - [ ] PENDIENTE · #33 · wave-4 · Regenerar `reports/external_evidence.json` · `feat/issue-33-external-evidence-refresh`
 - [ ] PENDIENTE · #34 · wave-4 · Decodificador consciente de la duración · `feat/issue-34-duration-aware-decoder`
