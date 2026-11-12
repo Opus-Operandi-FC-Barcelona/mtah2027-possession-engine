@@ -141,9 +141,9 @@ to the ball + majority vote over +-50 frames, `D` only where nobody has the ball
 
 | Setting (mean over matches) | engine spellF1 | engine macroF1 | baseline spellF1 | baseline macroF1 |
 |---|---|---|---|---|
-| 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.742**) | 0.934 (0.947) | 0.310 | 0.394 |
+| 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.761**) | 0.916 (0.950) | 0.310 | 0.394 |
 | 7 IDSSE matches, 41% of the ball hidden in random 5-60 s blocks (seed 0) | **0.487** | 0.814 | 0.218 | 0.453 |
-| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.392 (wave 2: **0.631**) | 0.733 (0.909) | 0.215 | 0.440 |
+| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.435 (wave 2: **0.642**) | 0.773 (0.910) | 0.215 | 0.440 |
 | 3 Metrica sample games (their own ball channel is missing exactly while the ball is dead, which leaks `D`) | 0.778 | 0.889 | 0.437 | 0.833 |
 | all 10 matches as they are | 0.717 | 0.920 | 0.348 | 0.526 |
 | all 10 matches, 41% of the ball additionally hidden | 0.505 | 0.802 | 0.247 | 0.517 |
@@ -155,13 +155,13 @@ as the rows above; hyper-parameters examined only this way, never on BAR-ATH):
 
 | Setting (mean over 7 matches) | wave-1 heuristic spellF1 / macroF1 | wave-2 specialists spellF1 / macroF1 | official-style baseline |
 |---|---|---|---|
-| complete ball | 0.691 / 0.934 | **0.742 / 0.947** | 0.310 / 0.394 |
-| `--degrade`, seeds 0-2 (21 runs) | 0.392 / 0.733 | **0.631 / 0.909** (0.606 / 0.900 before the context features, 5.x) | 0.215 / 0.440 |
+| complete ball | 0.691 / 0.916 | **0.761 / 0.950** | 0.310 / 0.394 |
+| `--degrade`, seeds 0-2 (21 runs) | 0.435 / 0.773 | **0.642 / 0.910** (0.606 / 0.900 before 5.x) | 0.215 / 0.440 |
 
 Every one of the 21 degraded runs improves (spellF1 +0.11 ... +0.30 per run; the learned route finds fewer, longer
 possessions: 352 vs 466 predicted for 511 true on the first match).  Choices examined leave-one-match-out on the
 degraded matches (spellF1 / macroF1): tempering of the log-probabilities x1.5 0.594, x1.0 0.600 / 0.900,
-**x0.5 0.606 / 0.900** (kept), x0.3 0.608; blending 30% of the heuristic emission back in 0.574 / 0.892 (worse, so
+**x0.5 0.606 / 0.900** (kept; all numbers of this paragraph predate 5.x, where the route overrides set x0.80 / x0.87), x0.3 0.608; blending 30% of the heuristic emission back in 0.574 / 0.892 (worse, so
 0%); relaxing the H<->A transition cost inside long occlusions (`ha_occluded` -6 -> -3 or -9) or at rest
 (`ha_closed` -11.5 -> -8) changes the score by < 0.002, so the touch-based gating of Issue #23 is kept as it is
 (B's confident team changes inside long gaps already pass the -6 occlusion gate).
@@ -177,12 +177,13 @@ unused seed.
 | Route | defaults | best | nested honest | unused seed 2: defaults -> tuned |
 |---|---|---|---|---|
 | heuristic | 0.396 | 0.439 | 0.439 (+0.043) | 0.384 -> 0.427 (7/7 matches up) |
-| specialists | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+| specialists (first sweep, shared features) | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+| specialists (re-run after the window features, Issue #31) | 0.630 | 0.642 | 0.640 (+0.0102) | 0.633 -> 0.639 |
 
 The heuristic parameters are adopted as `route_overrides.heuristic` in `configs/default.yaml` (merged over the shared
 sections only when the heuristic route decodes; `config.route_config`); re-measured through the full array-level
 pipeline (`eval_external.py --degrade --seeds 2 --only-complete-ball`) they give 0.4266 / 0.7734, matching the
-sweep.  The specialists keep the shared defaults (+0.0195 is under the rule).  On the toy synthetic match the tuned
+sweep.  The first specialists sweep was under the rule (+0.0195) and kept the shared defaults; the re-run of Issue #31 is adopted after the real-pipeline check of 5.x.  On the toy synthetic match the tuned
 heuristic parameters score lower than the shared defaults (short match 0.348 vs baseline 0.458), another reminder
 that the synthetic physics is not football; the synthetic sanity test therefore runs on the shared defaults.
 
@@ -320,7 +321,7 @@ code, off by default**.
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
-  most of the team information from the collective physics and the ball memory (0.39 -> 0.61 degraded) but still
+  most of the team information from the collective physics and the ball memory (0.43 -> 0.64 degraded) but still
   leaves a gap to the complete-ball score (0.74); the learned route also predicts fewer possessions than the truth.
 * **Domain shift.**  The specialists are trained on Bundesliga open data degraded by our own model of the ATD gaps
   (blocks hide alive play; the real gap statistics and the real tracking noise of BAR-ATH are known only through
