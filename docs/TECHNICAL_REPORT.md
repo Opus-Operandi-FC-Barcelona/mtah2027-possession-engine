@@ -295,6 +295,28 @@ worse) and are committed in `configs/default.yaml` (`route_overrides.specialists
 `ha_occluded` (-7.57), `d_exit` / `dead_ramp` ramps and tempering x0.80 / x0.87 with 15 % heuristic blend on visible
 frames.  The seed-2 gain (+0.006) is smaller than on the search seeds, which is the expected optimism of the search.
 
+**Item 2 (Issue #32): MBR over variants of the learned route.**  `run_core` can decode several variants of the
+**specialists route only** (never mixing the heuristic route, 0.43, with the specialists, 0.64): variant `i`
+multiplies the tempered emission log-probabilities by `mbr.scales[i]` and shifts `transition_matrix.ha_occluded` by
+`mbr.ha_occluded_shifts[i]`; the decoded variants are merged by the median-boundary consensus of Issue #26
+(`consensus_labels`, same-team IoU >= 0.3 matching, support >= 50 %) and the spell optimiser runs once on the result
+(`mbr.enabled`, off by default; the heuristic route logs "skipped").  Expected gain is small because variants of one
+model make correlated errors, and it was:
+
+| MBR variants (around the adopted optimum) | seed 0 | seed 1 | seed 2 | mean spellF1 / macroF1 |
+|---|---|---|---|---|
+| no MBR (`route_overrides.specialists`) | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| tempering x0.8 / x1 / x1.25 | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| `ha_occluded` -1.5 / 0 / +1.5 | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| tempering x0.8 / x1 / x1.25 and `ha_occluded` -1.5 / 0 / +1.5 | 0.6474 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| five tempering variants x0.7 ... x1.4 | 0.6473 | 0.6380 | 0.6389 | 0.6414 / 0.9098 |
+| tempering x0.5 / x1 / x2 | 0.6473 | 0.6378 | 0.6385 | 0.6412 / 0.9098 |
+| `ha_occluded` 0 / +2.5 / +5 | 0.6488 | 0.6369 | 0.6377 | 0.6411 / 0.9100 |
+
+The variants differ in at most a handful of boundary frames (the transition penalties dominate the emission scale), so
+the median reproduces the central decode and the gain is zero within +-0.0004.  Fails the rule: MBR is **kept in the
+code, off by default**.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

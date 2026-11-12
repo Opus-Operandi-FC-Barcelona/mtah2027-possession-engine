@@ -143,8 +143,9 @@ opening H<->A / H/A->D inside occlusions at the specialists' logit sign changes 
 **off** (`transition_matrix.spec_open`).  Details, negative results and the other items (specialists overrides, MBR)
 Issue #31: `route_overrides.specialists` from the refreshed Optuna sweep (benchmarks repo), applied by `run_core` to the
 learned route only: **adopted**, 0.6307 -> 0.6415 spellF1 through the real LOMO pipeline, better on every seed (the
-search used seeds 0-1; the unused seed 2 gains +0.006).  Details, negative results and the other items (MBR)
-in `docs/TECHNICAL_REPORT.md` section 5.x.
+search used seeds 0-1; the unused seed 2 gains +0.006).  Issue #32: MBR (median-boundary consensus, `mbr.enabled`) over tempering / `ha_occluded` variants of the
+learned route only: no gain (+-0.0004), **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
+section 5.x.
 
 ### Possession count and the KPI 7 evidence
 
