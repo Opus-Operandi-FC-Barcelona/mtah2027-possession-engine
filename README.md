@@ -108,9 +108,9 @@ python scripts/eval_external.py --only-complete-ball --degrade --seeds 0 1 2    
 `--degrade` uses `src/mtah2027/models/external_degrader.py`: 41 % of the alive frames lose the ball in
 contiguous blocks (5-20 s 33 %, 20-60 s 48 %, > 60 s 19 %) placed preferentially where the ball is crowded,
 plus correlated tracking noise, identity cuts, duplicate tracks and dropped players.  On the 7 IDSSE matches
-(3 seeds) the wave-1 heuristic engine scores spellF1 0.392 / macroF1 0.733 and the wave-2 specialists
-(leave-one-match-out) **0.631 / 0.909**, against 0.215 / 0.440 for the official baseline recipe; with a complete
-ball 0.691 -> 0.742 (baseline 0.310).
+(3 seeds) the wave-1 heuristic engine scores spellF1 0.435 / macroF1 0.773 (with its tuned overrides) and the wave-2 specialists
+(leave-one-match-out) **0.642 / 0.910**, against 0.215 / 0.440 for the official baseline recipe; with a complete
+ball 0.691 -> 0.761 (baseline 0.310).
 
 `--specialists lomo` additionally scores the learned route **leave-one-match-out** (the specialists of every
 held-out match are trained on the other six; the held-out match is the unlabelled target, so its pseudo-labels
@@ -130,7 +130,8 @@ The decoder parameters were swept with Optuna in `mtah2027-external-benchmarks` 
 nested leave-one-match-out estimate + an unused degradation seed).  The heuristic route adopts its tuned values
 through `route_overrides.heuristic` in `configs/default.yaml` (degraded IDSSE spellF1 0.396 -> 0.439 nested,
 0.384 -> 0.427 on the unused seed); the specialists keep the shared defaults (+0.0195, under the +0.02 rule).
-`reports/external_evidence.json` predates the heuristic overrides; the KPI 7 decision is unchanged (0.43 vs 0.61).
+`reports/external_evidence.json` was regenerated with the final defaults (Issue #33): degraded 0.435 (heuristic, with its
+overrides) vs 0.642 (specialists), complete ball 0.691 vs 0.761; the KPI 7 decision is unchanged (specialists).
 
 ### Improvement round after the Optuna sweep
 
