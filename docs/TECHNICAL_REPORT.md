@@ -769,6 +769,36 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
+**Item 9 (Issue #59): signed latency of the boundaries (pred - truth) on other matches: no stable bias, no global shift (not adopted; no code change on the submission path).**
+Diagnostic added to `scripts/eval_external.py` (`lat_by_type` per run, `latency_summary`): signed latency in frames of the
+transitions matched by the official scorer (`evaluate()["transitions"][25]`, tolerance 25 frames, `pred - gt` as in
+`possession_metrics.transition_scores`, matching on the destination label), split into H<->A, alive -> D and D -> alive
+(restarts).  Models: the cached leave-one-match-out models of the default recipe (`models/specialists.json` is byte
+identical to the `gap` variant; Issue #44 `lomo_gap`, `pff_gap`), no retraining.  Protocol of Items 7-8 (B'(33): 7 IDSSE
+LOMO, calibrated degrader `dead_affinity` 33, seeds 0 1 2, harness `scripts/decoder_sweep.py`); the run reproduces the
+default of the #44 harness exactly (spellF1 0.6693 = 0.6709 / 0.6675 / 0.6695).  A PFF (20 matches, 4-fold models) and A-unseen
+(8 matches, committed models) as checks (both 0.5263, as in Item 8).  "Runs" = (match, seed) cells; median per run.
+
+| world | transitions | runs | median of run medians | run medians min / max | runs early / late | pooled median | pooled early / exact / late | pooled IQR |
+|---|---|---|---|---|---|---|---|---|
+| B'(33) | all (7133 matched) | 21 | 0.0 | -1 / 0 | 29 % / 0 % | 0 | 49 % / 28 % / 23 % | -2 .. 0 |
+| B'(33) | H<->A (3667) | 21 | -1.0 | -1 / 0 | 90 % / 0 % | -1 | 55 % / 21 % / 24 % | -3 .. 0 |
+| B'(33) | alive -> D (1738) | 21 | -1.0 | -1 / 0 | 86 % / 0 % | -1 | 60 % / 26 % / 14 % | -2 .. 0 |
+| B'(33) | D -> alive (1728) | 21 | 0.0 | 0 / 0 | 0 % / 0 % | 0 | 25 % / 44 % / 31 % | 0 .. +1 |
+| PFF 4-fold | all (3721) | 20 | -1.5 | -3 / 0 | 85 % / 0 % | -1 | 53 % / 3 % / 43 % | -8 .. +9 |
+| PFF 4-fold | H<->A (1837) | 20 | -1.8 | -3 / +4 | 75 % / 20 % | -1 | 52 % / 3 % / 44 % | -8 .. +9 |
+| PFF 4-fold | alive -> D (1013) | 20 | -0.2 | -4 / +3 | 50 % / 20 % | -1 | 51 % / 4 % / 45 % | -8 .. +9 |
+| PFF 4-fold | D -> alive (871) | 20 | -3.5 | -7 / +5 | 90 % / 10 % | -3 | 58 % / 3 % / 39 % | -8 .. +9 |
+| PFF unseen | all (1413) | 8 | -2.0 | -4 / 0 | 88 % / 0 % | -2 | 56 % / 3 % / 41 % | -10 .. +7 |
+
+Decision rule (fixed beforehand): stable bias = at least 80 % of the runs with the same sign **and** |median of medians| >= 3
+frames on B'(33).  On B'(33) the sign is consistent for H<->A (90 % of the runs early) but the magnitude is one frame
+(median of medians -1 for H<->A and alive -> D, 0 for restarts, 0 overall), far below 3 frames, and one frame is free in
+the metric.  PFF (real tracker) shows a small early tendency (median -1 to -2) with a spread of about +-9 frames, so it
+does not contradict "no bias worth correcting" either, but it is not evidence for a +3 shift: on B'(33) a shift of the
+bulk would move the exact matches (28 %, 44 % for restarts) away from zero.  **Not adopted**: `boundary_shift_frames` was
+not implemented (Task 2 only applied with a stable bias); the submission path and the synthetic SHA are untouched.
+
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),

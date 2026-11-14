@@ -70,13 +70,45 @@ def hide_ball(ball_xy: np.ndarray, periods, frac: float, fps: float, rng: np.ran
     return out
 
 
+LATENCY_TAU = 25  # frames: tolerance of the transition matching used for the signed-latency diagnostic
+
+
 def score(gt: np.ndarray, pred: np.ndarray) -> dict:
     r = eb.evaluate_arrays(gt, pred)
+    trans = r["transitions"].get(LATENCY_TAU, {})
+    # Signed latency (pred - gt, frames) of the matched transitions: a stable sign across matches and
+    # seeds is a systematic timing bias of the boundaries, measurable on other matches only.
     return {"spell_f1": float(r["spell_f1_mean"]), "macro_f1": float(r["macro_f1"]),
             "n_pred_spells": int(r["n_pred_spells"]), "n_gt_spells": int(r["n_gt_spells"]),
             "mean_spell_s": float(r["mean_spell_duration_s"]),
             "gt_mean_spell_s": float(r["gt_mean_spell_duration_s"]),
-            "abstain_on_graded": int(r["n_abstain_on_graded"])}
+            "abstain_on_graded": int(r["n_abstain_on_graded"]),
+            "lat_mean": trans.get("mean_latency"), "lat_median": trans.get("median_latency"),
+            "lat_n_matched": int(trans.get("n_matched", 0) or 0),
+            "lat_by_type": _latency_by_type(trans.get("pairs", []))}
+
+
+def _latency_by_type(pairs) -> dict:
+    """Signed latencies (pred - gt) of the matched transitions, split by the true transition type:
+    ``ha`` = H<->A, ``to_d`` = alive -> D, ``from_d`` = D -> alive (restarts)."""
+    out = {"ha": [], "to_d": [], "from_d": []}
+    for gt_t, pred_t in pairs:
+        _, src, dst = gt_t
+        key = "to_d" if dst == 2 else ("from_d" if src == 2 else "ha")
+        out[key].append(int(pred_t[0] - gt_t[0]))
+    return out
+
+
+def latency_summary(rows: list, key: str) -> str | None:
+    """One line: per-run signed median latency, its spread, and the share of runs with each sign."""
+    meds = [r[key]["lat_median"] for r in rows if key in r and r[key].get("lat_median") is not None]
+    if not meds:
+        return None
+    meds = np.asarray(meds, dtype=float)
+    return (f"signed latency {key} (tau={LATENCY_TAU}, pred-gt frames, {len(meds)} runs): "
+            f"median of medians {np.median(meds):+.1f}  mean {meds.mean():+.2f}  "
+            f"min {meds.min():+.1f}  max {meds.max():+.1f}  "
+            f"runs early {np.mean(meds < 0):.0%} / late {np.mean(meds > 0):.0%}")
 
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
@@ -295,6 +327,10 @@ def main(argv=None) -> int:
     if training is not None:
         print(f"{'MEAN + specialists':<23}{mean['specialists_spell_f1']:8.4f}"
               f"{mean['specialists_macro_f1']:8.4f}")
+    for key in ("engine", "specialists"):
+        summary = latency_summary(rows, key)
+        if summary:
+            print(summary)
     if args.strata:
         for key in ("engine", "specialists"):
             if key == "specialists" and training is None:
