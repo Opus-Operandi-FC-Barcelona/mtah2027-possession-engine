@@ -32,7 +32,8 @@ Pipeline (`src/mtah2027/pipeline.py`), every stage deterministic and vectorised:
    (cost -1.4, otherwise -11.5) or, moderately, inside a long ball occlusion; `H/A -> D` opens with dead-ball evidence;
    `D -> H/A` stays closed until the dead evidence drops or a restart frame is reached.
 6. **Viterbi** per graded half, independently (numba kernel, bit-identical NumPy fallback).
-7. **Spell optimiser**: micro-possessions < 1.2 s between the other team's runs are absorbed unless the ball is visible
+7. **Spell optimiser**: micro-possessions shorter than about 1 s (0.98 s on the learned route, 1.75 s on the heuristic
+   route, both tuned on other matches) between the other team's runs are absorbed unless the ball is visible
    and there is a double touch; long possessions get a `D` bridge over >= 4 s dead-evidence valleys that coincide with a
    touchline or set piece; forced-`D` intervals before restarts are applied.
 8. **Contract**: `X` outside the graded blocks, `D` in the second-half pre-kick-off interval, no internal `X`, validated
@@ -60,6 +61,10 @@ for the "last touch" rule.
 | Specialist-opened transitions inside occlusions | **built, off** | within +-0.003 |
 | Block-masking pseudo-labelling of the provided match (#21) | **built, off** | algorithmic labels on the provided game are allowed, but on external matches it lowered spellF1 (0.606 -> 0.590) |
 | SkillCorner as training data | **tried, dropped** | -0.026 ... -0.031 spellF1 on the degraded validation |
+| Smart Tagging phases as an alive-ball prior / transition cue while the ball is hidden (#43) | **built, off** | measured with a Smart Tagging simulator (tags derived from true labels with low/medium/high noise): best +0.002 |
+| Smart Tagging restart rules (post-goal and second-half kick-off team, wider restart window, `t*` offset prior, Long Ball flags) (#49) | **built, off** | +0.0003 at best: restarts were already resolved by the tracking anchors |
+| Robust collective-shape features under player dropout, native speed channel (#42) | **built, off** | +0.002 ... +0.003 |
+| Decoder re-optimisation and ensemble of two models trained in different worlds (#44) | **built, off** | best +0.009 (all guards positive) after about 700 candidates; selectable as `--model-variant ensemble` |
 | Official scorer, `games.py`, starter | **used, vendored unmodified** | metric, constants, format check |
 | Public 5 minutes of ground truth | pipeline check only | alignment and format; never used to choose between variants or tune |
 
@@ -85,7 +90,12 @@ how the competition derives its own ground truth from tracking channels.
   contiguous blocks, correlated tracking noise, identity cuts, duplicate and dropped tracks.  Two profiles exist: the
   first one built from the task description (`external_degrader_legacy`), and one calibrated against **label-free
   aggregate statistics of the provided tracking** (gap-length distribution, tracked players per frame;
-  `external_degrader_target`); no labels of the provided game are involved.
+  `external_degrader_target`); no labels of the provided game are involved.  Since Issue #48 the calibrated profile
+  also places the hidden-ball blocks preferentially over dead-ball stretches (`dead_affinity`): a label-free estimator
+  (ball-free player features, a classifier trained on other matches, prior-shift EM per tracked-player stratum),
+  validated on IDSSE with planted affinities and on PFF and Metrica, estimates that at least about 80 % of the
+  hidden-ball graded frames of the provided tracking are dead, against 41 % if gaps were placed at random.  The default
+  model is trained in that estimated world (`dead_affinity` 33, realised odds ratio about 12-19).
 * **Team symmetry.**  Each match is also used with the home/away roles swapped, so the models never see a team identity.
 * **Calibration** by out-of-fold temperature on whole held-out matches.
 * **Reproducibility.**  `python scripts/train_specialists.py --bench-dir <external cache>` rebuilds `models/specialists*.json`
@@ -101,7 +111,7 @@ how the competition derives its own ground truth from tracking channels.
 * **Possession and loose balls.**  A team is in possession from the touch that wins the ball until the other team's
   winning touch.  While the ball is in flight or loose the state is held (the last toucher keeps the ball).
 * **Challenges and duels.**  A change of possession requires a touch of the gaining team; simultaneous contact by both
-  teams does not flip by itself, and micro-possessions < 1.2 s between the other team's runs are absorbed unless the ball
+  teams does not flip by itself, and micro-possessions shorter than about 1 s between the other team's runs are absorbed unless the ball
   is visible and shows a double touch.
 * **Restarts.**  The restart frame is anchored in the tracking (the ball leaves rest), not at the tag window (the
   `Kick Off (Start)` windows open about 3.5 s before the kick-off).  Throw-ins tagged `Team = N/A` are resolved from the
@@ -128,16 +138,25 @@ provided game is not known to the authors.
 | Heuristic route, degraded (first degrader) | 0.435 | 0.773 |
 | Specialists (IDSSE only), degraded (first degrader) | 0.642 | 0.910 |
 | Specialists (default, IDSSE + PFF), degraded (first degrader) | 0.632 | 0.907 |
-| Specialists (default), calibrated degrader | 0.604 | 0.902 |
-| Specialists (default), complete ball | 0.745 | 0.946 |
-| Specialists on 8 held-out PFF matches with real occlusions | 0.526 | 0.865 |
+| Specialists (Milestone 8 default), calibrated degrader | 0.604 | 0.902 |
+| Specialists (Milestone 8 default), calibrated degrader with gaps over dead ball (B'(33)) | 0.657 | 0.914 |
+| **Specialists (final default, trained at `dead_affinity` 33), B'(33)** | **0.675** | **0.922** |
+| Specialists (final default), calibrated degrader with gaps placed at random (B'(1)) | 0.600 | -- |
+| Specialists (final default), complete ball | 0.750 | 0.948 |
+| Specialists (final default), 20 held-out PFF matches with real occlusions (4-fold) | 0.526 | 0.864 |
+
+B'(33) and B'(1) differ in the evaluation world, not in the model: the same model scores higher when the hidden-ball
+blocks fall over dead ball, because those frames are easier.  What matters is the difference between models measured in
+the same world.
 
 **Limitations (honest list).**
 
 * **Player dropout.**  The provided tracking has on average 20.5 tracked players per frame and 14.2 % of the frames with
-  fewer than 20; external matches have <= 1.2 % of such frames, so this regime has no external counterpart.  The models
-  tend to over-predict `D` there (slow tracked players read as stoppage).  Work on this (Milestone 9, below) is in
-  progress; the calibrated degrader now injects single- and group-player dropouts to measure it.
+  fewer than 20; external matches have <= 1.2 % of such frames, so this regime has no external counterpart.  On the
+  provided match nearly all of those frames are predicted `D`.  Issue #42 showed that player dropout alone does not
+  cause this on external matches (fewer than 20 players: predicted `D` 45.7 % against 43.6 % true), and the label-free
+  estimator of Issue #48 finds that 91 % of those frames lie inside ball gaps, i.e. joint tracking outages that most
+  likely coincide with stoppages; the high `D` share there is therefore plausible but cannot be validated externally.
 * **Hidden-ball turnovers.**  About 70 % of the H<->A turnovers that happen while the ball is hidden are still missed
   (81 % before the past/future-window features), so the learned route predicts fewer possessions than the truth
   (2409 against 3061 on the 7 degraded IDSSE matches).  Every extra flip tried is as often wrong as right.
@@ -152,20 +171,38 @@ provided game is not known to the authors.
 * With more time: a detector trained for the tactical camera, and a longer-context model of collective play for the
   hidden-ball turnovers.
 
-## 6. Milestone 9 results (to be completed at issue #46)
+## 6. Milestone 9 results
 
-Milestone 9 ("intelligent analysis over the provided data and invariance to player dropout") is **in progress**.  The
-results below are placeholders: they are filled in only when the issues are measured under the common protocol
-(7 IDSSE leave-one-match-out with the calibrated degrader, seeds 0-2, with a breakdown by number of tracked players;
-PFF held-out as guard).
+Milestone 9 ("intelligent analysis over the provided data and invariance to player dropout") was measured under a
+common protocol fixed after the audit against the official repository (#47): the ground truth is derived from tracking
+flags, and only the IDSSE labels share that semantics, so the primary criterion is **B'** = 7 IDSSE leave-one-match-out
+with the calibrated degrader, seeds 0-2 (adopt at >= +0.01 mean spellF1, no seed below -0.003); PFF held-out (event
+labels) is a guard only (reject if it drops more than 0.03).  From #48 on, B' is evaluated in the estimated world where
+gaps fall over dead ball (B'(33)), with the random-placement world B'(1) as a second guard.
 
-<!-- BEGIN MILESTONE 9 RESULTS (placeholders; filled at #46) -->
-| Issue | Change | Status | Result |
+<!-- BEGIN MILESTONE 9 RESULTS -->
+| Issue | Change | Decision | Result (spellF1, other matches) |
 |---|---|---|---|
-| #42 | Player-dropout invariance (strata < 20 / < 16 / >= 20 players) | in progress | pending |
-| #43 | Smart Tagging alive prior when the ball is hidden | in progress | pending |
-| #44 | Bounded decoder re-optimisation under the calibrated degrader | not started | pending |
-| #46 | Release and final submission table (before / after) | not started | pending |
+| #42 | Player-dropout invariance: strata by tracked players, robust shape features, native speed channel | off | best +0.004; dropout alone does not over-predict `D` (< 20 players: 45.7 % predicted vs 43.6 % true) |
+| #43 | Smart Tagging alive-ball prior and transition cue while the ball is hidden (tag simulator) | off | best +0.002 at medium / high tag noise |
+| #44 | Decoder re-optimisation (about 700 candidates) and ensemble of the two models trained in different worlds | off (`--model-variant ensemble` selectable) | best +0.009 on B'(33), all guards positive, below the bar |
+| #47 | Audit against the official repository (`docs/OFFICIAL_AUDIT.md`) | -- | protocol above |
+| #48 | Hidden-ball / dead-ball affinity in the degrader, label-free estimator, model re-trained at affinity 33 | **adopted** | B'(33) 0.657 -> **0.675** (+0.017, all seeds), PFF 0.521 -> 0.526, B'(1) -0.008 |
+| #49 | Restart-team rules (post-goal / second-half kick-off, tracking vote), `t*` offset prior, Long Ball flags | off | +0.0003 |
+| #50 | Set-piece anchor: bounded tag-window fallback and period-start clamp | **adopted** (correctness) | +0.0085 on B' (40 of 42 runs up) |
+| #51 | Front end isolated per graded play block (no leak across half-time) | **adopted** (correctness) | +0.0004 |
+| #52 | Submission depends only on the committed model (`auto` loads it; retraining reproduces it) | **adopted** | identical SHA256 for train and load |
+
+Provided match, label-free aggregates of the submission (no ground truth involved; not a selection criterion):
+
+| | Milestone 8 submission | Final submission |
+|---|---|---|
+| Possessions | 243 | 266 |
+| Mean possession | 12.8 s | 12.3 s |
+| `D` share of graded play frames | 50.1 % | 47.5 % |
+| `H` / `A` share of graded play frames | -- | 33.0 % / 19.5 % |
+| `D` share of hidden-ball graded frames | -- | 91.7 % (label-free estimate of the truth: >= about 80 %) |
+| Runtime (load model, full match) | -- | 17.5 s |
 <!-- END MILESTONE 9 RESULTS -->
 
 ## 7. Reproduction
@@ -174,15 +211,16 @@ PFF held-out as guard).
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e . --no-deps
 # unpack the organisers' bundle into data/ (tactical/ and broadcast/), see data/README.md
-python scripts/generate_submission.py --data-dir data --team OpusOperandi    # -> outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --specialists load --team OpusOperandi   # -> outputs/OpusOperandi.csv
 python evaluation/validate_submission.py outputs/OpusOperandi.csv
-python scripts/generate_submission.py --data-dir data --kpi                  # + seven-KPI quality dashboard
-python scripts/generate_submission.py --data-dir data --model-variant idsse  # alternative model: idsse | mixed | pff | calib
+python scripts/generate_submission.py --data-dir data --specialists load --kpi                 # + KPI quality dashboard
+python scripts/generate_submission.py --data-dir data --model-variant mixed  # alternatives: gap (= default) | mixed | calib | idsse | pff | ensemble
 python scripts/generate_submission.py --synthetic --out /tmp/sub.csv         # self-check without the data (what CI does)
 ```
 
 All dependencies are pinned to exact versions (`requirements.txt`, `pyproject.toml`; Python >= 3.10, developed on 3.13,
-CI on 3.11); numba and LightGBM are optional at run time with identical-result fallbacks.  `PYTHONHASHSEED=0` is
+CI on 3.11).  The submission uses only the committed `models/specialists.json` (Issue #52: `--specialists auto` and
+`load` both load it; retraining with `train_specialists.py` reproduces it byte for byte); numba and LightGBM are optional at run time with identical-result fallbacks.  `PYTHONHASHSEED=0` is
 enforced, seeds are fixed (`seed: 0`), LightGBM runs with `deterministic=True, num_threads=1`, and every decoder input
 is rounded to 1e-6, so two runs (and the numba and fallback decoders) give the same SHA256.  CI generates the full-length
 synthetic match twice and compares the hashes.  `data/`, `cache/`, videos and prediction CSVs are git-ignored and
