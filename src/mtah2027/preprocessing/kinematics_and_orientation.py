@@ -205,12 +205,33 @@ def mirror(arr: np.ndarray, flipped: np.ndarray, pitch: tuple[float, float], *, 
     return out
 
 
+def fill_speed_from_native(speed: np.ndarray, valid: np.ndarray, native: np.ndarray,
+                           edge_frames: int = 3) -> tuple[np.ndarray, np.ndarray]:
+    """Use the provider's own speed (``native``, m/s) where the Savitzky-Golay one is unreliable (Issue #42).
+
+    ``speed`` and ``native`` are ``[N, S]``; ``valid`` marks the frames with a position.  The native value
+    replaces (a) a missing SG speed at a valid position and (b) the SG speed within ``edge_frames`` of the
+    start / end of every continuous run of positions (where a fragmented track has the least support).
+    Returns ``(speed, replaced_mask)``; frames without a finite native value keep the SG speed."""
+    nat = np.asarray(native, dtype=np.float32)
+    ok = np.asarray(valid, dtype=bool) & np.isfinite(nat) & (nat >= 0)
+    inner = np.asarray(valid, dtype=bool).copy()
+    for j in range(1, int(edge_frames) + 1):
+        inner[j:] &= valid[:-j]
+        inner[:-j] &= valid[j:]
+        inner[:j] = False
+        inner[-j:] = False
+    use = ok & (~inner | ~np.isfinite(speed))
+    return np.where(use, nat, speed).astype(np.float32), use
+
+
 def compute_kinematics_and_orientation(
         players_xy: np.ndarray, ball_xy: np.ndarray, team_of_slot: np.ndarray, *, fps: float = FPS,
         pitch: tuple[float, float] = PITCH,
         halves: tuple[tuple[int, int], tuple[int, int]] = (HALF1, HALF2_PLAY), max_gap: int = MAX_GAP,
         window: int = SG_WINDOW, poly: int = SG_POLY, first_minutes: float = FIRST_MINUTES,
-        min_samples: int = MIN_DIRECTION_SAMPLES
+        min_samples: int = MIN_DIRECTION_SAMPLES,
+        players_speed_native: np.ndarray | None = None, native_edge_frames: int = 3
 ) -> OrientedKinematics:
     """Interpolate, differentiate and mirror so that the home team attacks +x in both halves.
 
@@ -235,6 +256,9 @@ def compute_kinematics_and_orientation(
     vel = mirror(vel, flipped, pitch, vector=True)
     acc = mirror(acc, flipped, pitch, vector=True)
     speed = np.linalg.norm(vel, axis=-1).astype(np.float32)
+    if players_speed_native is not None:       # Issue #42: provider speed channel as fallback at track edges
+        speed[:, :s], _ = fill_speed_from_native(speed[:, :s], np.isfinite(ents[:, :s]).all(axis=2),
+                                                 players_speed_native, native_edge_frames)
     return OrientedKinematics(
         players_xy=pos[:, :s], ball_xy=pos[:, s], players_vel=vel[:, :s], players_acc=acc[:, :s],
         ball_vel=vel[:, s], ball_acc=acc[:, s], players_speed=speed[:, :s], ball_speed=speed[:, s],

@@ -42,6 +42,7 @@ for extra in (REPO_ROOT / "src", REPO_ROOT):
 from mtah2027.models.baseline_labels import baseline_labels  # noqa: E402
 from mtah2027.models.external_degrader import DegraderParams, degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
+from mtah2027.validation import dropout_strata as ds  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
 
 DEFAULT_BENCH_DIR = REPO_ROOT.parent / "mtah2027-external-benchmarks" / "cache"
@@ -107,6 +108,9 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
     row["engine"] = score(gt, core.codes)
+    n_tracked = ds.tracked_counts(players)
+    visible = np.isfinite(ball).all(axis=1)
+    row["engine"]["strata"] = ds.stratum_counts(gt, core.codes, n_tracked, visible)    # Issue #42
     codes_spec = None
     if specialists is not None:
         t0 = time.perf_counter()
@@ -116,6 +120,7 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
         row["specialists"] = score(gt, learned.codes)
         row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
         row["specialists"]["source"] = learned.diagnostics["emission_source"]
+        row["specialists"]["strata"] = ds.stratum_counts(gt, learned.codes, n_tracked, visible)
         codes_spec = learned.codes
     if with_baseline:
         base = np.full(len(gt), 3, dtype=np.int8)
@@ -125,7 +130,7 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
         row["baseline"] = score(gt, base)
     if return_codes:     # in-memory only (used by the KPI dashboard); never serialised
         row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps,
-                         "visible": np.isfinite(ball).all(axis=1)}
+                         "visible": visible, "n_tracked": n_tracked}
     return row
 
 
@@ -158,9 +163,14 @@ def main(argv=None) -> int:
     ap.add_argument("--no-pseudo", action="store_true", help="with --specialists: no Issue #21 adaptation")
     ap.add_argument("--fusion", nargs="*", default=[], metavar="KEY=VALUE",
                     help="override specialist_fusion parameters (tuning on external matches only)")
+    ap.add_argument("--lomo-cache", default=None,
+                    help="Issue #42: LOMO specialists cache (JSON); valid for one "
+                         "training set / configuration")
     ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
                     help="Issue #43: feed a simulated Smart Tagging (from the true labels)")
     ap.add_argument("--no-baseline", action="store_true")
+    ap.add_argument("--strata", action="store_true",
+                    help="Issue #42: pooled breakdown by number of tracked players (<16, <20, >=20)")
     ap.add_argument("--json", default=None, help="write the aggregate rows to this JSON file")
     args = ap.parse_args(argv)
 
@@ -208,10 +218,19 @@ def main(argv=None) -> int:
         def specialists_for(stem: str):
             if stem not in models:
                 t0 = time.perf_counter()
-                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
-                                            exclude_match=stem)
-                models[stem] = dataclasses.replace(spec, fusion=fusion)
-                print(f"  trained specialists without {stem} ({time.perf_counter() - t0:.0f} s)", flush=True)
+                cached = Path(args.lomo_cache) / f"{stem}.json" if args.lomo_cache else None
+                if cached is not None and cached.is_file():
+                    loaded = sf.load_specialists(cached, args.config)
+                    models[stem] = dataclasses.replace(loaded, fusion=fusion)
+                    print(f"  loaded cached specialists without {stem}", flush=True)
+                else:
+                    spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                                                exclude_match=stem)
+                    models[stem] = dataclasses.replace(spec, fusion=fusion)
+                    if cached is not None:
+                        sf.save_specialists(models[stem], cached)
+                    dt = time.perf_counter() - t0
+                    print(f"  trained specialists without {stem} ({dt:.0f} s)", flush=True)
             if models[stem].durations is None:     # Issue #34: duration table without the held-out match
                 from mtah2027.decoding.duration_model import fit_from_bench
 
@@ -265,6 +284,15 @@ def main(argv=None) -> int:
     if training is not None:
         print(f"{'MEAN + specialists':<23}{mean['specialists_spell_f1']:8.4f}"
               f"{mean['specialists_macro_f1']:8.4f}")
+    if args.strata:
+        for key in ("engine", "specialists"):
+            if key == "specialists" and training is None:
+                continue
+            pooled = ds.pool([r[key]["strata"] for r in rows])
+            print(f"strata ({key}, pooled over {len(rows)} runs):")
+            total = pooled["lt20"]["frames"] + pooled["ge20"]["frames"]
+            for line in ds.format_table(ds.summarize(pooled), total):
+                print("  " + line)
     if args.json:
         Path(args.json).write_text(json.dumps({"mean": mean, "rows": rows}, indent=2), encoding="utf-8")
     return 0

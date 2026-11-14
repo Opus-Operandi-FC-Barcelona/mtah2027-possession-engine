@@ -93,6 +93,8 @@ class PipelineParams:
     use_spell_optimizer: bool = True
     use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
     use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
+    use_native_speed: bool = False    # Issue #42: ATD speed channel (s) as edge fallback
+    native_speed_edge_frames: int = 3
     # Issue #43: the live-phase mask additionally drops frames with physical dead-ball evidence
     # (ball out of bounds or dead_score >= alive_dead_threshold) and ``alive_dead_after_s`` s after them,
     # because the phases lag when the ball leaves the pitch and quick restarts carry no set-piece tag
@@ -292,7 +294,8 @@ def compute_front_end(
         ball_channel_codes: dict[str, dict[str, int]] | None = None,
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, stages: "_Stages | None" = None,
-        collective: bool = False, homography: np.ndarray | None = None) -> FrontEnd:
+        collective: bool = False, homography: np.ndarray | None = None,
+        players_speed_native: np.ndarray | None = None) -> FrontEnd:
     """Stages 2-6 (cleaning, kinematics + orientation, dead-ball signals, ball kinematics, set-piece anchors)
     plus the owner / phase / touch priors; with ``collective`` also the collective physics (#17) and the
     ball memory (#18) that feed the learned specialists."""
@@ -318,7 +321,9 @@ def compute_front_end(
     # 3. kinematics and orientation -------------------------------------------------------------
     halves = (play_blocks[0], play_blocks[1] if len(play_blocks) > 1 else play_blocks[0])
     kin = st.run("kinematics", lambda: compute_kinematics_and_orientation(
-        pxy, np.asarray(ball_xy, dtype=np.float32), team, fps=fps, pitch=pitch, halves=halves))
+        pxy, np.asarray(ball_xy, dtype=np.float32), team, fps=fps, pitch=pitch, halves=halves,
+        players_speed_native=(players_speed_native if pp.use_native_speed else None),
+        native_edge_frames=pp.native_speed_edge_frames))
     if kin is not None:
         pxy, bxy = kin.players_xy, kin.ball_xy
         pvel, bvel, bacc = kin.players_vel, kin.ball_vel, kin.ball_acc
@@ -454,7 +459,8 @@ def run_core(
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
-        homography: np.ndarray | None = None, durations: Any = None) -> CoreResult:
+        homography: np.ndarray | None = None, durations: Any = None,
+        players_speed_native: np.ndarray | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -479,7 +485,7 @@ def run_core(
             ball_channels=ball_channels, ball_channel_codes=ball_channel_codes, team_ids=team_ids,
             team_names=team_names, smart_tagging=smart_tagging, config_path=cfg,
             stages=_Stages(lambda m: None) if quiet else st, collective=specialists is not None,
-            homography=homography)
+            homography=homography, players_speed_native=players_speed_native)
 
     fe = front_end(ball_xy)
     sig, bk, anchors, visible, dead_score = fe.sig, fe.bk, fe.anchors, fe.visible, fe.dead_score
@@ -783,7 +789,9 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
-            homography=homography, keep_features=keep_features)
+            homography=homography, keep_features=keep_features,
+            players_speed_native=(_fit_length(td.players_speed, n) if np.isfinite(td.players_speed).any()
+                                  else None))
         codes, core_diag = core.codes, core.diagnostics
         features = core.features
         route = core_diag.get("emission_source", "heuristic")    # "specialists" or "heuristic" (Issue #52)

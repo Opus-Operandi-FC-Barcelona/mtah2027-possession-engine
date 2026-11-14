@@ -218,6 +218,11 @@ in the configuration; `compare_input_stats.py` prints target vs degraded; the Is
 `external_degrader_legacy`).  Re-selection under it (validation B' = 7 degraded IDSSE LOMO, seeds 0-2; A = PFF held-out):
 no variant gains the required +0.01 on B', so the default (IDSSE + PFF 0.5, trained with the legacy degrader) is kept;
 `--model-variant calib` (calibrated-degrader training) is selectable.
+Issue #42 (player-dropout invariance): `eval_external.py --strata` / `diagnose_possessions.py` break the results down by tracked
+players (< 16, < 20, >= 20); on the calibrated degrader the model does not over-predict `D` under dropout.  Sample-size-robust
+shape features (`specialist_features.normalise_shape`, `shape_min_field`) gain +0.002/+0.003 on B' and the native speed channel
+(`pipeline.use_native_speed`) cannot be validated externally, so all stay OFF; the loader now maps the ATD channel `s` to
+speed and checks its unit against the positions (the competition `s` is in m/s although the XML says km/h).
 
 ### Possession count and the KPI 7 evidence
 

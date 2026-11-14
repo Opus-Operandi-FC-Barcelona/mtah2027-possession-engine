@@ -33,6 +33,8 @@ for extra in (REPO_ROOT / "src", REPO_ROOT, REPO_ROOT / "scripts"):
 import eval_external as ee  # noqa: E402
 import possession_metrics as pm  # noqa: E402
 
+from mtah2027.validation import dropout_strata as ds  # noqa: E402
+
 NAMES = {0: "H", 1: "A", 2: "D", 3: "X"}
 
 
@@ -180,7 +182,10 @@ def main(argv=None) -> int:
                 pred = codes["engine"] if route == "engine" else codes["specialists"]
                 d = diagnose(codes["gt"], pred, codes["fps"], args.tol, codes.get("visible"))
                 d.update({"match": row["match"], "seed": seed, "route": route,
-                          "spell_f1": row[route]["spell_f1"], "macro_f1": row[route]["macro_f1"]})
+                          "spell_f1": row[route]["spell_f1"],
+                          "macro_f1": row[route]["macro_f1"]})
+                d["strata"] = ds.stratum_counts(codes["gt"], pred, codes["n_tracked"], codes["visible"],
+                                                args.tol)
                 rows.append(d)
                 t = total[route]
                 for key in ("n_gt", "n_pred", "gt_short_lt3s", "gt_short_lt3s_unmatched", "gt_unmatched",
@@ -213,6 +218,12 @@ def main(argv=None) -> int:
         for typ in ("H->A", "A->H", "->D", "D->"):
             print(f"   {typ:>5}: true {int(t['gt:' + typ]):5d} pred {int(t['pred:' + typ]):5d} "
                   f"missed {int(t['missed:' + typ]):5d} spurious {int(t['spurious:' + typ]):5d}")
+    for route in args.routes:      # Issue #42: breakdown by number of tracked players
+        pooled = ds.pool([r["strata"] for r in rows if r["route"] == route])
+        print(f"== {route}: strata by tracked players (graded, pooled)")
+        total = pooled["lt20"]["frames"] + pooled["ge20"]["frames"]
+        for line in ds.format_table(ds.summarize(pooled), total):
+            print("   " + line)
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=1), encoding="utf-8")
     return 0
