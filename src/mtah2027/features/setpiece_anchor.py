@@ -61,6 +61,7 @@ class AnchorParams:
     collective_window_s: float = 1.0
     collective_jump_min_mps: float = 0.4
     collective_conf_max: float = 0.5
+    collective_dead_lag_s: float = 1.0   # >0: the jump must follow dead evidence within this lag (0 = off)
     dead_threshold: float = 0.5
     dead_gap_close_s: float = 1.0
     dead_tail_s: float = 1.0
@@ -165,8 +166,11 @@ def _ball_restart(c_lo: int, c_hi: int, g: dict, p: AnchorParams, fps: float):
     return t_star, float(np.clip(conf, 0.0, 1.0)), rest_s
 
 
-def _collective_restart(lo: int, hi: int, jump: np.ndarray, p: AnchorParams):
+def _collective_restart(lo: int, hi: int, jump: np.ndarray, p: AnchorParams,
+                        after_dead: np.ndarray | None = None):
     seg = jump[lo:hi + 1]
+    if after_dead is not None:
+        seg = np.where(after_dead[lo:hi + 1], seg, np.nan)
     if not len(seg) or not np.isfinite(seg).any():
         return None
     k = int(np.nanargmax(seg))
@@ -246,6 +250,12 @@ def anchor_set_pieces(
     ev = np.nan_to_num(np.asarray(dead_score, dtype=np.float64), nan=0.0) >= p.dead_threshold
     closed = _close_gaps(ev, int(round(p.dead_gap_close_s * fps)))
     run_before = run_length_before(closed)
+    after_dead = None
+    if p.collective_dead_lag_s > 0:      # a restart follows a dead run: gate the jump on recent dead evidence
+        idx_all = np.arange(n)
+        last_dead = np.maximum.accumulate(np.where(closed, idx_all, -10 ** 9))
+        prev = np.concatenate([[-10 ** 9], last_dead[:-1]])
+        after_dead = (idx_all - prev) <= max(1, int(round(p.collective_dead_lag_s * fps)))
 
     pre, post = int(round(p.pre_margin_s * fps)), int(round(p.post_margin_s * fps))
     anchors: list[SetPieceAnchor] = []
@@ -258,7 +268,7 @@ def anchor_set_pieces(
         if found is not None:
             t_star, conf, rest_s = found
         else:
-            col = _collective_restart(lo, hi, jump, p) if hi >= lo else None
+            col = _collective_restart(lo, hi, jump, p, after_dead) if hi >= lo else None
             if col is not None:
                 (t_star, conf), method = col, "collective"
             else:

@@ -64,3 +64,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 ## Milestone 8: Datos reales (ingesta, Smart Tagging, sincronización TV)
 
 - [x] COMPLETADA · #37 · wave-5 · Comprobación de ingesta real BAR-ATH con informe solo agregado · `feat/issue-37-real-data-sanity`
+- [x] COMPLETADA · #40 · wave-5 · Smart Tagging real: fase de juego con el equipo poseedor (fases de defensa invertidas), anclajes t* y saques de banda · `feat/issue-40-smart-tagging-real`

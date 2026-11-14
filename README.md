@@ -268,6 +268,23 @@ code / team / set-piece type, which pipeline stages ran or were skipped, and the
 visibility, tracked players (< 20) and Smart Tagging set-piece windows.  `external_d_diagnostic.py` produces the
 same cuts on external matches next to their true `D`, to tell a bug from a property of the data.
 
+## Smart Tagging on the real match (Issue #40)
+
+```bash
+python scripts/smart_tagging_check.py --data-dir data       # anchors, throw-ins, phase-prior consistency (aggregates)
+python scripts/eval_anchor_accuracy.py --bench-dir ../mtah2027-external-benchmarks/cache --groups idsse pff metrica --collective-only-incomplete
+```
+
+`Team` of a phase is "the team performing the event" (`docs/official/OVERVIEW.md`), so the four defensive codes
+(`Defending in Attacking / Middle / Defensive Third`, `Defensive Transition`) name the *defender*: the loader credits
+the opponent in `phase_prior_home` (`smart_tagging_loader.DEFENDING_CODES`, `defending_codes=()` restores the raw
+tag).  On BAR-ATH every attacking phase has a paired defending phase of the opponent over exactly the same frames, so
+without the flip they cancelled each other; with it 67 % of the graded frames carry a prior and the predicted
+possessor agrees with the possession side in 65-97 % of the alive frames per code (and 3-26 % with the raw defending
+tag).  The collective restart cue (ball hidden around the set piece) is now gated on recent dead-ball evidence
+(`setpiece_anchor.collective_dead_lag_s`, external pseudo-window check, three sources: mean |t* error| 208 -> 126,
+247 -> 181, 259 -> 143 frames).
+
 ## Repository layout
 
 ```
