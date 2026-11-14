@@ -112,7 +112,7 @@ def run(args: argparse.Namespace) -> int:
             bench_dir=bench,
             model_path=args.model_path,
             config_path=cfg_path,
-            prefer_file=args.synthetic,
+            train_fallback=not args.synthetic,
             log=lambda m: print(f"[specialists] {m}"),
         )
         print(f"specialists: {specialists.source if specialists else 'none (heuristic emissions)'}")

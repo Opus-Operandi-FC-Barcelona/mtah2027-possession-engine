@@ -116,10 +116,11 @@ python scripts/generate_submission.py --data-dir data --model-variant idsse     
 * Self-check without the real data (what CI does): `python scripts/generate_submission.py --synthetic --out
   /tmp/sub_run1.csv` generates the full-length synthetic match with a fixed seed and also reports its score
   against the synthetic ground truth.
-* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) trains the specialists at run time
-  from the external open matches if they are on disk (`--bench-dir`, `$MTAH_BENCH_DIR` or the sibling
-  `mtah2027-external-benchmarks/cache`), otherwise loads the committed `models/specialists.json`, otherwise
-  uses the heuristic emissions.  With `--synthetic`, `auto` means `load` (deterministic and fast).  The training
+* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) loads the committed
+  `models/specialists.json` whenever it exists (Issue #52: the submission depends only on the repository, as
+  RULES.md requires); only if it is missing does it train from the external open matches on disk (`--bench-dir`,
+  `$MTAH_BENCH_DIR` or the sibling `mtah2027-external-benchmarks/cache`), otherwise it uses the heuristic emissions.
+  `train` always retrains.  With `--synthetic`, `auto` never trains (deterministic and fast).  The training
   is deterministic (LightGBM `deterministic=True`, `num_threads=1`, `seed=0`) and reproducible with
   `python scripts/train_specialists.py` (the committed file is its output).  See "Training data" in the
   technical report: only external open data, labelled algorithmically; nothing from BAR-ATH.
