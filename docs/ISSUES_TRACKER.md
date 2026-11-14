@@ -70,7 +70,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 
 ## Milestone 9: Análisis inteligente sobre datos facilitados e invarianza a caída de jugadores
 
-- [~] EN CURSO · #42 · wave-6 · Invarianza a caída de jugadores (estrato de menos de 20 jugadores) · `feat/issue-42-player-dropout-invariance`
+- [x] COMPLETADA · #42 · wave-6 · Invarianza a caída de jugadores: diagnóstico por estratos, canal `s` nativo (m/s verificado), forma robusta al tamaño muestral (medido, no adoptado: desactivado por config) · `feat/issue-42-player-dropout-invariance`
 - [x] COMPLETADA · #43 · wave-6 · Prior de balón vivo y transiciones desde Smart Tagging con balón oculto (simulador de tags; medido, no adoptado: desactivado por config) · `feat/issue-43-smart-tagging-alive-prior`
 - [ ] PENDIENTE · #44 · wave-6 · Re-optimización acotada del decodificador bajo el degradador calibrado (barrido en external-benchmarks #5) · rama por definir
 - [~] EN CURSO · #45 · wave-6 · Documentación y sincronización de todos los repos de la organización · `feat/issue-45-docs-and-org-repos-sync`
