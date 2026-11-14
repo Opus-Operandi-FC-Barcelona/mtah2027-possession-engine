@@ -48,11 +48,12 @@ only if its leave-one-match-out spellF1 on degraded external matches beats the h
 
 | variant | file | training data |
 |---|---|---|
-| `default` (same as `mixed`) | `models/specialists.json` | IDSSE (degraded, legacy degrader) + 20 PFF matches at weight 0.5 |
-| `mixed` | `models/specialists_mixed.json` | = default |
+| `default` (same as `gap`) | `models/specialists.json` | IDSSE degraded with the calibrated degrader at hidden<->dead affinity 33 (#48) + 20 PFF matches at weight 0.5 |
+| `gap` | `models/specialists_gap.json` | = default |
+| `mixed` | `models/specialists_mixed.json` | IDSSE (degraded, legacy degrader, blind to the play state) + 20 PFF matches at weight 0.5 (the default before #48) |
 | `idsse` | `models/specialists_idsse.json` | IDSSE only |
 | `pff` | `models/specialists_pff.json` | PFF only |
-| `calib` | `models/specialists_calib.json` | IDSSE degraded with the calibrated degrader (#38) + PFF 0.5 |
+| `calib` | `models/specialists_calib.json` | IDSSE degraded with the calibrated degrader (#38, affinity 1) + PFF 0.5 |
 
 Choose between them with label-free input statistics (`scripts/compare_input_stats.py --data-dir data`), never with
 labels of the provided game.
@@ -218,6 +219,12 @@ in the configuration; `compare_input_stats.py` prints target vs degraded; the Is
 `external_degrader_legacy`).  Re-selection under it (validation B' = 7 degraded IDSSE LOMO, seeds 0-2; A = PFF held-out):
 no variant gains the required +0.01 on B', so the default (IDSSE + PFF 0.5, trained with the legacy degrader) is kept;
 `--model-variant calib` (calibrated-degrader training) is selectable.
+Issue #48: the degrader gained a hidden-ball <-> dead-ball affinity (`dead_affinity`).  A label-free estimator (ball-free
+player features + prior-shift EM, validated on IDSSE with planted affinity, PFF and Metrica; `scripts/estimate_gap_affinity.py`)
+puts the D share of the BAR-ATH ball gaps at >= ~80 % (point estimate 94 %, aggregates only).  Training the specialists
+with the calibrated degrader at affinity 33 gains +0.0174 on B' in that world (every seed >= +0.013) and passes the PFF guard
+(A +0.005): **adopted as the default** (`models/specialists.json` = `--model-variant gap`); the previous default stays as
+`--model-variant mixed`.  Details and the per-specialist PFF ablation: `docs/TECHNICAL_REPORT.md`, Item 7.
 
 ### Possession count and the KPI 7 evidence
 

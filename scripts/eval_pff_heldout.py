@@ -45,6 +45,8 @@ def main(argv=None) -> int:
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
                     help="Issue #43: feed a simulated Smart Tagging (derived from the true labels)")
+    ap.add_argument("--folds-only", type=int, nargs="*", default=None,
+                    help="run only these folds (parallel runs)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -73,7 +75,7 @@ def main(argv=None) -> int:
     sources = args.sources if args.sources is not None else sorted({p.source for p in ts.parts})
     fusion = sf.FusionParams.from_config(args.config)
     rows = []
-    for fold in range(args.folds):
+    for fold in (args.folds_only if args.folds_only is not None else range(args.folds)):
         held = [f for i, f in enumerate(pff) if i % args.folds == fold]
         sub = ts.select(sources, weights or ts.weights, ts.drop_dead,
                         exclude_matches=[f.stem for f in held], weights_b=wb)

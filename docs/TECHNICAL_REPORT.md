@@ -437,7 +437,7 @@ degrader is harder (-0.03 ... -0.04) because its gaps are less forgiving (shorte
 Decision rule: adopt a variant if it beats the default by >= +0.01 on the B' mean with no seed below -0.003 and A not
 worse than -0.01.  The best B' gain is +0.0081 (IDSSE only, calibrated) and it also loses 0.044 on A; the calibrated
 mixed model gains +0.004 on B' (every seed better) and +0.005 on A.  **No variant passes: the default
-(`models/specialists.json` = IDSSE + PFF 0.5 trained with the legacy degrader) is kept**; `specialists.json` is unchanged.
+(`models/specialists.json` = IDSSE + PFF 0.5 trained with the legacy degrader) was kept at the time**; `specialists.json` was unchanged (superseded by Item 7 / Issue #48).
 The calibrated mixed model is stored as `models/specialists_calib.json` (`generate_submission.py --model-variant calib`;
 training: `scripts/train_specialists.py --degrader-section external_degrader`).  `specialist_data.degrader_section`
 (default `external_degrader_legacy`) keeps the run-time training equal to the committed default.  Tools:
@@ -446,6 +446,114 @@ Decoder overrides under the calibrated degrader (`diagnose_possessions.py`, cach
 with `route_overrides.specialists` 0.5997 / 0.8999, without 0.5954 / 0.8999 (+0.0043 from the tuned overrides), i.e. the
 Issue #31 parameters are not broken by the calibration (absolute values differ slightly from the table above because
 `diagnose_possessions.py` uses another match/seed offset).
+
+**Item 7 (Issue #48): hidden-ball <-> dead-ball affinity of the degrader, label-free estimate for BAR-ATH, model re-selection.**
+The calibrated degrader (#38) placed ball gaps blind to the play state (odds ratio OR = odds(D | hidden) /
+odds(D | visible) of about 1), whereas real trackers hide the ball much more often while it is dead (PFF: 61-64 % of
+the hidden frames are `D`, 8 % of the visible ones, OR ~ 19).  A model fitted on blind gaps learns "hidden tells
+nothing about D"; one fitted on coupled gaps learns the opposite.  Which one fits BAR-ATH had never been measured.
+
+*Degrader.*  `DegraderParams.dead_affinity` (default 1.0 = old behaviour, same random stream, config key
+`external_degrader.dead_affinity`).  Above 1 the start weight of a block is multiplied by
+`dead_affinity ** (share of D frames inside the block)` and a block that mostly overlaps a dead-ball stretch is
+aligned with it (ball leaves play, not seen until the restart; it lasts at least as long as the stretch); the hidden
+target is counted on all graded frames (x 0.972) so the missing share stays at 41 % (pooled realised OR with
+`artefacts=False`, 7 IDSSE matches, seed 0: affinity 1 -> 0.9, 1.45 -> 3.0, 2 -> 3.2, 5 -> 5.8, 8 -> 7.7, 12 -> 10.4,
+20 -> 15.0, 35 -> 18.8, 60 -> 24.1, 120 -> 30.3).  `DegradeReport` now holds `hidden_dead_share`,
+`visible_dead_share` and `realised_odds_ratio`.  Limitation, measured: aligning gaps with dead stretches lengthens them
+(8.1 gaps / 10 min and p50 / p90 / p99 = 23.6 / 58.8 / 140.6 s at affinity 33 vs the target 12.9 and 11.5 / 37.9 / 113.7;
+affinity 1: 14.4 and 11.9 / 32.4 / 73.7), so the coupling and the gap-length shape cannot both be matched with this
+mechanism; missing share (41.2 %) and players per frame (20.8, 14.9 % of the frames < 20) stay on target.
+
+*Label-free estimator* (`mtah2027.validation.gap_affinity`, `scripts/estimate_gap_affinity.py`).  Ball-free features of
+the players only (tracked players, mean / p80 speed, shares of slow / fast players, spread, 10 s means), a gradient
+boosting classifier P(D | features) trained on other matches (IDSSE degraded by the calibrated degrader, so its
+dropout is the BAR-ATH-like one), prior-shift EM (Saerens et al. 2002) on the frames of the gaps >= 1 s and, separately,
+on the visible frames, **per player-count stratum (< 20 / >= 20 tracked players, each with its own reference prior)**.
+The class-conditional histograms are used in discriminative form (the classifier).  No BAR-ATH labels, no public GT.
+Pre-stated tolerance: estimated D share in the hidden frames within 10 points of the truth for every case (pooled
+5 points); OR within a factor 2 when the visible D share is >= 15 %.  Validation (leave-one-match-out for IDSSE):
+
+| validation case | est. D in hidden | true | est. D in visible | true | est. OR | true OR | worst match (hidden D) |
+|---|---|---|---|---|---|---|---|
+| IDSSE planted, affinity 1 (7 matches) | 40.3 % | 40.2 % | 47.4 % | 47.1 % | 0.74 | 0.75 | 10.0 pts |
+| IDSSE planted, affinity 4.4 | 69.6 % | 68.0 % | 26.9 % | 28.1 % | 6.67 | 5.54 | 9.3 pts |
+| IDSSE planted, affinity 33 | 79.2 % | 77.0 % | 19.6 % | 21.7 % | 17.4 | 12.4 | 7.8 pts |
+| PFF (10 matches, real occlusions, event labels) | 65.1 % | 64.3 % | 5.6 % | 8.6 % | 31.7 | 19.2 | - |
+| Metrica Games 1-3 (ball dropped while dead) | 100 % | 94.0 % | 6.0 % | 2.4 % | saturated | 651 | - |
+
+All five pass the tolerance on the hidden D share (pooled error <= 2.2 points on IDSSE, 0.8 on PFF, 6.0 on Metrica
+where it saturates); the OR is right within x1.2-1.4 on IDSSE but over-estimated x1.65 on PFF because the visible D share
+is small (5.6 vs 8.6 %) and is meaningless when a share saturates.  So the **D share in the hidden frames is the
+reliable quantity; the OR is only indicative.**  The estimator overshoots slightly at the top of the range.
+
+*BAR-ATH estimate* (tactical ATD, graded blocks without the known-dead start of half 2; aggregates only; 64,028
+hidden-gap frames, 91,844 visible frames): D share in the hidden gaps **94.3 %** (stratum >= 20 players 91.8 %, n =
+44,612; stratum < 20 players 100 %, n = 19,416), D share in the visible frames 17.1 % (15.3 % for >= 20, 75.6 % for
+< 20, n = 2,751), OR 80 (62 in the >= 20 stratum).  Gap borders (131 / 129 gaps): ball within 1.5 m of a line at the
+last-seen frame in 29.8 % (first-seen 27.9 %), slow (< 1 m/s) in 29.8 % (7.0 %).  Caveats: (i) the value lies above the
+planted range validated here (<= 80 %), where the estimator tends to overshoot, so the defensible reading is "at least
+~80 %", i.e. at least the strongest coupling the degrader can produce; (ii) 91 % of the frames with < 20 players are
+inside gaps, i.e. joint tracking outages, which no external match has, so the < 20 stratum (100 %) is not used;
+(iii) a model trained at affinity 33 therefore errs on the safe side of what the estimator found.  The estimator passes
+its stated tolerance on all validation cases, so the estimate is used; the training degrader is set to affinity 33
+(realised OR ~ 12-19 depending on the artefacts; hidden D 77-80 %).
+
+*Curve* (B' = 7 IDSSE leave-one-match-out, learned route only, seeds 0-2, held-out matches degraded with the given
+affinity = how coupled the evaluation world is; these runs predate #50 / #51 / #43).  Mean spellF1 (true hidden-frame
+D share in brackets):
+
+| held-out affinity (true D % in hidden) | 1 (41 %) | 1.45 (59 %) | 7 (70-71 %) | 33 (79-80 %) | 120 (82-84 %) |
+|---|---|---|---|---|---|
+| IDSSE only, legacy (blind) training | 0.6092 | 0.6259 | 0.6389 | 0.6491 | 0.6540 |
+| IDSSE + PFF 0.5, legacy training (previous default) | 0.6075 | - | 0.6442 | 0.6556 | 0.6633 |
+| IDSSE + PFF 0.5, trained at affinity 33 | 0.6000 | - | - | 0.6737 | - |
+| IDSSE only, trained at affinity 33 | 0.5998 | - | - | 0.6759 | - |
+
+The curve is **not flat** (+0.04 from affinity 1 to 33 for the same model), but that rise is mostly the evaluation
+world getting easier (gaps aligned with stoppages are easy to decode); what matters for the choice is the difference
+between models in the same world.  In the coupled world (affinity 33) training with the matching degrader gains
++0.018 / +0.027 (mixed / IDSSE-only) over training blind; in the blind world it loses 0.008 / 0.009.  Models trained at
+affinity 7 or 120 were not run (compute); the blind calibrated degrader (#38, affinity 1) is Item 6.
+
+*Specialist A / B ablation* (trained at affinity 33; PFF weight per specialist; B' at affinity 33 / 1; pre-#51):
+
+| PFF weight A : B | B'(33) spellF1 | macroF1 | possessions (true 3061) | D % in hidden, predicted (true 80.0) | B'(1) spellF1 |
+|---|---|---|---|---|---|
+| 0 : 0 (IDSSE only) | 0.6759 | 0.9241 | 2533 | 80.4 | 0.5998 |
+| 0.5 : 0.5 | 0.6737 | 0.9218 | 2416 | 80.9 | 0.6000 |
+| 0.5 : 0 | 0.6733 | 0.9234 | 2449 | 80.4 | 0.5979 |
+| 0 : 0.5 | 0.6763 | 0.9225 | 2499 | 80.9 | 0.6015 |
+| 0.25 : 0 | 0.6719 | 0.9232 | 2469 | 80.4 | 0.5977 |
+| 0.15 : 0 | 0.6742 | 0.9234 | 2504 | 80.4 | 0.6004 |
+| 0.5 : 0.25 | 0.6752 | 0.9229 | 2417 | 80.7 | 0.6022 |
+| 0.5 : 0.15 | 0.6746 | 0.9231 | 2428 | 80.6 | 0.6036 |
+| 0.25 : 0.25 | 0.6739 | 0.9227 | 2438 | 80.7 | 0.6018 |
+
+All nine are within 0.005 (seed noise 0.002-0.004).  The hypothesis "PFF helps A but poisons P(D) of B" is
+**not supported** once the training degrader is coupled: B's hidden-frame D share is already on target (80.4-81.0 vs
+80.0 %), so no D temperature / bias on the hidden frames was needed or tested.  `specialist_data.pff_weight_b` and
+the `--source-weight-b` flags of `eval_external.py`, `eval_pff_heldout.py`, `train_specialists.py` and
+`gap_curve.py` keep the option (training rows of B can take another PFF weight than those of A).
+
+*Re-selection on top of develop (#50, #51, #43 included; training rows and LOMO rebuilt)*; B' at affinity 33 is the
+primary criterion (estimated world), B' at affinity 1 the blind-world check, A = PFF held-out guard (reject if A drops by
+more than 0.03 vs the default):
+
+| model (training degrader) | B'(33) spellF1 / macroF1 | seeds 0 / 1 / 2 | vs default | possessions | D % hidden, predicted (true 80.0) | B'(1) | A spellF1 / macroF1 |
+|---|---|---|---|---|---|---|---|
+| default: IDSSE + PFF 0.5, legacy (**previous**) | 0.6571 / 0.9139 | 0.6539 / 0.6607 / 0.6567 | - | 2473 | 77.5 | 0.6084 | 0.5212 / 0.8624 |
+| IDSSE only, affinity 33 | 0.6761 / 0.9240 | 0.6750 / 0.6795 / 0.6737 | +0.0190 | 2526 | 80.4 | 0.6005 | 0.4692 / 0.8400 (-0.052): **rejected by the guard** |
+| IDSSE + PFF 0.5, affinity 33 (**adopted**) | 0.6745 / 0.9221 | 0.6721 / 0.6815 / 0.6700 | **+0.0174** (+0.0182 / +0.0208 / +0.0133) | 2410 | 81.0 | 0.6004 | 0.5263 / 0.8636 (+0.005) |
+| PFF 0.5 (A) / 0.15 (B), affinity 33 | 0.6743 / 0.9232 | 0.6704 / 0.6829 / 0.6696 | +0.0172 | 2416 | 80.6 | 0.6022 | 0.5174 / 0.8598 (-0.004) |
+
+Decision: **adopt IDSSE + PFF 0.5 trained with the calibrated degrader at `dead_affinity` 33** (+0.0174 on B'(33),
+every seed above -0.003, A guard passed with +0.005).  `models/specialists.json` is regenerated
+(`configs/default.yaml`: `specialist_data.degrader_section: external_degrader`, `dead_affinity: 33`), the same file is
+`models/specialists_gap.json` (`--model-variant gap`), and the previous default stays selectable as
+`--model-variant mixed` (`models/specialists_mixed.json`, legacy degrader).  Cost accepted knowingly: -0.008 spellF1
+in the blind world (B'(1) 0.6084 -> 0.6004).  The gain is evidence about the *estimated* world, not about BAR-ATH
+labels, which we do not have.
 
 ### Real-data ingestion check (Issue #37, aggregates only)
 

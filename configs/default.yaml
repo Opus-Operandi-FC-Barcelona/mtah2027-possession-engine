@@ -326,8 +326,8 @@ specialist_data:
   pff_max_matches: 20           # 0 = all; the first N by name (deterministic)
   # Issue #38: degrader of the IDSSE training rows.  external_degrader_legacy (Issue #19 profile) = the adopted
   # models; external_degrader = the degrader calibrated to the competition ATD gap statistics (measured, not adopted).
-  degrader_section: external_degrader_legacy
-  dead_affinity: 1.0            # Issue #48: hidden<->dead affinity of that degrader (1 = placement blind to D)
+  degrader_section: external_degrader   # Issue #48: calibrated degrader (#38) ...
+  dead_affinity: 33.0           # ... with hidden<->dead affinity 33 (realised odds ratio ~18; label-free estimate, see report)
   pff_weight_b: -1.0            # Issue #48: PFF weight of the hidden-ball rows (Specialist B); < 0 = same as pff_weight
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.

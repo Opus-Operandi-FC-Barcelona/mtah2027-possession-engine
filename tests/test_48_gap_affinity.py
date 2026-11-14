@@ -121,3 +121,21 @@ def test_hidden_row_weights_can_differ_from_visible_row_weights():
     same = ts.select(["idsse", "pff"], {"pff": 0.5})
     assert list(same.stack_weighted("hid")[3]) == [1, 1, 1, 0.5, 0.5]
     assert same.weights_b == {}
+
+
+def test_adopted_training_configuration_and_model_variants():
+    """The adopted default trains on the calibrated degrader with the estimated affinity (Issue #48)."""
+    import json
+
+    from mtah2027.config import REPO_ROOT, load_section
+
+    cfg = load_section("specialist_data")
+    assert cfg["degrader_section"] == "external_degrader" and float(cfg["dead_affinity"]) == 33.0
+    assert float(load_section("external_degrader")["dead_affinity"]) == 1.0      # evaluation world stays blind
+    source = (REPO_ROOT / "scripts" / "generate_submission.py").read_text(encoding="utf-8")
+    assert '"gap"' in source
+    default = REPO_ROOT / "models" / "specialists.json"
+    gap = REPO_ROOT / "models" / "specialists_gap.json"
+    if default.is_file() and gap.is_file():
+        assert default.read_bytes() == gap.read_bytes()
+        assert json.loads(default.read_text(encoding="utf-8"))["training"]["source_weights"]["pff"] == 0.5
