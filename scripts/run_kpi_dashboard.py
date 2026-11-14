@@ -4,7 +4,7 @@
 Examples::
 
     python scripts/run_kpi_dashboard.py --synthetic                       # full-length synthetic match
-    python scripts/run_kpi_dashboard.py --data-dir data --submission outputs/OpusOperandi.csv
+    python scripts/run_kpi_dashboard.py --data-dir data --submission "outputs/Opus Operandi.csv"
     python scripts/run_kpi_dashboard.py --data-dir data --external-lomo   # also the leave-one-match-out route
 
 Only counts, shares, scores, hashes and timings are printed and written to ``outputs/kpi_report.json``

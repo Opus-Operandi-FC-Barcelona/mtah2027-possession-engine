@@ -1,14 +1,14 @@
 # Technical report -- Opus Operandi (More than a Hack 2027, phase 1: ball possession)
 
 Repository: `Opus-Operandi-FC-Barcelona/mtah2027-possession-engine`.  This report follows the points requested
-in the competition's `SUBMISSION.md`; the short submission document is `docs/OpusOperandi.md`.  **Implemented in this
+in the competition's `SUBMISSION.md`; the short submission document is `docs/Opus Operandi.md`.  **Implemented in this
 version = Milestones 1-9 (issues #1-#52)**: a complete, deterministic end-to-end route whose emissions come from
 learned Specialists A/B trained on external open data (IDSSE + PFF), with the heuristic emissions as the fallback
 route, plus optional stages (broadcast sync, vision recovery, aerial filter, MBR, semi-Markov) that were built and
 measured and are **off** by configuration.  **Milestone 9** (issues #42-#52) is complete: it adopted the model
 re-trained with gaps over dead ball (#48), the set-piece anchor fallback (#50), play-block isolation (#51) and
 reproducible model loading (#52); #42, #43, #44 and #49 were measured and are off (see "Milestone 9" before section 6).  Sections 1-4 below were written for waves 1-2 and the later
-items are documented in 5.x; where they differ the later sections and `docs/OpusOperandi.md` prevail.
+items are documented in 5.x; where they differ the later sections and `docs/Opus Operandi.md` prevail.
 ## 1. Summary of the approach and why
 
 **What is scored.**  spellF1 matches same-team possession spells between prediction and ground truth by temporal
@@ -1081,8 +1081,8 @@ specialists once per held-out match and takes tens of minutes.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e . --no-deps       # numba / lightgbm pinned, optional at run time
 python scripts/train_specialists.py --bench-dir <external cache>      # optional: regenerates models/specialists.json
-python scripts/generate_submission.py --data-dir data --team OpusOperandi
-python evaluation/validate_submission.py outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --team "Opus Operandi"
+python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 ```
 
 All dependencies are pinned (`requirements.txt`, `pyproject.toml`), seeds are fixed (`seed: 0`),

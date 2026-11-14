@@ -81,4 +81,5 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #50 · wave-6 · Anclajes de set pieces: acotar el fallback tag-window y fijar los Kick Off de inicio de periodo (Milestone 9) · `feat/issue-50-setpiece-anchor-fallback`
 - [x] COMPLETADA · #51 · wave-6 · Aislar el front-end por play_blocks (sin fuga a través del descanso ni del calentamiento) · `feat/issue-51-play-blocks-isolation`
 - [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`
-- [x] COMPLETADA · #53 · wave-6 · Docs: cita CC BY 4.0 de IDSSE (DOI) en README y enlaces de acceso público a IDSSE/PFF en OpusOperandi.md (issues oficiales #8 y #16) · `feat/issue-53-idsse-pff-citation`
+- [x] COMPLETADA · #53 · wave-6 · Docs: cita CC BY 4.0 de IDSSE (DOI) en README y enlaces de acceso público a IDSSE/PFF en Opus Operandi.md (issues oficiales #8 y #16) · `feat/issue-53-idsse-pff-citation`
+- [x] COMPLETADA · #54 · wave-6 · Nombre de equipo exacto "Opus Operandi" (con espacio) en config, entregables (`Opus Operandi.csv`, `docs/Opus Operandi.md`) y docs · `feat/issue-54-team-name-spacing`
