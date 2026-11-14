@@ -63,6 +63,8 @@ class TransitionParams:
     restart_open: float = -1.0
     restart_halfwidth: int = 3
     restart_other_team: float = -3.0
+    restart_team_before_s: float = 0.0   # Issue #49: the other-team penalty also holds from t* - this ...
+    restart_team_after_s: float = 0.0    # ... to t* + this (0 = only t* +- restart_halfwidth, as before)
     # Specialist-driven openings inside occlusions (learned route only; off by default).  H<->A opens to
     # ``spec_ha_open`` around the frames where the specialists' H-vs-A logit changes sign (hysteresis
     # ``spec_hyst``), only towards the team the new sign names; H/A->D is opened to ``spec_dead_open`` where
@@ -196,7 +198,8 @@ def build_log_transitions(
         d_away: np.ndarray | None = None, ball_visible: np.ndarray | None = None,
         is_aerial: np.ndarray | None = None, dead_score: np.ndarray | None = None,
         ball_out: np.ndarray | None = None, restart_frames: np.ndarray | None = None,
-        restart_teams: np.ndarray | None = None, fps: float = FPS,
+        restart_teams: np.ndarray | None = None, restart_weights: np.ndarray | None = None,
+        fps: float = FPS,
         params: TransitionParams | None = None, spec_home_logit: np.ndarray | None = None,
         spec_p_dead: np.ndarray | None = None, spec_speed: np.ndarray | None = None,
         transitions: list | None = None) -> np.ndarray:
@@ -271,20 +274,32 @@ def build_log_transitions(
                  else np.asarray(restart_teams, dtype=np.int64))
         if teams.shape != frames.shape:
             raise ValueError("restart_teams must have the same length as restart_frames")
+        wts = (np.ones(len(frames)) if restart_weights is None
+               else np.clip(np.asarray(restart_weights, dtype=np.float64), 0.0, 1.0))
+        if wts.shape != frames.shape:
+            raise ValueError("restart_weights must have the same length as restart_frames")
         hw = int(p.restart_halfwidth)
+        wide_b = int(round(p.restart_team_before_s * fps))
+        wide_a = int(round(p.restart_team_after_s * fps))
         for code, target in ((H, leave_h), (A, leave_a)):
             # unknown team opens both columns; a known team opens its own fully, the other one less
             own = np.zeros(n, dtype=bool)
-            other = np.zeros(n, dtype=bool)
-            for f, tm in zip(frames, teams):
+            other_w = np.full(n, -np.inf)          # strongest team weight of the 'other' windows per frame
+            wide_w = np.full(n, -np.inf)
+            for f, tm, wt in zip(frames, teams, wts):
                 lo, hi = max(0, int(f) - hw), min(n, int(f) + hw + 1)
                 if tm < 0 or tm == code:
                     own[lo:hi] = True
                 else:
-                    other[lo:hi] = True
+                    other_w[lo:hi] = np.maximum(other_w[lo:hi], wt)
+                    if wide_b > 0 or wide_a > 0:
+                        wlo, whi = max(0, int(f) - max(wide_b, hw)), min(n, int(f) + max(wide_a, hw) + 1)
+                        wide_w[wlo:whi] = np.maximum(wide_w[wlo:whi], wt)
             target[own] = np.maximum(target[own], p.restart_open)
-            soft = other & ~own
-            target[soft] = np.maximum(target[soft], p.restart_open + p.restart_other_team)
+            soft = np.isfinite(other_w) & ~own
+            target[soft] = np.maximum(target[soft], p.restart_open + p.restart_other_team * other_w[soft])
+            wide = np.isfinite(wide_w) & ~own & ~np.isfinite(other_w)    # outside the core windows
+            target[wide] = target[wide] + p.restart_other_team * wide_w[wide]
     log_trans[:, D, H] = leave_h
     log_trans[:, D, A] = leave_a
 

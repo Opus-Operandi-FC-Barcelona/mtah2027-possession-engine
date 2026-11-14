@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Fusion of Specialists A and B into the emissions ``log_probs[N, 3]`` of the decoder (Issue #22).
 
 For every frame the emission is built from the specialist that fits its ball status:
@@ -112,6 +113,7 @@ class SpecialistSet:
 class FusionResult:
     emissions: EmissionResult
     report: dict
+    anchor_label: np.ndarray | None = None      # Issue #49: Specialist A's ultra-confident class per frame, -1 elsewhere
 
 
 def _logit(p: np.ndarray) -> np.ndarray:
@@ -121,14 +123,17 @@ def _logit(p: np.ndarray) -> np.ndarray:
 
 def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarray | None,
                  status_dead: np.ndarray | None, ep: EmissionParams, phase_alive: np.ndarray | None = None,
-                 visible: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+                 visible: np.ndarray | None = None, long_ball: np.ndarray | None = None,
+                 w_long_ball: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Add the soft priors to the model probabilities ``prob[N, 3]``; returns ``(prob, home_logit)``.
 
     With no prior channel the input is returned untouched (``home_logit = log(pH / pA)``)."""
     ph, pa, pd = prob[:, 0], prob[:, 1], prob[:, 2]
     z = np.log(np.clip(ph, 1e-6, 1)) - np.log(np.clip(pa, 1e-6, 1))
     use_alive = phase_alive is not None and visible is not None and ep.w_phase_alive != 0.0
-    if phase is None and owner is None and status_dead is None and not use_alive:
+    wlb = ep.w_long_ball if w_long_ball is None else float(w_long_ball)
+    use_lb = long_ball is not None and visible is not None and wlb != 0.0
+    if phase is None and owner is None and status_dead is None and not use_alive and not use_lb:
         return prob, z
     zd = _logit(pd)
     if status_dead is not None:
@@ -136,6 +141,8 @@ def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarra
         zd = zd + np.where(np.isfinite(st), ep.w_status * (2.0 * np.nan_to_num(st) - 1.0), 0.0)
     if use_alive:      # Issue #43: a live tactical phase over hidden-ball frames is evidence of alive ball
         zd = zd - ep.w_phase_alive * alive_prior_mask(phase_alive, visible)
+    if use_lb:         # Issue #49: Long Ball / Ball in the Box phases over hidden-ball frames
+        zd = zd - wlb * alive_prior_mask(long_ball, visible)
     if phase is not None:
         z = z + ep.w_phase * np.nan_to_num(np.asarray(phase, dtype=np.float64))
     if owner is not None:
@@ -180,8 +187,16 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
     ep = EmissionParams.from_config(config_path)
     sig = fe.sig
     status = sig.status_dead if (sig is not None and sig.has_status) else None
+    w_lb, lb_info = None, {}
+    if fe.long_ball is not None:        # Issue #49: weight calibrated on A's confident visible frames
+        from mtah2027.features.restart_rules import RestartRuleParams, auto_long_ball_weight
+
+        rp = RestartRuleParams.from_config(config_path)
+        if rp.auto_long_ball_weight:
+            w_lb, lb_info = auto_long_ball_weight(fe.long_ball, res_a.anchor_label, vis, params=rp)
     prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep,
-                                    phase_alive=fe.phase_alive, visible=vis)
+                                    phase_alive=fe.phase_alive, visible=vis, long_ball=fe.long_ball,
+                                    w_long_ball=w_lb)
 
     logp = np.log(np.maximum(prob, fp.prob_floor))
     scale = np.where(vis, fp.scale_visible, fp.scale_hidden)[:, None]
@@ -198,7 +213,10 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
               "temperature_a": specialists.a.classifier.temperature,
               "temperature_b": specialists.b.classifier.temperature,
               "pseudo_labels": pseudo_report, "training": specialists.training}
-    return FusionResult(emissions=emissions, report=report)
+    if lb_info:
+        report["long_ball"] = {"weight": w_lb, **lb_info}
+    return FusionResult(emissions=emissions, report=report,
+                        anchor_label=np.where(vis, res_a.anchor_label, -1).astype(np.int8))
 
 
 # --------------------------------------------------------------------------------------------

@@ -368,6 +368,23 @@ evidence from the mask.  `io/smart_tagging_sim.py` derives a Smart Tagging from 
 matches have none -- optimistic by construction.  Measured on B' and A at three noise levels the best gain is +0.002
 spellF1, far from the +0.01 rule, so everything stays **off** (`docs/TECHNICAL_REPORT.md`, Issue #43).
 
+## Restart-team rules and Long Ball flags (Issue #49, off by default)
+
+```bash
+python scripts/eval_phase_alive.py --protocol b --sim-restart --noise medium high     --variants off rules:restart_rules.enabled=true     wide:transition_matrix.restart_team_before_s=4.0,transition_matrix.restart_team_after_s=2.0     offset:setpiece_anchor.offset_prior=true --training-pickle t.pkl --sources idsse pff --source-weight pff=0.5
+```
+
+`features/restart_rules.py`: the team of every restart is voted among the tag, the rules of the game (`Kick Off (After
+Goal)` = team that conceded the preceding `GOALS` tag; second-half `Kick Off (Start)` = opposite of the first-half
+one) and the tracking (first clear controller after `t*`); dissent lowers `team_conf`, which scales
+`transition_matrix.restart_other_team`; `restart_team_before_s / after_s` widen the window of that penalty beyond
+`t* +- 3` frames; `setpiece_anchor.offset_prior` restricts the collective-cue search to the `t* - tag_start` band learned
+from the ball-method anchors of the same match; `restart_rules.calibrate_weight` and `auto_long_ball_weight` take the
+weights from Specialist A's confident states (never the ground truth); `heuristic_emissions.w_long_ball` lowers the `D`
+logit on hidden-ball frames of `Long Ball` / `Ball in the Box` phases.  `--sim-restart` makes the simulated tags
+name the kick-off teams and flip 5 / 10 / 20 % of the set-piece teams.  Decision and numbers:
+`docs/TECHNICAL_REPORT.md`, Issue #49.
+
 ## Broadcast sync on the real bundle (Issue #39)
 
 `python scripts/real_broadcast_check.py --data-dir data [--effect]` prints aggregates only (blocks synchronised,
