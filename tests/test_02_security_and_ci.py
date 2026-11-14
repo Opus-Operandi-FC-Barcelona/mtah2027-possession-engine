@@ -21,9 +21,10 @@ IGNORED = [
     "x/BAR-ATH_tactical_smart_tagging.xml",
     "arrays.npy",
     "arrays.npz",
+    "Opus Operandi.csv",
     "OpusOperandi.csv",
-    "outputs/OpusOperandi.csv",
-    "evaluation/results/OpusOperandi.csv",
+    "outputs/Opus Operandi.csv",
+    "evaluation/results/Opus Operandi.csv",
     "evaluation/reports/report.json",
     "evaluation/scoreboard.csv",
 ]
