@@ -39,7 +39,7 @@ from mtah2027.vision.attention_crops import (
     crop_points_to_pitch,
     plan_crops,
 )
-from mtah2027.vision.detectors import BallDetector, detector_fingerprint
+from mtah2027.vision.detectors import BallDetector, detector_fingerprint, motion_geometry
 
 SRC_MISSING, SRC_TRACKING, SRC_VISION, SRC_VISION_INTERP = 0, 1, 2, 3
 CACHE_VERSION = 1
@@ -62,11 +62,15 @@ def require_cv2():
 
 
 def read_crops(video_path: str | os.PathLike, plan: CropPlan, params: VisionParams, *,
-               batch_size: int | None = None):
+               batch_size: int | None = None, context: int = 0):
     """Yield ``(plan_indices, crops, n_decoded)`` batches, reading the planned frames in order.
 
     ``crops`` is a list of ``crop_size x crop_size`` BGR arrays.  Frames that cannot be decoded are skipped
     (their plan index is simply absent).  ``n_decoded`` counts the frames decoded/skipped so far, for rates.
+
+    With ``context=1`` (temporal detectors, Issue #36) each crop is the frame triplet ``[3, size, size, 3]``
+    of the frames ``t-1, t, t+1`` cut with the SAME window (clamped at the video ends: the missing neighbour
+    repeats frame ``t``).
     """
     cv2 = require_cv2()
     cap = cv2.VideoCapture(str(video_path))
@@ -78,28 +82,42 @@ def read_crops(video_path: str | os.PathLike, plan: CropPlan, params: VisionPara
             raise VisionUnavailableError(
                 f"video is {width}x{height}, the plan assumes {params.frame_width}x{params.frame_height}")
         size, bs = int(params.crop_size), int(batch_size or params.batch_size)
+        ctx = int(context)
         pos = 0
         idx_batch: list[int] = []
         crops: list[np.ndarray] = []
         for i, f in enumerate(plan.frames):
             f = int(f)
-            if f < pos:
-                continue
-            gap = f - pos
-            if gap > params.seek_threshold_frames:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+            first = max(f - ctx, 0)
+            if first < pos and first < f:
+                pos = -1                              # the previous read overlapped: force a seek
+            if pos < 0 or first - pos > params.seek_threshold_frames:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, first)
+            elif first < pos:
+                continue                              # f already behind the cursor (unsorted plan)
             else:
-                for _ in range(gap):
+                for _ in range(first - pos):
                     if not cap.grab():
                         break
-            pos = f
-            ok, img = cap.read()
-            pos += 1
-            if not ok or img is None:
-                continue
+            pos = first
             x0, y0 = (int(v) for v in plan.origin[i])
+            wanted = list(range(first, f + ctx + 1))
+            imgs: list[np.ndarray | None] = []
+            for _ in wanted:
+                ok, img = cap.read()
+                pos += 1
+                imgs.append(np.ascontiguousarray(img[y0:y0 + size, x0:x0 + size]) if ok and img is not None
+                            else None)
+            cur = imgs[f - first]
+            if cur is None:
+                continue
             idx_batch.append(i)
-            crops.append(np.ascontiguousarray(img[y0:y0 + size, x0:x0 + size]))
+            if ctx:
+                prev = imgs[0] if first < f and imgs[0] is not None else cur
+                nxt = imgs[-1] if imgs[-1] is not None and len(imgs) > f - first + 1 else cur
+                crops.append(np.stack([prev, cur, nxt]))
+            else:
+                crops.append(cur)
             if len(crops) >= bs:
                 yield idx_batch, crops, pos
                 idx_batch, crops = [], []
@@ -180,9 +198,13 @@ def load_detections(path: Path, key: str) -> DetectionSet | None:
 
 
 def run_detection(video_path, plan: CropPlan, detector: BallDetector, homographies: Homographies,
-                  params: VisionParams, *, pitch: tuple[float, float] = PITCH,
+                  params: VisionParams, *, pitch: tuple[float, float] = PITCH, fps: float = FPS,
                   progress: Callable[[int, int], None] | None = None) -> DetectionSet:
-    """Read the planned crops, detect, reproject the candidates to pitch metres."""
+    """Read the planned crops, detect, reproject the candidates to pitch metres.
+
+    A detector with ``temporal = True`` (Issue #36) receives frame triplets and, as second argument, one
+    geometry record per crop (crop origin + the three homography inverses) for its metric checks."""
+    context = int(getattr(detector, "context", 1)) if getattr(detector, "temporal", False) else 0
     frames_out: list[np.ndarray] = []
     xy_out: list[np.ndarray] = []
     conf_out: list[np.ndarray] = []
@@ -190,10 +212,17 @@ def run_detection(video_path, plan: CropPlan, detector: BallDetector, homographi
     t_read = t_det = 0.0
     decoded = 0
     t_prev = time.perf_counter()
-    for idx, crops, pos in read_crops(video_path, plan, params):
+    for idx, crops, pos in read_crops(video_path, plan, params, context=context):
         t_now = time.perf_counter()
         t_read += t_now - t_prev
-        results = detector.detect(crops)
+        if context:
+            n_h = len(homographies.H_inv)
+            geo = [motion_geometry(plan.origin[i], homographies.H_inv[np.clip(
+                plan.frames[i] + np.arange(-context, context + 1), 0, n_h - 1)], pitch=pitch, fps=fps)
+                for i in idx]
+            results = detector.detect(crops, geo)
+        else:
+            results = detector.detect(crops)
         t_prev = time.perf_counter()
         t_det += t_prev - t_now
         decoded = pos
@@ -420,7 +449,8 @@ def recover_ball(ball_xy: np.ndarray, players_xy: np.ndarray, homographies: Homo
     cpath = cache_path(p, video_path, key, cache_root)
     ds = load_detections(cpath, key) if use_cache else None
     if ds is None and detector is not None:
-        ds = run_detection(video_path, plan, detector, homographies, p, pitch=pitch, progress=progress)
+        ds = run_detection(video_path, plan, detector, homographies, p, pitch=pitch, fps=fps,
+                           progress=progress)
         if use_cache:
             save_detections(cpath, ds, key)
     if ds is None:
