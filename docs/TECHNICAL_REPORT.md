@@ -344,6 +344,62 @@ as right, so spellF1 moves by -0.0009 ... -0.0042 (heuristic: +0.0001): the tran
 already encodes the rarity of switching and the duration prior carries no evidence about *which* frame flips while the
 ball is hidden.  Fails the adoption rule (needs +0.01): code, table and tests are kept, **off**.
 
+**Item 5 (Issue #35): more training matches (SkillCorner, PFF).**  The specialists were trained only on the 7 IDSSE
+matches degraded by our own degrader (Issue #19).  Two extra sources of the benchmarks repository were added to the
+*training* rows (`specialist_data.extra_sources`; no synthetic degradation on top, both are already occluded):
+SkillCorner A-League broadcast tracking (20 matches; frames with `observed == 0` are `X`; all its graded frames have a
+visible ball, so it only feeds Specialist A; its `D` is the gap between `phases_of_play`, not the ball status) and PFF
+FC World Cup 2022 (64 converted matches, labels from the provider's events; `ball_xy` contains *estimated* positions,
+so the ball is NaN where `ball_visible` is False and the occlusions are real: 29-54 % of the frames).  Training uses
+the first 20 PFF matches by name (deterministic).
+
+*Revised adoption rule* (decided with the user): the IDSSE protocol relies on our own degrader and could be biased
+against PFF, which is computer-vision tracking with real occlusions and probably closer to BAR-ATH.  Therefore
+**Validation A** = held-out PFF matches with real occlusions (4-fold cross-validation over the 20 PFF matches by sorted
+index modulo 4, models trained on IDSSE + the 15 other PFF matches, never on the evaluated match; reference = the
+IDSSE-only specialists, which never saw PFF); **Validation B** = the usual 7 degraded IDSSE leave-one-match-out,
+seeds 0-2.  Adopt the mixed model if A gains >= +0.01 spellF1 and B loses at most 0.01; the alternative models are kept
+as selectable files.
+
+| training set (specialists) | A: PFF spellF1 / macroF1 | A: possessions (true 7069) | B: seed 0 / 1 / 2 | B: mean spellF1 / macroF1 | B: possessions (seed 0, true 3061) | B: hidden turnovers missed |
+|---|---|---|---|---|---|---|
+| reference: IDSSE only | 0.4659 / 0.8405 | 7897 | 0.6475 / 0.6381 / 0.6389 | 0.6415 / 0.9099 | 2409 | 70.5 % |
+| IDSSE + SkillCorner (all rows) | not run | | 0.6138 / 0.6059 / 0.6115 | 0.6104 / 0.9037 | 2184 | 70.7 % |
+| IDSSE + SkillCorner (H/A rows only) | not run | | 0.6197 / 0.6107 / 0.6152 | 0.6152 / 0.9057 | 2189 | 70.6 % |
+| IDSSE + PFF (weight 1) | 0.5355 / 0.8658 | 6128 | 0.6336 / 0.6189 / 0.6230 | 0.6252 / 0.9042 | 2251 | 72.1 % |
+| IDSSE + PFF (PFF weight 0.5) -- **adopted** | **0.5231 / 0.8626** (+0.057) | 6395 | 0.6374 / 0.6263 / 0.6326 | **0.6321 / 0.9071** (-0.0094) | 2310 | 71.5 % |
+| IDSSE (weight 0.5) + PFF | 0.5432 / 0.8673 | 5881 | not run | | | |
+| PFF only | 0.5541 / 0.8704 | 5367 | 0.4996 / 0.4839 / 0.4916 | 0.4917 / 0.7918 | 1764 | 87.2 % |
+
+Findings.  (1) SkillCorner hurts on B by -0.026 / -0.031 whether its `D` rows are kept or dropped (its dead frames and
+its always-visible ball do not resemble the degraded matches); since both fail the rule on B, their A runs and the
+down-weighted run (`skillcorner_weight`) were stopped and the code stays available but off.  (2) Real occlusions help a
+lot where they exist: every PFF-containing model gains +0.057 ... +0.088 on A and loses 0.009 ... 0.016 on the synthetic
+B, i.e. the two validations disagree on the size and the direction of the trade-off; the more PFF weight the larger A
+and the lower B.  (3) PFF only is best on A (0.5541) but collapses on B (-0.15, only 1764 possessions predicted, 87 %
+of hidden turnovers missed): PFF labels (events) define possession and dead ball differently from IDSSE's ball status
+and from our degrader, so a model that only knows PFF does not transfer.  (4) IDSSE + PFF at weight 0.5 is the only
+variant with A >= +0.01 and B >= -0.01, hence **adopted as the default** (`models/specialists.json`, trained by
+`scripts/train_specialists.py` with the defaults of `specialist_data`; the run-time training of `generate_submission.py`
+uses the same rows).  `reports/external_evidence.json` was regenerated with the adopted default (degraded LOMO 0.6321 / 0.9071, complete ball 0.7448 / 0.9458; heuristic unchanged 0.4348 / 0.6912).  Check of the committed files on the 8 PFF matches never used in any training (last 8 by name,
+real occlusions): IDSSE-only 0.4657 / 0.8452, mixed (default) 0.5257 / 0.8648, PFF-only 0.5593 / 0.8737 spellF1 /
+macroF1 (heuristic route 0.2954).  The decision is a trade between two proxies; the other two models stay selectable:
+`models/specialists_idsse.json` (IDSSE only, the previous default), `models/specialists_mixed.json` (= the default) and
+`models/specialists_pff.json` (PFF only), via `generate_submission.py --model-variant {idsse,mixed,pff}` (implies
+`--specialists load`).  To choose on the competition input without any label, `scripts/compare_input_stats.py
+--data-dir data` prints aggregate ball-gap statistics next to those of the external groups (never per-frame rows):
+
+| group (7 matches each) | ball missing | gaps per 10 graded min | gap p50 / p90 / p99 (s) | hidden time in gaps <5 / 5-20 / 20-60 / >60 s (%) |
+|---|---|---|---|---|
+| IDSSE raw | 0 % | 0 | - | - |
+| IDSSE degraded (seed 0) | 40.2 % | 5.7 | 35.1 / 82.5 / 118.4 | 0.1 / 9.0 / 43.4 / 47.5 |
+| PFF (real occlusions) | 54.5 % | 71.7 | 0.9 / 11.2 / 57.4 | 20.5 / 26.2 / 36.9 / 16.4 |
+
+(The degrader's blocks are long because the sampled 5-60 s blocks overlap and merge; PFF has many short gaps.  The
+tracked players per frame are 21.8 (degraded IDSSE) and 22.0 (PFF).)  Rule of thumb for Monday: if the competition
+ATD has long, few gaps close to the degraded-IDSSE profile, use `idsse`; if it has many short gaps like PFF, use the
+default `mixed`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

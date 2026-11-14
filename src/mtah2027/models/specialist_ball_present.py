@@ -111,10 +111,10 @@ def train_specialist_a(training: TrainingSet, *, params: SpecialistAParams | Non
                        exclude_match: str | None = None) -> SpecialistA:
     """Fit the specialist on the visible-ball rows of ``training`` (optionally leaving one match out)."""
     p = params or SpecialistAParams.from_config()
-    x, y, groups = training.stack("vis", exclude_match=exclude_match)
+    x, y, groups, w = training.stack_weighted("vis", exclude_match=exclude_match)
     if len(y) < p.min_train_rows:
         raise ValueError(f"only {len(y)} visible-ball training rows (< {p.min_train_rows})")
     clf = FrameClassifier(classifier_params or ClassifierParams.from_config(), training.names)
-    clf.fit(x, y, groups=groups)
+    clf.fit(x, y, sample_weight=w, groups=groups)
     clf.meta["role"] = "A: ball visible"
     return SpecialistA(clf, p)

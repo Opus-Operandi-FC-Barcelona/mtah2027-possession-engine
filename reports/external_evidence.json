@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "note": "external open data only (no BAR-ATH); aggregates of leave-one-match-out evaluations",
-  "date": "2026-10-25",
-  "git_sha": "61b81b4fc0f6033acc20544f1915478e7959806f",
+  "date": "2026-10-26",
+  "git_sha": "000a9c8e875d2f9382cc861ddd5f48415ea64710",
   "git_dirty": false,
   "matches": [
     "idsse_J03WMX",
@@ -31,9 +31,9 @@
           "n_runs": 21
         },
         "specialists_lomo": {
-          "spell_f1": 0.641500419603322,
-          "macro_f1": 0.9098921033367511,
-          "possessions_pred_mean": 341.2857142857143,
+          "spell_f1": 0.6320582972855695,
+          "macro_f1": 0.9070575169382492,
+          "possessions_pred_mean": 323.6190476190476,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 21
         }
@@ -54,9 +54,9 @@
           "n_runs": 7
         },
         "specialists_lomo": {
-          "spell_f1": 0.7605442207420923,
-          "macro_f1": 0.9497892905072212,
-          "possessions_pred_mean": 384.7142857142857,
+          "spell_f1": 0.7448384546703678,
+          "macro_f1": 0.9458402676475336,
+          "possessions_pred_mean": 359.57142857142856,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 7
         }

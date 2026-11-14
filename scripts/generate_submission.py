@@ -59,6 +59,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
                          "mtah2027-external-benchmarks/cache)")
     ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
+    ap.add_argument("--model-variant", choices=("default", "idsse", "mixed", "pff"), default="default",
+                    help="Issue #35: specialists trained on IDSSE (degraded), IDSSE + PFF (mixed) or "
+                         "PFF only (models/specialists_<variant>.json); implies --specialists load; pick it "
+                         "with scripts/compare_input_stats.py")
     ap.add_argument("--kpi", action="store_true",
                     help="after writing the CSV run the KPI dashboard (Issue #27): aggregate numbers + "
                          "outputs/kpi_report.json")
@@ -98,6 +102,11 @@ def main(argv=None) -> int:
     from mtah2027.validation import eval_bridge as eb
 
     set_global_seeds(SEED)
+    if args.model_variant != "default":
+        args.model_path = args.model_path or str(
+            REPO_ROOT / "models" / f"specialists_{args.model_variant}.json")
+        if args.specialists == "auto":
+            args.specialists = "load"
     cfg_path, _ = resolve_config(args.config)
     config = load_config(cfg_path)
     team = args.team or config.team_name
