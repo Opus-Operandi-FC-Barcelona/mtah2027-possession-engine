@@ -40,7 +40,7 @@ for _extra in (REPO_ROOT / "src", REPO_ROOT, REPO_ROOT / "scripts"):
 import eval_external as ee  # noqa: E402
 
 from mtah2027.config import _load_raw  # noqa: E402
-from mtah2027.io.smart_tagging_sim import simulate_smart_tagging  # noqa: E402
+from mtah2027.io.smart_tagging_sim import NOISE_LEVELS, simulate_smart_tagging  # noqa: E402
 from mtah2027.models.external_degrader import DegraderParams, degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
@@ -98,6 +98,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-matches", type=int, default=20)
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--matches", nargs="*", default=None)
+    ap.add_argument("--sim-restart", action="store_true",
+                    help="Issue #49: Kick Off (Start) tags name the first-possession team and set-piece teams are "
+                         "wrong with 5 / 10 / 20 %% (low / medium / high)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -163,8 +166,12 @@ def main(argv=None) -> int:
                                        params=DegraderParams.from_config(None))
                     players, ball = dm.players_xy, dm.ball_xy
                 for noise in args.noise:
+                    level = noise
+                    if args.sim_restart and noise in NOISE_LEVELS:
+                        level = dataclasses.replace(NOISE_LEVELS[noise], kickoff_teams=True,
+                                                    wrong_team_rate={"low": 0.05, "medium": 0.10, "high": 0.20}[noise])
                     smart = None if noise == "none" else simulate_smart_tagging(
-                        gt, periods, fps, noise=noise, seed=seed, n_frames=len(gt))
+                        gt, periods, fps, noise=level, seed=seed, n_frames=len(gt))
                     for name, cfg in variants:
                         r = run_one(players, team, ball, periods, fps, pitch, gt, cfg, spec, smart)
                         r.update({"match": f.stem, "seed": seed, "noise": noise, "variant": name})

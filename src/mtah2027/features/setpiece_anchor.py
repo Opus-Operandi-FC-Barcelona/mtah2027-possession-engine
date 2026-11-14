@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Exact restart-frame anchoring ``t*`` for Smart Tagging SET PIECES and after GOALS (Issue #14).
 
 Smart Tagging intervals are *windows*, not instants (a ``Kick Off (Start)`` opens ~3.5 s before the
@@ -82,6 +83,10 @@ class AnchorParams:
     fallback_dead_s: float = 0.5          # Issue #50: forced D adjacent to t* without dead-score evidence
     fallback_tag_window: bool = False     # legacy: force D back to the tag-window start instead
     clamp_period_starts: bool = True      # Issue #50: Kick Off (Start) t* -> first frame of its play block
+    offset_prior: bool = False            # Issue #49: restrict the collective search to the learned t* offset band
+    offset_prior_min_n: int = 3           # ball-method anchors needed (per type, else pooled) to learn the band
+    offset_prior_quantiles: tuple = (0.05, 0.95)
+    offset_prior_margin_s: float = 1.0    # the band is widened by this much on both sides
 
     @classmethod
     def from_config(cls, path=None) -> "AnchorParams":
@@ -103,6 +108,8 @@ class SetPieceAnchor:
     dead_onset: int            # first frame of the forced dead interval, -1 if none
     onset_method: str          # 'dead-score' | 'fallback' | 'tag-window' | 'none'
     rest_s: float = 0.0
+    team_conf: float = 1.0     # Issue #49: reliability of ``team`` in [0, 1] (1 = as tagged)
+    team_source: str = "tag"   # Issue #49: 'tag' | 'rule' | 'tracking' | 'vote'
 
     @property
     def resolved(self) -> bool:
@@ -176,6 +183,34 @@ def _ball_restart(c_lo: int, c_hi: int, g: dict, p: AnchorParams, fps: float):
     peak = float(np.nanmax(g["bspeed"][c:c + p.launch_sustain_frames + 10]))
     conf = 0.3 + 0.7 * min(rest_s, 1.0) * min(peak / (2.0 * p.launch_speed_mps), 1.0)
     return t_star, float(np.clip(conf, 0.0, 1.0)), rest_s
+
+
+def learn_offset_bands(set_pieces: Sequence, ball_found: Sequence, p: AnchorParams,
+                       fps: float) -> dict[str, tuple[int, int]]:
+    """Band of ``t* - tag_start`` (frames) per set-piece type, learned from the ball-method anchors of the match.
+
+    The ball method is a pure tracking measurement (no label), so the offsets of the anchors it resolves describe
+    where the tagging engine puts the restart inside its window.  A type with fewer than ``offset_prior_min_n``
+    such anchors uses the pooled band (key ``'*'``); with too few overall there is no band."""
+    offs: dict[str, list[int]] = {}
+    for sp, f in zip(set_pieces, ball_found):
+        if f is not None:
+            offs.setdefault(str(sp.type), []).append(int(f[0]) - int(sp.start_frame))
+    lo_q, hi_q = p.offset_prior_quantiles
+    m = int(round(p.offset_prior_margin_s * fps))
+
+    def band(v: list[int]) -> tuple[int, int]:
+        arr = np.asarray(v, dtype=np.float64)
+        return int(np.floor(np.quantile(arr, lo_q))) - m, int(np.ceil(np.quantile(arr, hi_q))) + m
+
+    out: dict[str, tuple[int, int]] = {}
+    allv = [x for v in offs.values() for x in v]
+    if len(allv) >= p.offset_prior_min_n:
+        out["*"] = band(allv)
+    for typ, v in offs.items():
+        if len(v) >= p.offset_prior_min_n:
+            out[typ] = band(v)
+    return out
 
 
 def _collective_restart(lo: int, hi: int, jump: np.ndarray, p: AnchorParams,
@@ -280,15 +315,24 @@ def anchor_set_pieces(
     pre, post = int(round(p.pre_margin_s * fps)), int(round(p.post_margin_s * fps))
     anchors: list[SetPieceAnchor] = []
     intervals: list[ForcedDead] = []
+    set_pieces = list(set_pieces)
+    ball_found: list = []
     for sp in set_pieces:
+        lo0, hi0 = max(0, int(sp.start_frame) - pre), min(n - 1, int(sp.end_frame) - 1 + post)
+        ball_found.append(_ball_restart(lo0, hi0, ball_g, p, fps) if hi0 >= lo0 else None)
+    bands = (learn_offset_bands(set_pieces, ball_found, p, fps) if p.offset_prior else {})
+    for sp, found in zip(set_pieces, ball_found):
         a, b = int(sp.start_frame), int(sp.end_frame)
         lo, hi = max(0, a - pre), min(n - 1, b - 1 + post)
-        found = _ball_restart(lo, hi, ball_g, p, fps) if hi >= lo else None
         method, rest_s = "ball", 0.0
         if found is not None:
             t_star, conf, rest_s = found
         else:
-            col = _collective_restart(lo, hi, jump, p, after_dead) if hi >= lo else None
+            clo, chi = lo, hi
+            band = bands.get(str(sp.type), bands.get("*"))
+            if band is not None:       # Issue #49: t* falls in the learned band of the tag window
+                clo, chi = max(lo, a + band[0]), min(hi, a + band[1])
+            col = _collective_restart(clo, chi, jump, p, after_dead) if chi >= clo else None
             if col is not None:
                 (t_star, conf), method = col, "collective"
             else:

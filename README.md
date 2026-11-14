@@ -225,6 +225,11 @@ puts the D share of the BAR-ATH ball gaps at >= ~80 % (point estimate 94 %, aggr
 with the calibrated degrader at affinity 33 gains +0.0174 on B' in that world (every seed >= +0.013) and passes the PFF guard
 (A +0.005): **adopted as the default** (`models/specialists.json` = `--model-variant gap`); the previous default stays as
 `--model-variant mixed`.  Details and the per-specialist PFF ablation: `docs/TECHNICAL_REPORT.md`, Item 7.
+Issue #42 (player-dropout invariance): `eval_external.py --strata` / `diagnose_possessions.py` break the results down by tracked
+players (< 16, < 20, >= 20); on the calibrated degrader the model does not over-predict `D` under dropout.  Sample-size-robust
+shape features (`specialist_features.normalise_shape`, `shape_min_field`) gain +0.002/+0.003 on B' and the native speed channel
+(`pipeline.use_native_speed`) cannot be validated externally, so all stay OFF; the loader now maps the ATD channel `s` to
+speed and checks its unit against the positions (the competition `s` is in m/s although the XML says km/h).
 
 ### Possession count and the KPI 7 evidence
 
@@ -374,6 +379,23 @@ evidence from the mask.  `io/smart_tagging_sim.py` derives a Smart Tagging from 
 (BAR-ATH structure, jitter / missed / spurious tags, dead-time bleed; levels low / medium / high) because the external
 matches have none -- optimistic by construction.  Measured on B' and A at three noise levels the best gain is +0.002
 spellF1, far from the +0.01 rule, so everything stays **off** (`docs/TECHNICAL_REPORT.md`, Issue #43).
+
+## Restart-team rules and Long Ball flags (Issue #49, off by default)
+
+```bash
+python scripts/eval_phase_alive.py --protocol b --sim-restart --noise medium high     --variants off rules:restart_rules.enabled=true     wide:transition_matrix.restart_team_before_s=4.0,transition_matrix.restart_team_after_s=2.0     offset:setpiece_anchor.offset_prior=true --training-pickle t.pkl --sources idsse pff --source-weight pff=0.5
+```
+
+`features/restart_rules.py`: the team of every restart is voted among the tag, the rules of the game (`Kick Off (After
+Goal)` = team that conceded the preceding `GOALS` tag; second-half `Kick Off (Start)` = opposite of the first-half
+one) and the tracking (first clear controller after `t*`); dissent lowers `team_conf`, which scales
+`transition_matrix.restart_other_team`; `restart_team_before_s / after_s` widen the window of that penalty beyond
+`t* +- 3` frames; `setpiece_anchor.offset_prior` restricts the collective-cue search to the `t* - tag_start` band learned
+from the ball-method anchors of the same match; `restart_rules.calibrate_weight` and `auto_long_ball_weight` take the
+weights from Specialist A's confident states (never the ground truth); `heuristic_emissions.w_long_ball` lowers the `D`
+logit on hidden-ball frames of `Long Ball` / `Ball in the Box` phases.  `--sim-restart` makes the simulated tags
+name the kick-off teams and flip 5 / 10 / 20 % of the set-piece teams.  Decision and numbers:
+`docs/TECHNICAL_REPORT.md`, Issue #49.
 
 ## Broadcast sync on the real bundle (Issue #39)
 

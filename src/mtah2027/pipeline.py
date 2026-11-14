@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """End-to-end wave-1 pipeline (Issue #28): tracking files -> ``labels[N]`` honouring the submission contract.
 
 Stages (each optional ones are wrapped: a missing input or a failing module is logged in the diagnostics
@@ -52,6 +53,12 @@ from mtah2027.features.ball_kinematics import BallKinParams, compute_ball_kinema
 from mtah2027.features.ball_memory import BallMemoryParams, compute_ball_memory
 from mtah2027.features.collective_physics import CollectivePhysicsParams, compute_collective_physics
 from mtah2027.features.dead_ball_signals import DeadBallParams, compute_dead_ball_signals
+from mtah2027.features.restart_rules import (
+    RestartRuleParams,
+    apply_team_rules,
+    calibrate_team_weight,
+    long_ball_mask,
+)
 from mtah2027.features.setpiece_anchor import AnchorParams, anchor_set_pieces
 from mtah2027.features.throwin_resolver import (
     ThrowInParams,
@@ -86,6 +93,8 @@ class PipelineParams:
     use_spell_optimizer: bool = True
     use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
     use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
+    use_native_speed: bool = False    # Issue #42: ATD speed channel (s) as edge fallback
+    native_speed_edge_frames: int = 3
     # Issue #43: the live-phase mask additionally drops frames with physical dead-ball evidence
     # (ball out of bounds or dead_score >= alive_dead_threshold) and ``alive_dead_after_s`` s after them,
     # because the phases lag when the ball leaves the pitch and quick restarts carry no set-piece tag
@@ -204,6 +213,8 @@ class FrontEnd:
     is_aerial: np.ndarray | None = None   # Issue #12 mask (None when the filter is off or failed)
     phase_alive: np.ndarray | None = None     # Issue #43: live phase, outside pre-t* / post-goal windows
     transitions: list | None = None           # Issue #43: (frame, possession side) of Transition phases
+    long_ball: np.ndarray | None = None       # Issue #49: Long Ball / Ball in the Box phase mask
+    rules_report: dict | None = None          # Issue #49: aggregate report of the restart-team rules
 
 
 def live_phase_mask(smart_tagging: Any, anchors: Any, n: int, goal_tail_s: float = 30.0,
@@ -283,7 +294,8 @@ def compute_front_end(
         ball_channel_codes: dict[str, dict[str, int]] | None = None,
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, stages: "_Stages | None" = None,
-        collective: bool = False, homography: np.ndarray | None = None) -> FrontEnd:
+        collective: bool = False, homography: np.ndarray | None = None,
+        players_speed_native: np.ndarray | None = None) -> FrontEnd:
     """Stages 2-6 (cleaning, kinematics + orientation, dead-ball signals, ball kinematics, set-piece anchors)
     plus the owner / phase / touch priors; with ``collective`` also the collective physics (#17) and the
     ball memory (#18) that feed the learned specialists."""
@@ -309,7 +321,9 @@ def compute_front_end(
     # 3. kinematics and orientation -------------------------------------------------------------
     halves = (play_blocks[0], play_blocks[1] if len(play_blocks) > 1 else play_blocks[0])
     kin = st.run("kinematics", lambda: compute_kinematics_and_orientation(
-        pxy, np.asarray(ball_xy, dtype=np.float32), team, fps=fps, pitch=pitch, halves=halves))
+        pxy, np.asarray(ball_xy, dtype=np.float32), team, fps=fps, pitch=pitch, halves=halves,
+        players_speed_native=(players_speed_native if pp.use_native_speed else None),
+        native_edge_frames=pp.native_speed_edge_frames))
     if kin is not None:
         pxy, bxy = kin.players_xy, kin.ball_xy
         pvel, bvel, bacc = kin.players_vel, kin.ball_vel, kin.ball_acc
@@ -366,6 +380,22 @@ def compute_front_end(
     else:
         st.skip("throwin_resolver", "no anchors" if anchors is None else "disabled by configuration")
 
+    # 6c. restart-team rules (Issue #49): goal / half-time rules and the tracking vote on the tagged teams
+    rules_report, long_ball = None, None
+    rp = RestartRuleParams.from_config(cfg)
+    if anchors is not None and rp.enabled:
+        out = st.run("restart_rules", lambda: apply_team_rules(
+            anchors, smart_tagging.goals, bxy, pxy, team, fps=fps, params=rp))
+        if out is not None:
+            anchors, rules_report = out
+    elif rp.enabled:
+        st.skip("restart_rules", "no anchors")
+    if (smart_tagging is not None and rp.enabled
+            and (rp.auto_long_ball_weight or EmissionParams.from_config(cfg).w_long_ball != 0.0)):
+        long_ball = long_ball_mask(smart_tagging, n, rp.long_ball_codes)
+        if anchors is not None:
+            long_ball &= ~np.asarray(anchors.forced_dead_mask, dtype=bool)
+
     # priors for the emissions ----------------------------------------------------------------------
     owner, owner_key = None, None
     if pp.use_owner_channel and ball_channels:
@@ -402,7 +432,8 @@ def compute_front_end(
     return FrontEnd(pxy=pxy, bxy=bxy, team=team, pvel=pvel, bvel=bvel, bacc=bacc, pspeed=pspeed,
                     bspeed=bspeed, visible=visible, sig=sig, bk=bk, anchors=anchors, dead_score=dead_score,
                     owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem,
-                    throwins=throwins, is_aerial=is_aerial, phase_alive=phase_alive, transitions=transitions)
+                    throwins=throwins, is_aerial=is_aerial, phase_alive=phase_alive, transitions=transitions, long_ball=long_ball,
+                    rules_report=rules_report)
 
 
 def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_Stages | None" = None):
@@ -415,7 +446,7 @@ def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_St
         bk.evidence_valid if bk is not None else np.zeros(n, bool), fe.visible,
         status_dead=sig.status_dead if (sig is not None and sig.has_status) else None,
         phase_prior_home=fe.phase, owner_team=fe.owner, touch_signed=fe.touches,
-        phase_alive=fe.phase_alive, fps=fps,
+        phase_alive=fe.phase_alive, long_ball=fe.long_ball, fps=fps,
         params=EmissionParams.from_config(config_path)), required=True)
 
 
@@ -428,7 +459,8 @@ def run_core(
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
-        homography: np.ndarray | None = None, durations: Any = None) -> CoreResult:
+        homography: np.ndarray | None = None, durations: Any = None,
+        players_speed_native: np.ndarray | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -453,7 +485,7 @@ def run_core(
             ball_channels=ball_channels, ball_channel_codes=ball_channel_codes, team_ids=team_ids,
             team_names=team_names, smart_tagging=smart_tagging, config_path=cfg,
             stages=_Stages(lambda m: None) if quiet else st, collective=specialists is not None,
-            homography=homography)
+            homography=homography, players_speed_native=players_speed_native)
 
     fe = front_end(ball_xy)
     sig, bk, anchors, visible, dead_score = fe.sig, fe.bk, fe.anchors, fe.visible, fe.dead_score
@@ -487,11 +519,18 @@ def run_core(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
 
     # 8. transitions -------------------------------------------------------------------------------
-    restart_frames = restart_teams = None
+    restart_frames = restart_teams = restart_weights = None
     if anchors is not None:
         resolved = [a for a in anchors.anchors if a.resolved]
         restart_frames = np.array([a.t_star for a in resolved], dtype=np.int64)
         restart_teams = np.array([a.team for a in resolved], dtype=np.int64)
+        restart_weights = np.array([a.team_conf for a in resolved], dtype=np.float64)
+        rp = RestartRuleParams.from_config(cfg)
+        if rp.enabled and rp.calibrate_weight and learned is not None and learned.anchor_label is not None:
+            w_cal, n_cal = calibrate_team_weight(anchors, learned.anchor_label, fps=fps, params=rp)
+            restart_weights = restart_weights * w_cal
+            if fe.rules_report is not None:
+                fe.rules_report.update({"calibrated_weight": round(w_cal, 4), "calibration_n": n_cal})
 
     def _transitions(tp: TransitionParams | None = None):
         return build_log_transitions(
@@ -499,7 +538,8 @@ def run_core(
             d_home=bk.d_home[:, 0] if bk is not None else None,
             d_away=bk.d_away[:, 0] if bk is not None else None,
             ball_visible=visible, dead_score=dead_score, ball_out=sig.ball_out if sig is not None else None,
-            restart_frames=restart_frames, restart_teams=restart_teams, fps=fps,
+            restart_frames=restart_frames, restart_teams=restart_teams, restart_weights=restart_weights,
+            fps=fps,
             params=tp or TransitionParams.from_config(cfg),
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
@@ -578,7 +618,7 @@ def run_core(
         "n_anchors_resolved": anchors.n_resolved if anchors is not None else 0,
         "throw_ins": {"resolved": sum(r.resolved for r in fe.throwins), "total": len(fe.throwins)}
         if fe.throwins is not None else None,
-        "emission_source": emission_source,
+        "emission_source": emission_source, "restart_rules": fe.rules_report,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
         "optimizer": opt_stats, "mbr": mbr_info,
@@ -749,7 +789,9 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
-            homography=homography, keep_features=keep_features)
+            homography=homography, keep_features=keep_features,
+            players_speed_native=(_fit_length(td.players_speed, n) if np.isfinite(td.players_speed).any()
+                                  else None))
         codes, core_diag = core.codes, core.diagnostics
         features = core.features
         route = core_diag.get("emission_source", "heuristic")    # "specialists" or "heuristic" (Issue #52)

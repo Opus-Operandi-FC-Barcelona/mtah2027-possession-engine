@@ -554,6 +554,71 @@ every seed above -0.003, A guard passed with +0.005).  `models/specialists.json`
 `--model-variant mixed` (`models/specialists_mixed.json`, legacy degrader).  Cost accepted knowingly: -0.008 spellF1
 in the blind world (B'(1) 0.6084 -> 0.6004).  The gain is evidence about the *estimated* world, not about BAR-ATH
 labels, which we do not have.
+### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
+
+*Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players
+(6.3 % fewer than 16, episodes of median 2.4 s) and the model predicts `D` on 94 % of them, while external matches had
+at most 1.2 % such frames, so the behaviour was unvalidated.  The calibrated degrader (#38) reproduces the dropout
+(15.8 % of the graded frames below 20 players, 1.6 % below 16), so the strata can be measured.
+
+*Tools.*  `validation/dropout_strata.py` (additive counters: macroF1, true / predicted `D`, `D` with the ball hidden /
+visible, H/A accuracy on alive frames, missed `H<->A` turnovers) wired into `eval_external.py --strata`,
+`diagnose_possessions.py` (always) and `eval_pff_heldout.py` (`--unseen-model` scores a committed model on the last 8
+PFF matches).  `eval_external.py --lomo-cache DIR` caches the leave-one-match-out models.
+
+*Reference B'* (7 IDSSE LOMO, calibrated degrader, seeds 0-2, current default mixed model, pooled over 21 runs):
+
+| stratum | frames | macroF1 | true D % | predicted D % | pred. D %, ball hidden / visible | H/A acc. alive | turnovers missed |
+|---|---|---|---|---|---|---|---|
+| < 16 players | 1.6 % | 0.8688 | 41.7 | 44.4 | 43.2 / 45.1 | 81.2 % | 63.6 % (of 129) |
+| < 20 players | 15.8 % | 0.8858 | 43.6 | 45.7 | 45.1 / 46.1 | 83.6 % | 61.0 % (of 1145) |
+| >= 20 players | 84.2 % | 0.9077 | 44.7 | 45.1 | 42.7 / 46.8 | 87.6 % | 56.1 % (of 5908) |
+
+**Finding: on external matches degraded like BAR-ATH the model does *not* over-predict `D` under dropout** (+2.1 points
+in the < 20 stratum, +2.7 in < 16, vs +0.4 with all players; macroF1 is 0.02-0.04 lower because H/A accuracy falls
+81-84 % vs 88 %, not because of `D`).  The 94 % `D` seen on BAR-ATH is therefore not reproduced by dropout alone: either the
+real dropouts are different (slow players, stoppages: they walk at 0.8-1.2 m/s) or it is real dead ball.  Feature
+importance (gain, committed default): the count columns carry nothing (`n_field_*`, `diff:n_field`, `n_active`:
+A 0.1 %, B 0.03 %), so neutralising them (variant (a)) is a no-op and was stopped without a full run; the shape columns
+(width, hull, spectral area, their `diff:` and `ctx:` versions) carry 8 % (A) and 23 % (B).  These do depend on the
+sample size: the mean fraction of the complete outfield shape kept by n random players of 10 (clean IDSSE frames) is
+hull 0.28 / 0.40 / 0.54 / 0.67 / 0.79 / 0.90 for n = 4 ... 9, width 0.69 ... 0.97, so a team with 6 players looks 46 %
+less spread.
+
+*Variants* (`specialist_features`: `normalise_shape` divides area / extent by that table and re-derives the area
+derivatives; `shape_min_field` blanks a team's shape below that many players; training rows rebuilt for each variant,
+same IDSSE + PFF 0.5 mix, legacy training degrader unless stated):
+
+| variant | B' seed 0 / 1 / 2 | B' mean spellF1 / macroF1 | vs default | < 20 stratum: predicted D % / macroF1 / turnovers missed | < 16 stratum: predicted D % / macroF1 |
+|---|---|---|---|---|---|
+| default (reference) | 0.6008 / 0.6053 / 0.6069 | 0.6044 / 0.9016 | | 45.7 / 0.8858 / 61.0 % | 44.4 / 0.8688 |
+| (b) `normalise_shape` | 0.6038 / 0.6067 / 0.6085 | 0.6063 / 0.9019 | +0.0019 | 45.5 / 0.8861 / 60.5 % | 44.0 / 0.8700 |
+| (b) `normalise_shape` + `shape_min_field: 6` | 0.6080 / 0.6057 / 0.6074 | 0.6070 / 0.9021 | +0.0026 | 45.6 / 0.8852 / 61.1 % | 45.1 / 0.8540 |
+| (d) trained with the calibrated degrader (= `calib`) | 0.6084 / 0.6071 / 0.6099 | 0.6085 / 0.9035 | +0.0041 | 44.6 / 0.8911 / 61.2 % | 42.7 / 0.8823 |
+| (a) `neutralise_counts` | not run (columns carry < 0.1 % gain) | | | | |
+
+*Native speed channel (c).*  The competition XML declares `s` with unit `speed_kph`; the loader did not recognise `s`.
+`io/atd_loader.py` now maps channel `s` (or `spd`, ... or any non-coordinate channel with a km/h unit) to `speed`, and
+verifies the unit against the positions (`_check_speed_unit`, players and ball separately, only applied when the median
+ratio confirms a 3.6 factor).  `scripts/check_speed_unit.py` on BAR-ATH (aggregate): players, median native / derived
+ratio 0.993 after the correction (0.276 with the declared km/h division), i.e. **the player `s` values are already m/s
+(DATA.md is right, the XML unit label is wrong)** and the loader applies factor 3.6 to undo the division; the ball
+channel does not agree with its positions under either unit (median(s)/median(derived) 0.056, 8,717 usable pairs) so no ball
+correction is applied.  `fill_speed_from_native` (in `compute_kinematics_and_orientation`) uses the native speed where the
+Savitzky-Golay speed is missing or within 3 frames of a track edge, behind `pipeline.use_native_speed` (OFF): the external
+matches have no speed channel, so it cannot be evaluated on B'.  The ATD cache version was bumped (5).
+
+*Decision (rule: B' >= +0.01 mean with no seed below -0.003, or fix of the < 20 `D` over-prediction winning on 3 seeds with
+A within the guard of -0.03).*  Best gain +0.0041 (calibrated training, all three seeds better); the robust-shape
+variants give +0.0019 / +0.0026; there is no `D` over-prediction in the < 20 stratum to fix.  **Nothing is adopted**:
+`models/specialists.json` and `reports/external_evidence.json` are unchanged, the new options are OFF by config
+(`specialist_features.normalise_shape / shape_min_field / neutralise_counts`, `pipeline.use_native_speed`).  A
+(PFF held-out, 4 folds, default model): spellF1 0.5231 / macroF1 0.8626, 8 never-seen PFF matches 0.5257 / 0.8648; PFF
+has no frames below 20 players (all in the >= 20 stratum: predicted D 41.9 % vs true 41.1 %), and A was not rerun for the
+non-adopted variants.  The combination of (b) with calibrated training (one more 3.5 h LOMO run) was not run: the
+two gains are +0.004 and +0.002-0.003 and the criterion is +0.010.  Reading for the real match: the 94 % `D` in the
+< 20 stratum cannot be attributed to the sample-size sensitivity of the features; only an external dataset with long real
+dropouts would validate or refute it.
 
 ### Real-data ingestion check (Issue #37, aggregates only)
 
@@ -678,7 +743,7 @@ calibrated degrader, run in `mtah2027-external-benchmarks` issue #5) and #46 (re
 (< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF matches; adopt if B' gains >= +0.01 spellF1 (no seed
 worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D` in the < 20-player stratum is corrected
 on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
-Results of #43: see the item "Smart Tagging alive-ball prior and transition cue" below (not adopted); #42, #44, #46: pending.
+Results of #43 and #49: see the items "Smart Tagging alive-ball prior and transition cue" and "Restart-team rules ..." below (neither adopted); #42, #44, #46: pending.
 
 ### Smart Tagging alive-ball prior and transition cue (Issue #43; B' / A on simulated tags, not adopted)
 
@@ -802,6 +867,69 @@ spellF1 0.5997 -> 0.6001 (+0.0004), macroF1 0.8999 -> 0.9000, possessions 2,217 
 were trained with the old front end and still load; `#48` regenerates them.  Invariance test:
 `tests/test_51_play_block_isolation.py` fills every frame outside the play blocks with random players/balls/channels and
 asserts identical feature matrix, emissions and final labels (heuristic and specialist routes) in `HALF1` and `HALF2_PLAY`.
+### Restart-team rules, wider restart window, t* offset prior and Long Ball flags (Issue #49; B' / A on simulated tags, not adopted)
+
+**What was built** (everything behind config flags, default off, `restart_rules` section and three keys elsewhere).
+(1) `features/restart_rules.apply_team_rules`: the team of every resolved restart is voted among the tag, the rules of the
+game (`Kick Off (After Goal)` = team that conceded the preceding `GOALS` tag, second-half `Kick Off (Start)` = opposite of
+the first-half one, taken from the order of the two tags, never from a frame number) and the tracking (first clear
+controller within 1.4 s after `t*`); any dissent lowers the reliability `team_conf` (0.5) that scales
+`transition_matrix.restart_other_team`; an N/A team is filled by the vote.  (2) `transition_matrix.restart_team_before_s /
+restart_team_after_s`: the other-team penalty also holds in `[t* - before, t* + after]` and not only in `t* +- 3` frames.
+(3) `setpiece_anchor.offset_prior`: the collective-cue search is restricted to the band (5-95 % quantiles +- 1 s) of
+`t* - tag_start` learned, per type or pooled, from the ball-method anchors of the same match (a tracking measurement, no
+label); nothing is invented when the band excludes the jump.  (4) `heuristic_emissions.w_long_ball` /
+`restart_rules.auto_long_ball_weight`: `Long Ball` / `Ball in the Box` phases lower the `D` logit on hidden-ball frames,
+the weight being `clip(logit(alive | in phase) - logit(alive | outside), 0, 1.5)` measured on the visible frames where
+Specialist A is ultra-confident (0 with fewer than 250 such frames); `restart_rules.calibrate_weight` likewise scales the
+team penalty by the agreement of the tagged teams with Specialist A's first confident state after each `t*`.  No ground
+truth enters any weight.  The simulator (`io/smart_tagging_sim`) gained `kickoff_teams` (the `Kick Off (Start)` tags name the
+first-possession team) and `wrong_team_rate` (set-piece teams flipped; own random stream, so the earlier draws are
+unchanged); `scripts/eval_phase_alive.py --sim-restart` switches them on (wrong teams 10 % medium, 20 % high).  The
+simulator has no `GOALS` / `Kick Off (After Goal)` tags (the external labels do not mark goals), so the post-goal rule is
+covered by unit tests only.
+
+**Protocol.**  As #43: B' = 7 IDSSE leave-one-match-out, calibrated degrader, seeds 0-2 (21 runs per cell), specialists
+of the production recipe (IDSSE + PFF 0.5, legacy training degrader); A = PFF held-out, 4 folds, 20 matches, seed 0,
+medium tags.  `off` = the same simulated tags with the feature disabled; d = difference to `off`; worst seed = lowest of
+the three seed-mean differences.  Variants: `rules` (`restart_rules.enabled`), `wide` (4 s before, 2 s after), `rules_wide`,
+`offset`, `lb` (rules on + `auto_long_ball_weight`).
+
+| set | tags | off spellF1 | variant | spellF1 | d | worst seed |
+|---|---|---|---|---|---|---|
+| B' | medium | 0.5993 | rules | 0.5993 | +0.0000 | +0.0000 |
+| B' | medium | | wide | 0.5995 | +0.0001 | +0.0000 |
+| B' | medium | | rules_wide | 0.5995 | +0.0001 | +0.0000 |
+| B' | medium | | offset | 0.5996 | +0.0002 | +0.0001 |
+| B' | medium | | lb | 0.5996 | +0.0003 | -0.0004 |
+| B' | high | 0.5960 | rules | 0.5960 | +0.0000 | +0.0000 |
+| B' | high | | wide | 0.5959 | -0.0001 | -0.0003 |
+| B' | high | | rules_wide | 0.5960 | -0.0000 | -0.0000 |
+| B' | high | | offset | 0.5961 | +0.0001 | -0.0000 |
+| B' | high | | lb | 0.5952 | -0.0008 | -0.0021 |
+| A | medium | 0.5154 | rules | 0.5154 | +0.0000 | |
+| A | medium | | wide | 0.5154 | +0.0000 | |
+| A | medium | | rules_wide | 0.5154 | -0.0000 | |
+| A | medium | | offset | 0.5153 | -0.0001 | |
+| A | medium | | lb | 0.5147 | -0.0007 | |
+
+**Why nothing moves.**  On a single match with the sampled tags (diagnostic, aggregates) 43 of 50 anchors resolve; the
+tracking vote agrees with the tagged team in 26 of 34 comparable restarts (76 %, against 90 % correct simulated tags), so
+the vote mostly ends in a tie and only lowers the confidence.  The decoder decides the exit of `D` with the
+emissions: with the penalty `restart_other_team` raised from -3 to -12 only 7 of the graded frames change; the restart
+team, however well known, is therefore worth far less than 0.001 spellF1 here, and the exact `t*` of the ball-method
+anchors (85 % within 3 frames on external windows, #40) leaves the widening nothing to repair.  The `offset` band
+only acts on collective-cue anchors (a third of the throw-ins / corners of #40), and the `Long Ball` flag is the
+#43 alive prior restricted to two codes (same sign, same size).
+
+**Decision.**  The adoption rule (B' mean >= +0.01 with no seed below -0.003 on both noise levels; A not below -0.03) is
+**not met**: the best cell is +0.0003, A changes by at most -0.0007 (guard satisfied), so everything stays **off**.  No
+correctness fix is applied either: none of the variants is a fix of a measured defect (unlike #50), they are optional
+priors.  Code, tests and the simulator options remain available; for the real match they could only be judged on the
+label-free aggregates of `apply_team_rules` (`diagnostics["restart_rules"]`: restarts, changed teams, unreliable ones,
+tracking agreement) and of the calibration (`calibrated_weight`, `long_ball.weight`), which are printed with the other
+diagnostics and contain no per-frame data.
+
 ### Reproducibility of the learned route (Issue #52)
 
 RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.

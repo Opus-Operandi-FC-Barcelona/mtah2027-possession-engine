@@ -70,7 +70,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 
 ## Milestone 9: Análisis inteligente sobre datos facilitados e invarianza a caída de jugadores
 
-- [~] EN CURSO · #42 · wave-6 · Invarianza a caída de jugadores (estrato de menos de 20 jugadores) · `feat/issue-42-player-dropout-invariance`
+- [x] COMPLETADA · #42 · wave-6 · Invarianza a caída de jugadores: diagnóstico por estratos, canal `s` nativo (m/s verificado), forma robusta al tamaño muestral (medido, no adoptado: desactivado por config) · `feat/issue-42-player-dropout-invariance`
 - [x] COMPLETADA · #43 · wave-6 · Prior de balón vivo y transiciones desde Smart Tagging con balón oculto (simulador de tags; medido, no adoptado: desactivado por config) · `feat/issue-43-smart-tagging-alive-prior`
 - [ ] PENDIENTE · #44 · wave-6 · Re-optimización acotada del decodificador bajo el degradador calibrado (barrido en external-benchmarks #5) · rama por definir
 - [~] EN CURSO · #45 · wave-6 · Documentación y sincronización de todos los repos de la organización · `feat/issue-45-docs-and-org-repos-sync`
@@ -79,6 +79,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 | #48 | Colocación realista de huecos (afinidad balón oculto / balón muerto) y reselección de modelo | [x] COMPLETADA | `scripts/estimate_gap_affinity.py`, `models/specialists_gap.json` |
 - [x] COMPLETADA · #47 · wave-6 · Auditoría completa contra el repositorio oficial del reto (`docs/OFFICIAL_AUDIT.md`) · `feat/issue-47-official-audit`
 - [x] COMPLETADA · #48 · wave-6 · Colocación realista de huecos (afinidad balón oculto / balón muerto): degradador, estimador sin etiquetas validado, curva y reselección (adoptado: entrenamiento con afinidad 33) · `feat/issue-48-gap-placement`
+- [x] COMPLETADA · #49 · wave-6 · Smart Tagging: reglas de equipo en reinicios (gol/2ª parte/voto con tracking), ventana de equipo más ancha, prior de posición de t* y banderas Long Ball (medido en B'/A con tags simulados, no adoptado: desactivado por config) · `feat/issue-49-restart-team-rules`
 - [x] COMPLETADA · #50 · wave-6 · Anclajes de set pieces: acotar el fallback tag-window y fijar los Kick Off de inicio de periodo (Milestone 9) · `feat/issue-50-setpiece-anchor-fallback`
 - [x] COMPLETADA · #51 · wave-6 · Aislar el front-end por play_blocks (sin fuga a través del descanso ni del calentamiento) · `feat/issue-51-play-blocks-isolation`
 - [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`
