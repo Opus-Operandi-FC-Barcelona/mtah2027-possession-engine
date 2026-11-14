@@ -254,6 +254,20 @@ python scripts/generate_submission.py --data-dir data --out outputs/OpusOperandi
 python scripts/simulate_broadcast_value.py --seed 0 --specialists lomo
 ```
 
+## Real-data sanity report (aggregates only)
+
+```bash
+python scripts/real_data_sanity.py --data-dir data            # JSON of counts / shares, never per-frame rows
+python scripts/real_data_sanity.py --synthetic                # same report on the synthetic match
+python scripts/external_d_diagnostic.py --bench-dir ../mtah2027-external-benchmarks/cache --groups pff idsse --degrade
+```
+
+`real_data_sanity.py` (Issue #37) reports the declared ATD channels, frames parsed vs expected, ball-missing share
+per graded half, on-pitch players per team, homography validity (tactical / broadcast), Smart Tagging counts by
+code / team / set-piece type, which pipeline stages ran or were skipped, and the share of predicted `D` cut by ball
+visibility, tracked players (< 20) and Smart Tagging set-piece windows.  `external_d_diagnostic.py` produces the
+same cuts on external matches next to their true `D`, to tell a bug from a property of the data.
+
 ## Repository layout
 
 ```

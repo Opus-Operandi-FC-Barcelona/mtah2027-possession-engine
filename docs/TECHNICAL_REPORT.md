@@ -400,6 +400,29 @@ tracked players per frame are 21.8 (degraded IDSSE) and 22.0 (PFF).)  Rule of th
 ATD has long, few gaps close to the degraded-IDSSE profile, use `idsse`; if it has many short gaps like PFF, use the
 default `mixed`.
 
+### Real-data ingestion check (Issue #37, aggregates only)
+
+`scripts/real_data_sanity.py` on the BAR-ATH bundle (nothing per-frame is printed).  Ingestion is correct: 199,319
+frames parsed (all present), 46 slots, channels `x, y, s` for players and ball (`s` = `speed_kph`; it is not
+recognised as the canonical `speed` channel, which is harmless because speeds are re-derived from positions), the
+tactical homography is valid on 100 % of the graded frames (99.85 % with error < 5), the broadcast one on 55 %.
+The ball is missing on 41.1 % of the graded frames (40.7 % / 41.6 % per half); on average 20.5 players per frame are
+on the pitch, 14.2 % of the frames have fewer than 20 and 6.3 % fewer than 16 (episodes: median 2.4 s, 84 % of those
+frames in episodes of > 5 s).  Smart Tagging: 638 instances parsed of 638 in the XML, 59 set pieces (26 throw-ins
+with Team = N/A, 12 corners, 10 goal kicks, 5 free kicks, 2 + 4 kick-offs), 4 goals; all 14 codes and the six
+label groups are recognised.  All stages ran (clean, kinematics, dead-ball signals, ball kinematics, set-piece
+anchors, throw-in resolver, collective physics, ball memory, specialists, transitions, Viterbi, optimiser); the
+aerial filter, broadcast sync and vision recovery are off by configuration.
+
+`D` over-prediction diagnostic (specialists / heuristic emissions): the predicted `D` share is 24 % / 29 % with the
+ball visible and 92 % / 83 % with it hidden, 94 % / 85 % when fewer than 20 players are tracked.  Checked for a bug:
+the tracked players in the predicted-`D` frames are slow (median mean speed 0.8-1.2 m/s vs 2.0-2.2 m/s in the
+frames labelled alive), so the `D` comes from the speed physics and not from NaN handling.  On external matches
+with real occlusions the same pattern exists (PFF: 61 % of hidden-ball frames are truly `D`, 8 % with the ball
+visible) and the engine reproduces the true `D` share per cell within a few points (degraded IDSSE and PFF, with
+the specialists: 46.96 vs 46.62 % overall).  The heavy player dropouts of BAR-ATH (up to 14 % of the frames) have no
+external counterpart (<= 1.2 %), so that cell cannot be validated; no bug was found and nothing was tuned.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
