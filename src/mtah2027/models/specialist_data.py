@@ -212,7 +212,10 @@ def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[
         if "observed" in z.files:             # SkillCorner: nothing is known where the pitch is off screen
             gt = np.where(z["observed"], gt, X).astype(gt.dtype)
         dm_players, dm_ball = players, ball
-    graded = np.flatnonzero(gt != X)
+    in_block = np.zeros(len(gt), bool)      # Issue #51: the front end is blank outside the play blocks
+    for a0, b0 in periods:
+        in_block[a0:b0 + 1] = True
+    graded = np.flatnonzero((gt != X) & in_block)
     keep = graded[(graded % stride) == (seed % stride)]
     out = []
     for swap in swaps:

@@ -80,7 +80,7 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
                    degrade: bool = False, specialists=None, return_codes: bool = False,
-                   dead_affinity: float | None = None) -> dict:
+                   dead_affinity: float | None = None, sim_tags: str | None = None) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
@@ -99,8 +99,13 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
     t0 = time.perf_counter()
     durations = getattr(specialists, "durations", None)    # Issue #34 (used only when duration.enabled)
+    smart = None
+    if sim_tags:       # Issue #43: simulated Smart Tagging from the true labels (optimistic by design)
+        from mtah2027.io.smart_tagging_sim import simulate_smart_tagging
+
+        smart = simulate_smart_tagging(gt, periods, fps, noise=sim_tags, seed=seed, n_frames=len(gt))
     core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                    log=lambda m: None, durations=durations)
+                    log=lambda m: None, durations=durations, smart_tagging=smart)
     seconds = time.perf_counter() - t0
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
@@ -109,7 +114,8 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     if specialists is not None:
         t0 = time.perf_counter()
         learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                           log=lambda m: None, specialists=specialists, durations=durations)
+                           log=lambda m: None, specialists=specialists, durations=durations,
+                           smart_tagging=smart)
         row["specialists"] = score(gt, learned.codes)
         row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
         row["specialists"]["source"] = learned.diagnostics["emission_source"]
@@ -161,6 +167,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-pseudo", action="store_true", help="with --specialists: no Issue #21 adaptation")
     ap.add_argument("--fusion", nargs="*", default=[], metavar="KEY=VALUE",
                     help="override specialist_fusion parameters (tuning on external matches only)")
+    ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
+                    help="Issue #43: feed a simulated Smart Tagging (from the true labels)")
     ap.add_argument("--no-baseline", action="store_true")
     ap.add_argument("--json", default=None, help="write the aggregate rows to this JSON file")
     args = ap.parse_args(argv)
@@ -232,7 +240,7 @@ def main(argv=None) -> int:
         for i, f in enumerate(files):
             row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
                                  args.degrade, specialists_for(f.stem) if training is not None else None,
-                                 dead_affinity=args.eval_dead_affinity)
+                                 dead_affinity=args.eval_dead_affinity, sim_tags=args.sim_tags)
             row["seed"] = seed
             all_rows.append(row)
             e = row["engine"]

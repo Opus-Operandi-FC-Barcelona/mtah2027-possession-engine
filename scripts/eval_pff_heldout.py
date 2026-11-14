@@ -43,6 +43,8 @@ def main(argv=None) -> int:
                     help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
     ap.add_argument("--max-matches", type=int, default=20, help="first N PFF matches by name")
     ap.add_argument("--folds", type=int, default=4)
+    ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
+                    help="Issue #43: feed a simulated Smart Tagging (derived from the true labels)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -78,7 +80,7 @@ def main(argv=None) -> int:
         trained = sf.train_specialists(args.bench_dir, config_path=args.config, training=sub)
         spec = dataclasses.replace(trained, fusion=fusion)
         for f in held:
-            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec)
+            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec, sim_tags=args.sim_tags)
             rows.append({"match": f.stem, "fold": fold, **row["specialists"]})
         print(f"fold {fold} done ({len(held)} matches)", flush=True)
     sp = np.mean([r["spell_f1"] for r in rows])

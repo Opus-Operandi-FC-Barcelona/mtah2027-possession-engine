@@ -15,7 +15,7 @@ description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of 
 
 Milestones 1-8 (issues #1-#40) are complete and merged in `develop`/`main`; **Milestone 9** ("intelligent analysis
 over the provided data and invariance to player dropout", issues #42-#46) is **in progress**: #42 (player-dropout
-invariance) and #43 (Smart Tagging alive prior) are being implemented, #44 (bounded decoder re-optimisation under the
+invariance) is being implemented, #43 (Smart Tagging alive prior) is measured and left off (report item), #44 (bounded decoder re-optimisation under the
 calibrated degrader) and #46 (release) come later.  Nothing about their results is claimed here; they are recorded in
 `docs/OpusOperandi.md` ("Milestone 9 results") and `docs/TECHNICAL_REPORT.md` once measured.  The submission document
 for the competition form is [`docs/OpusOperandi.md`](docs/OpusOperandi.md).
@@ -72,7 +72,7 @@ with Milestone 9.
 | 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
 | 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
-| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release (there is no #41) |
+| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release, #50 set-piece anchor fallback + period-start clamp (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
@@ -349,6 +349,24 @@ possessor agrees with the possession side in 65-97 % of the alive frames per cod
 tag).  The collective restart cue (ball hidden around the set piece) is now gated on recent dead-ball evidence
 (`setpiece_anchor.collective_dead_lag_s`, external pseudo-window check, three sources: mean |t* error| 208 -> 126,
 247 -> 181, 259 -> 143 frames).
+
+## Smart Tagging alive-ball prior (Issue #43, off by default)
+
+```bash
+python scripts/smart_tagging_stats.py --data-dir data          # structure of the real tagging (aggregates only)
+python scripts/eval_phase_alive.py --protocol b --noise none medium high \
+    --variants off a1:heuristic_emissions.w_phase_alive=1.0 --training-pickle t.pkl \
+    --sources idsse pff --source-weight pff=0.5 --model-dir models_cache --json out.json
+python scripts/eval_external.py --degrade --sim-tags medium    # any external run with simulated tags
+```
+
+`heuristic_emissions.w_phase_alive` lowers the `D` logit on hidden-ball frames covered by a live Smart Tagging phase
+outside the pre-`t*` / post-goal windows (`pipeline.live_phase_mask`); `transition_matrix.phase_cue` opens `H<->A`
+around `Attacking` / `Defensive Transition` starts; `pipeline.alive_exclude_dead_evidence` drops frames with dead-ball
+evidence from the mask.  `io/smart_tagging_sim.py` derives a Smart Tagging from the true labels of an external match
+(BAR-ATH structure, jitter / missed / spurious tags, dead-time bleed; levels low / medium / high) because the external
+matches have none -- optimistic by construction.  Measured on B' and A at three noise levels the best gain is +0.002
+spellF1, far from the +0.01 rule, so everything stays **off** (`docs/TECHNICAL_REPORT.md`, Issue #43).
 
 ## Broadcast sync on the real bundle (Issue #39)
 
