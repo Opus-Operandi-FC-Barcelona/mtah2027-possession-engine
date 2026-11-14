@@ -381,7 +381,9 @@ of hidden turnovers missed): PFF labels (events) define possession and dead ball
 and from our degrader, so a model that only knows PFF does not transfer.  (4) IDSSE + PFF at weight 0.5 is the only
 variant with A >= +0.01 and B >= -0.01, hence **adopted as the default** (`models/specialists.json`, trained by
 `scripts/train_specialists.py` with the defaults of `specialist_data`; the run-time training of `generate_submission.py`
-uses the same rows).  The decision is a trade between two proxies; the other two models stay selectable:
+uses the same rows).  `reports/external_evidence.json` was regenerated with the adopted default (degraded LOMO 0.6321 / 0.9071, complete ball 0.7448 / 0.9458; heuristic unchanged 0.4348 / 0.6912).  Check of the committed files on the 8 PFF matches never used in any training (last 8 by name,
+real occlusions): IDSSE-only 0.4657 / 0.8452, mixed (default) 0.5257 / 0.8648, PFF-only 0.5593 / 0.8737 spellF1 /
+macroF1 (heuristic route 0.2954).  The decision is a trade between two proxies; the other two models stay selectable:
 `models/specialists_idsse.json` (IDSSE only, the previous default), `models/specialists_mixed.json` (= the default) and
 `models/specialists_pff.json` (PFF only), via `generate_submission.py --model-variant {idsse,mixed,pff}` (implies
 `--specialists load`).  To choose on the competition input without any label, `scripts/compare_input_stats.py
