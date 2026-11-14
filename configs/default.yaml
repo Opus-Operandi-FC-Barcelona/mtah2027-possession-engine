@@ -218,6 +218,7 @@ external_degrader:
   density_radius_m: 5.0            # players within this distance of the ball define the crowding
   density_floor: 0.25              # added to the mean crowding so empty areas keep some probability
   density_gamma: 1.0               # block weight = (floor + mean crowding) ** gamma
+  dead_affinity: 1.0               # Issue #48: block weight x dead_affinity ** (share of D frames in the block); 1 = blind to D
   noise_player_m: 0.12             # i.i.d. Gaussian jitter of every player position
   noise_ball_m: 0.08               # ... and of the visible ball
   noise_corr_s: 0.5                # correlation time of the jitter (AR(1)); 0 = white noise
@@ -313,6 +314,8 @@ specialist_data:
   # Issue #38: degrader of the IDSSE training rows.  external_degrader_legacy (Issue #19 profile) = the adopted
   # models; external_degrader = the degrader calibrated to the competition ATD gap statistics (measured, not adopted).
   degrader_section: external_degrader_legacy
+  dead_affinity: 1.0            # Issue #48: hidden<->dead affinity of that degrader (1 = placement blind to D)
+  pff_weight_b: -1.0            # Issue #48: PFF weight of the hidden-ball rows (Specialist B); < 0 = same as pff_weight
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
 specialist_a:

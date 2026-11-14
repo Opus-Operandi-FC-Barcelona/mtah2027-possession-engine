@@ -34,6 +34,9 @@ from mtah2027.features._utils import mask_runs
 from mtah2027.validation.eval_bridge import to_codes
 
 H, A, D, X = 0, 1, 2, 3
+# Issue #48: with ``dead_affinity != 1`` the hidden target is counted on all graded frames; this factor makes
+# the missing share equal to the default path's (pooled 7 IDSSE matches: 0.412 vs 0.424 x graded).
+AFFINE_TARGET_SCALE = 0.972
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,12 @@ class DegraderParams:
     dur_edges_s: tuple = (5.0, 20.0, 60.0, 120.0)
     dur_probs: tuple = (0.33, 0.48, 0.19)
     density_radius_m: float = 5.0
+    # Issue #48: hidden-ball <-> dead-ball affinity.  The start weight of a block is multiplied by
+    # ``dead_affinity ** (share of D frames inside the block)``; 1.0 = the earlier behaviour (blind to
+    # the play state, same random stream).  Above 1 the ball goes missing preferentially while it is dead
+    # (as in real trackers: PFF odds ratio ~18).  Then the covered amount is counted on all graded frames
+    # (``hide_frac`` x graded frames), so the missing share stays the same.
+    dead_affinity: float = 1.0
     density_floor: float = 0.25
     density_gamma: float = 1.0
     noise_player_m: float = 0.12
@@ -75,6 +84,8 @@ class DegraderParams:
             raise ValueError("need 0 < gap_min_s <= gap_max_s")
         if self.group_drop_players[0] < 1 or self.group_drop_players[1] < self.group_drop_players[0]:
             raise ValueError("group_drop_players must be 1 <= min <= max")
+        if self.dead_affinity <= 0:
+            raise ValueError("dead_affinity must be positive")
         if not 0.0 <= self.hide_frac < 1.0:
             raise ValueError("hide_frac must be in [0, 1)")
         if len(self.dur_edges_s) != len(self.dur_probs) + 1:
@@ -107,6 +118,17 @@ class DegradeReport:
     n_cuts: int = 0
     n_duplicates: int = 0
     n_drops: int = 0
+    # Issue #48: realised coupling between hidden ball and dead ball (graded frames).
+    hidden_dead_share: float = float("nan")      # P(D | ball hidden by the blocks)
+    visible_dead_share: float = float("nan")     # P(D | ball not hidden by the blocks)
+
+    @property
+    def realised_odds_ratio(self) -> float:
+        """odds(D | hidden) / odds(D | visible) of this degradation (NaN when undefined)."""
+        h, v = self.hidden_dead_share, self.visible_dead_share
+        if not (0.0 < h < 1.0 and 0.0 < v < 1.0):
+            return float("nan")
+        return float((h / (1 - h)) / (v / (1 - v)))
 
 
 @dataclass
@@ -149,7 +171,10 @@ def _hide_blocks(codes: np.ndarray, crowd: np.ndarray, fps: float, p: DegraderPa
     alive = (codes == H) | (codes == A)
     hidden = np.zeros(n, dtype=bool)
     blocks: list[tuple[int, int]] = []
-    target = int(round(p.hide_frac * int(alive.sum())))
+    affine = p.dead_affinity != 1.0
+    dead = codes == D
+    count = graded if affine else alive      # frames that count towards the hidden target
+    target = int(round(p.hide_frac * int(count.sum()) * (AFFINE_TARGET_SCALE if affine else 1.0)))
     if target == 0 or not graded.any():
         return hidden, blocks
     run_end = np.zeros(n, dtype=np.int64)            # exclusive end of the graded run holding each frame
@@ -158,7 +183,9 @@ def _hide_blocks(codes: np.ndarray, crowd: np.ndarray, fps: float, p: DegraderPa
         run_end[a:b] = b
         longest = max(longest, int(b - a))
     cs_crowd = np.concatenate([[0.0], np.cumsum(crowd.astype(np.float64))])
-    cs_alive = np.concatenate([[0], np.cumsum(alive.astype(np.int64))])
+    cs_alive = np.concatenate([[0], np.cumsum(count.astype(np.int64))])
+    cs_dead = np.concatenate([[0], np.cumsum(dead.astype(np.int64))])
+    d_a, d_b = (np.asarray(v, dtype=np.int64) for v in mask_runs(dead & graded)) if affine else (None, None)
     covered = 0
     guard = int(round(p.guard_s * fps)) if p.gap_model == "lognormal" else 0
     for _ in range(100000):
@@ -175,15 +202,54 @@ def _hide_blocks(codes: np.ndarray, crowd: np.ndarray, fps: float, p: DegraderPa
             continue
         mean_crowd = (cs_crowd[starts + dur] - cs_crowd[starts]) / dur
         weight = np.where(ok, (p.density_floor + mean_crowd) ** p.density_gamma, 0.0)
+        if affine:
+            dead_frac = (cs_dead[starts + dur] - cs_dead[starts]) / dur
+            weight = weight * p.dead_affinity ** dead_frac
         s = int(rng.choice(len(starts), p=weight / weight.sum()))
         end = s + dur
-        gained = np.cumsum(alive[s:end].astype(np.int64))
+        if affine and len(d_a):
+            s, end = _snap_to_dead_run(s, dur, d_a, d_b, run_end, graded, free, guard, n, rng)
+        gained = np.cumsum(count[s:end].astype(np.int64))
         if covered + int(gained[-1]) > target:       # trim the last block so the target is met exactly
             end = s + int(np.searchsorted(gained, target - covered, side="left")) + 1
         hidden[s:end] = True
         covered += int(cs_alive[end] - cs_alive[s])
         blocks.append((s, end))
     return hidden, blocks
+
+
+def _share(flag: np.ndarray, sel: np.ndarray) -> float:
+    return float(flag[sel].mean()) if sel.any() else float("nan")
+
+
+def _snap_to_dead_run(s: int, dur: int, d_a, d_b, run_end, graded, free, guard: int, n: int,
+                      rng: np.random.Generator) -> tuple[int, int]:
+    """Issue #48: a block that mostly overlaps a dead-ball stretch is aligned with it (ball leaves play,
+    is not seen until the restart): it becomes ``[start - off, start - off + max(dur, run))`` with a
+    random offset ``off`` so that the whole stretch is inside.  Returns the unchanged block if the aligned
+    one is not feasible (outside the graded run, or touching another block)."""
+    e = s + dur
+    k = int(np.searchsorted(d_b, s, side="right"))          # first stretch ending after s
+    best, best_ov = -1, 0
+    while k < len(d_a) and d_a[k] < e:
+        ov = min(e, int(d_b[k])) - max(s, int(d_a[k]))
+        if ov > best_ov:
+            best, best_ov = k, ov
+        k += 1
+    if best < 0:
+        return s, e
+    ra, rb = int(d_a[best]), int(d_b[best])
+    if best_ov < 0.5 * min(dur, rb - ra):
+        return s, e
+    length = max(dur, rb - ra)       # the gap lasts at least until the restart (longer gaps, fewer blocks)
+    s2 = ra - int(rng.integers(0, length - (rb - ra) + 1))
+    e2 = s2 + length
+    if s2 < 0 or e2 > n or not graded[s2] or e2 > run_end[s2]:
+        return s, e
+    lo, hi = max(s2 - guard, 0), min(e2 + guard, n)
+    if free[hi] - free[lo] != 0:
+        return s, e
+    return s2, e2
 
 
 # --------------------------------------------------------------------------------------------
@@ -319,5 +385,7 @@ def degrade_match(players_xy: np.ndarray, team_of_slot: np.ndarray, ball_xy: np.
         n_blocks=len(blocks), block_seconds=[round((b - a) / fps, 2) for a, b in blocks],
         mean_crowding_hidden=float(crowd[hidden].mean()) if hidden.any() else float("nan"),
         mean_crowding_all=float(crowd[graded].mean()) if graded.any() else float("nan"),
-        n_cuts=n_cuts, n_duplicates=n_dups, n_drops=n_drops)
+        n_cuts=n_cuts, n_duplicates=n_dups, n_drops=n_drops,
+        hidden_dead_share=_share(codes == D, hidden & graded),
+        visible_dead_share=_share(codes == D, ~hidden & graded))
     return DegradedMatch(players_xy=pxy, team_of_slot=team, ball_xy=bxy, hidden=hidden, report=report)
