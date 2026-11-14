@@ -76,5 +76,5 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [~] EN CURSO · #45 · wave-6 · Documentación y sincronización de todos los repos de la organización · `feat/issue-45-docs-and-org-repos-sync`
 - [ ] PENDIENTE · #46 · wave-6 · Cierre e integración del Milestone 9 · rama por definir
 - [x] COMPLETADA · #47 · wave-6 · Auditoría completa contra el repositorio oficial del reto (`docs/OFFICIAL_AUDIT.md`) · `feat/issue-47-official-audit`
-- [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`
 - [x] COMPLETADA · #50 · wave-6 · Anclajes de set pieces: acotar el fallback tag-window y fijar los Kick Off de inicio de periodo (Milestone 9) · `feat/issue-50-setpiece-anchor-fallback`
+- [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`
