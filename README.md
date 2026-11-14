@@ -145,7 +145,9 @@ opening H<->A / H/A->D inside occlusions at the specialists' logit sign changes 
 Issue #31: `route_overrides.specialists` from the refreshed Optuna sweep (benchmarks repo), applied by `run_core` to the
 learned route only: **adopted**, 0.6307 -> 0.6415 spellF1 through the real LOMO pipeline, better on every seed (the
 search used seeds 0-1; the unused seed 2 gains +0.006).  Issue #32: MBR (median-boundary consensus, `mbr.enabled`) over tempering / `ha_occluded` variants of the
-learned route only: no gain (+-0.0004), **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
+learned route only: no gain (+-0.0004), **off**.  Issue #34: explicit-duration (semi-Markov) decoder with per-state
+duration tables learned from the external labels (`duration.enabled`): possessions 2409 -> 2503 of 3061 but spellF1
+0.6415 -> 0.6390-0.6409, **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
 section 5.x.
 
 ### Possession count and the KPI 7 evidence
@@ -239,7 +241,8 @@ src/mtah2027/
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
                                      frame_classifier + specialist_features / _data (shared), specialist_ball_present
                                      (#20), pseudo_labeling (#21), specialist_ball_absent + specialist_fusion (#22)
-  decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
+  decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26),
+                                     duration_model + semi_markov (#34, off)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
   validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py

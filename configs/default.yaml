@@ -139,6 +139,20 @@ viterbi:
   log_init: [-0.6931, -0.6931, -3.0]   # log-prior of the first frame of a block: H, A, D
   round_decimals: 6                    # log_probs are rounded to this many decimals before decoding
 
+# Issue #34 -- explicit-duration (semi-Markov) decoder.  Per-state duration histograms (H / A possessions, D
+# stoppages) are fitted on the ground-truth labels of the external training matches only and stored with the
+# specialists (models/specialists.json); the decoder combines them with the transition matrix A_t and the
+# emissions.  Measured on the 7 degraded IDSSE matches (leave-one-match-out) and kept OFF unless it passes the
+# adoption rule (see docs/TECHNICAL_REPORT.md 5.x).
+duration:
+  enabled: false
+  weight: 1.0                   # multiplier of the duration log-probabilities
+  center: true                  # subtract the mean log-pmf: an average segment costs nothing extra
+  apply_to_heuristic: false     # the heuristic route as well (needs a table)
+  alpha: 0.5                    # additive smoothing of the histogram bins
+  min_tail_runs: 5
+  default_tail_excess_s: 30.0
+
 # Issue #25 -- spellF1-oriented post-processing of the decoded labels (never crosses a graded block).
 spell_optimizer:
   micro_poss_s: 1.2             # H->A->H / A->H->A middle runs shorter than this are absorbed ...

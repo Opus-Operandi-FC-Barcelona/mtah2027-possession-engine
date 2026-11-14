@@ -90,8 +90,9 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
     t0 = time.perf_counter()
+    durations = getattr(specialists, "durations", None)    # Issue #34 (used only when duration.enabled)
     core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                    log=lambda m: None)
+                    log=lambda m: None, durations=durations)
     seconds = time.perf_counter() - t0
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
@@ -100,7 +101,7 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     if specialists is not None:
         t0 = time.perf_counter()
         learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                           log=lambda m: None, specialists=specialists)
+                           log=lambda m: None, specialists=specialists, durations=durations)
         row["specialists"] = score(gt, learned.codes)
         row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
         row["specialists"]["source"] = learned.diagnostics["emission_source"]
@@ -154,6 +155,7 @@ def main(argv=None) -> int:
     if args.specialists == "lomo":
         import dataclasses
 
+        from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
         from mtah2027.models.specialist_data import build_training_set
 
@@ -173,6 +175,11 @@ def main(argv=None) -> int:
                                             exclude_match=stem)
                 models[stem] = dataclasses.replace(spec, fusion=fusion)
                 print(f"  trained specialists without {stem} ({time.perf_counter() - t0:.0f} s)", flush=True)
+            if models[stem].durations is None:     # Issue #34: duration table without the held-out match
+                from mtah2027.decoding.duration_model import fit_from_bench
+
+                models[stem] = dataclasses.replace(models[stem], durations=fit_from_bench(
+                    args.bench_dir, exclude=stem, params=DurationParams.from_config(args.config)))
             return models[stem]
     all_rows = []
     print(f"degrade={args.degrade} hide_ball_frac={args.hide_ball_frac} seeds={seeds}")

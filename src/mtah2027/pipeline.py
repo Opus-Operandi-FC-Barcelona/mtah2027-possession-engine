@@ -43,6 +43,7 @@ from mtah2027.config import (
     params_from_mapping,
     route_config,
 )
+from mtah2027.decoding.duration_model import DurationParams
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
 from mtah2027.decoding.mbr_consensus import MbrParams, consensus_labels
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
@@ -333,7 +334,7 @@ def run_core(
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
-        homography: np.ndarray | None = None) -> CoreResult:
+        homography: np.ndarray | None = None, durations: Any = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -414,10 +415,20 @@ def run_core(
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive
         log_trans = build_log_transitions(n, params=TransitionParams.from_config(cfg))
 
-    # 9. Viterbi ------------------------------------------------------------------------------------
+    # 9. Viterbi (or the explicit-duration decoder of Issue #34) -------------------------------------
+    dur_arg = None
+    dp = DurationParams.from_config(cfg)
+    if dp.enabled:
+        dmodel = durations if durations is not None else getattr(specialists, "durations", None)
+        if learned is None and not dp.apply_to_heuristic:
+            dmodel = None
+        if dmodel is not None:
+            dur_arg = (dmodel.tables(fps, dp), dp.weight)
+        else:
+            st.skip("duration", "no duration table / route not selected")
     codes = st.run("viterbi", lambda: decode_match_halves(
         em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
-        log_init=default_log_init(cfg)), required=True)
+        log_init=default_log_init(cfg), duration=dur_arg), required=True)
     mbr_info: dict = {}
     mp = MbrParams.from_config(cfg)
     if mp.enabled and learned is not None:     # variants of the learned route only
@@ -429,7 +440,7 @@ def run_core(
                 lt = (log_trans if shift == 0.0 else
                       _transitions(dataclasses.replace(tp0, ha_occluded=tp0.ha_occluded + shift)))
                 runs.append(decode_match_halves(lp, lt, play_blocks=play_blocks, dead_blocks=dead_blocks,
-                                                log_init=default_log_init(cfg)))
+                                                log_init=default_log_init(cfg), duration=dur_arg))
             merged = consensus_labels(runs, play_blocks, min_iou=mp.min_iou, min_support=mp.min_support)
             return merged, len(runs)
 

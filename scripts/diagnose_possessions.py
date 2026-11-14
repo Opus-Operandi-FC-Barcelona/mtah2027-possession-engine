@@ -113,6 +113,7 @@ def main(argv=None) -> int:
     if "specialists" in args.routes:
         import dataclasses
 
+        from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
         from mtah2027.models.specialist_data import build_training_set
 
@@ -135,6 +136,11 @@ def main(argv=None) -> int:
                     if path is not None:
                         cache.mkdir(parents=True, exist_ok=True)
                         sf.save_specialists(models[stem], path)
+            if models[stem].durations is None:     # Issue #34: duration table without the held-out match
+                from mtah2027.decoding.duration_model import fit_from_bench
+
+                models[stem] = dataclasses.replace(models[stem], durations=fit_from_bench(
+                    args.bench_dir, exclude=stem, params=DurationParams.from_config(args.config)))
             return models[stem]
     total = {r: collections.defaultdict(float) for r in args.routes}
     rows = []
