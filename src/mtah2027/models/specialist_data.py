@@ -131,7 +131,7 @@ def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[
         fe = compute_front_end(dm.players_xy, tm, dm.ball_xy, play_blocks=periods, fps=fps, pitch=pitch,
                                config_path=config_path, collective=True)
         em = heuristic_emissions(fe, fps, config_path)
-        fm = build_feature_matrix(fe, em)
+        fm = build_feature_matrix(fe, em, play_blocks=periods, config_path=config_path)
         vis = fe.visible[keep]
         x, y = fm.x[keep], labels[keep].astype(np.int64)
         out.append(MatchRows(match=Path(path).stem, seed=seed, swap=bool(swap), names=fm.names,

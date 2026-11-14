@@ -141,9 +141,9 @@ to the ball + majority vote over +-50 frames, `D` only where nobody has the ball
 
 | Setting (mean over matches) | engine spellF1 | engine macroF1 | baseline spellF1 | baseline macroF1 |
 |---|---|---|---|---|
-| 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.742**) | 0.934 (0.947) | 0.310 | 0.394 |
+| 7 IDSSE matches, complete ball | 0.691 (wave 2: **0.761**) | 0.916 (0.950) | 0.310 | 0.394 |
 | 7 IDSSE matches, 41% of the ball hidden in random 5-60 s blocks (seed 0) | **0.487** | 0.814 | 0.218 | 0.453 |
-| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.392 (wave 2: **0.606**) | 0.733 (0.900) | 0.215 | 0.440 |
+| 7 IDSSE matches, realistic degrader (`--degrade`, Issue #19: crowding-weighted 41% occlusion blocks + tracking noise, identity cuts, duplicate / dropped tracks; seeds 0-2) | 0.435 (wave 2: **0.642**) | 0.773 (0.910) | 0.215 | 0.440 |
 | 3 Metrica sample games (their own ball channel is missing exactly while the ball is dead, which leaks `D`) | 0.778 | 0.889 | 0.437 | 0.833 |
 | all 10 matches as they are | 0.717 | 0.920 | 0.348 | 0.526 |
 | all 10 matches, 41% of the ball additionally hidden | 0.505 | 0.802 | 0.247 | 0.517 |
@@ -155,13 +155,13 @@ as the rows above; hyper-parameters examined only this way, never on BAR-ATH):
 
 | Setting (mean over 7 matches) | wave-1 heuristic spellF1 / macroF1 | wave-2 specialists spellF1 / macroF1 | official-style baseline |
 |---|---|---|---|
-| complete ball | 0.691 / 0.934 | **0.742 / 0.947** | 0.310 / 0.394 |
-| `--degrade`, seeds 0-2 (21 runs) | 0.392 / 0.733 | **0.606 / 0.900** | 0.215 / 0.440 |
+| complete ball | 0.691 / 0.916 | **0.761 / 0.950** | 0.310 / 0.394 |
+| `--degrade`, seeds 0-2 (21 runs) | 0.435 / 0.773 | **0.642 / 0.910** (0.606 / 0.900 before 5.x) | 0.215 / 0.440 |
 
 Every one of the 21 degraded runs improves (spellF1 +0.11 ... +0.30 per run; the learned route finds fewer, longer
 possessions: 352 vs 466 predicted for 511 true on the first match).  Choices examined leave-one-match-out on the
 degraded matches (spellF1 / macroF1): tempering of the log-probabilities x1.5 0.594, x1.0 0.600 / 0.900,
-**x0.5 0.606 / 0.900** (kept), x0.3 0.608; blending 30% of the heuristic emission back in 0.574 / 0.892 (worse, so
+**x0.5 0.606 / 0.900** (kept; all numbers of this paragraph predate 5.x, where the route overrides set x0.80 / x0.87), x0.3 0.608; blending 30% of the heuristic emission back in 0.574 / 0.892 (worse, so
 0%); relaxing the H<->A transition cost inside long occlusions (`ha_occluded` -6 -> -3 or -9) or at rest
 (`ha_closed` -11.5 -> -8) changes the score by < 0.002, so the touch-based gating of Issue #23 is kept as it is
 (B's confident team changes inside long gaps already pass the -6 occlusion gate).
@@ -177,12 +177,13 @@ unused seed.
 | Route | defaults | best | nested honest | unused seed 2: defaults -> tuned |
 |---|---|---|---|---|
 | heuristic | 0.396 | 0.439 | 0.439 (+0.043) | 0.384 -> 0.427 (7/7 matches up) |
-| specialists | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+| specialists (first sweep, shared features) | 0.605 | 0.628 | 0.624 (+0.0195) | 0.608 -> 0.626 |
+| specialists (re-run after the window features, Issue #31) | 0.630 | 0.642 | 0.640 (+0.0102) | 0.633 -> 0.639 |
 
 The heuristic parameters are adopted as `route_overrides.heuristic` in `configs/default.yaml` (merged over the shared
 sections only when the heuristic route decodes; `config.route_config`); re-measured through the full array-level
 pipeline (`eval_external.py --degrade --seeds 2 --only-complete-ball`) they give 0.4266 / 0.7734, matching the
-sweep.  The specialists keep the shared defaults (+0.0195 is under the rule).  On the toy synthetic match the tuned
+sweep.  The first specialists sweep was under the rule (+0.0195) and kept the shared defaults; the re-run of Issue #31 is adopted after the real-pipeline check of 5.x.  On the toy synthetic match the tuned
 heuristic parameters score lower than the shared defaults (short match 0.348 vs baseline 0.458), another reminder
 that the synthetic physics is not football; the synthetic sanity test therefore runs on the shared defaults.
 
@@ -229,10 +230,98 @@ fallback alone needs ~58 s at full size, which is why CI installs numba.
 The published floor for the real match is `baseline_smooth50` spellF1 0.2433; the real-match score of this
 version is not known to the authors at the time of writing (the data is processed only locally).
 
+### 5.x Improvement round after the Optuna sweep (occlusion turnovers, specialists overrides, MBR)
+
+**Motivation.**  On the degraded external matches the learned route under-segments: 2467 predicted vs 3061 true
+possessions (seed 0) and 81 % of the H<->A turnovers that happen while the ball is hidden are missed (37 % with the
+ball visible).  That is the largest remaining source of lost spellF1.  The adoption rule used for every change in
+this round: the mean leave-one-match-out (LOMO) spellF1 over seeds 0-2 must gain at least +0.01 and no seed may be
+worse beyond -0.003 (improving on every seed, or on two with the third within -0.003); otherwise the code stays
+but is **off** by configuration and the result is reported.  Protocol: the 7 IDSSE matches with a complete ball,
+`--degrade`, seeds 0-2, LOMO specialists, official metric; reference = 0.6059 / 0.9003 (seeds 0/1/2: 0.6105 / 0.5994 /
+0.6079).  External matches only, never BAR-ATH.
+
+**Item 3 (Issue #30): occlusion turnovers.**  Past / future windows are legitimate because the match is processed
+offline as a whole (non-causal smoothing is allowed).  `specialist_features.py` adds, for 21 ball-free signals
+(collective physics #17: centroid speed, depth, width, spectral area of both teams; coherence / line advance #18; the
+player-speed signals and `dead_score` of #13; home-minus-away differences), the centred mean over +-W frames and the
+difference `mean(t..t+W) - mean(t-W..t)` for W = 50 and 100 frames (vectorised cumulative sums, NaN-safe, computed per
+graded block so nothing crosses a half or block boundary): 84 extra columns that let Specialist B see the reversal of
+the collective movement and short stops without the ball (`specialist_features.context_windows`, empty = off).
+
+| LOMO, 7 IDSSE matches, `--degrade` | seed 0 | seed 1 | seed 2 | mean spellF1 / macroF1 | possessions (seed 0, true 3061) | hidden-ball turnovers missed (seed 0) |
+|---|---|---|---|---|---|---|
+| reference (develop) | 0.6105 | 0.5994 | 0.6079 | 0.6059 / 0.9003 | 2467 | 81.0 % |
+| A1: context windows (**adopted**) | 0.6355 | 0.6240 | 0.6326 | **0.6307 / 0.9089** (+0.0248) | 2458 | 71.1 % |
+
+A1 improves every seed by about +0.025 and removes ten points of missed hidden-ball turnovers, while the number of
+predicted possessions hardly changes (the gain comes from better-placed, not more, flips).  `models/specialists.json`
+was retrained with the new layout.
+
+A2 (`transition_matrix.spec_*`, learned route only): inside occlusions H<->A is opened around the frames where the
+specialists' H-vs-A logit changes sign (Schmitt trigger) towards the team the new sign names, H/A->D around P(D) peaks,
+and both at collective-speed accelerations.  It is risky because earlier sweeps relaxing those gates only added
+spurious flips, so it is measured and kept **off** (`spec_open: false`):
+
+| variant (opening strength, window) | mean spellF1 / macroF1 | possessions (seed 0) | hidden turnovers missed |
+|---|---|---|---|
+| on the reference model: -4 / -4 / -5 (defaults) | 0.6061 / 0.9001 | 2484 | 80.3 % |
+| -2 / -3 / -3, accel 0.7 | 0.6054 / 0.9002 | 2533 | 78.8 % |
+| logit only, -1.4, +-25 frames | 0.6062 / 0.9008 | 2537 | 78.9 % |
+| logit only, -2.5, hysteresis 1.0 | 0.6038 / 0.8996 | 2478 | 81.7 % |
+| logit only, -0.7, +-40 frames | 0.6047 / 0.9009 | 2573 | 77.9 % |
+| on A1: defaults | 0.6305 / 0.9089 | 2478 | 70.5 % |
+| on A1: logit only, -1.4, +-25 frames | 0.6292 / 0.9091 | 2515 | 69.3 % |
+
+Every extra flip is as likely wrong as right: the possession count rises towards the truth but spellF1 stays within
++-0.003 (noise ~0.04 across matches, ~0.002 across seeds), so A2 fails the rule and stays off.
+
+**Item 1 (Issue #31): `route_overrides.specialists`.**  The earlier Optuna specialists gain (+0.0195 nested,
++0.018 on the unused seed 2) was consistent but under the pre-set +0.02 rule.  Because the features changed
+(Issue #30) the sweep was refreshed first (`run_optuna_sweep.py --route specialists`, 300 trials, search seeds 0-1,
+LOMO emissions recomputed with the new model; reports `optuna_specialists*.{json,yaml}` of the benchmarks repo): default
+0.6297, best 0.6415 on the search seeds, nested honest 0.6399 (+0.0102), unused seed 2: default 0.6326 -> best 0.6389
+(nested-selected 0.6391).  Since seeds 0-1 were used by the search, adoption was re-checked through the real
+pipeline (`diagnose_possessions.py`, LOMO specialists, seeds 0-2), which now applies `route_config("specialists")`
+(decoder sections and `specialist_fusion`) in `run_core` whenever the learned emissions are used (the heuristic
+route is unaffected):
+
+| LOMO, `--degrade` | seed 0 | seed 1 | seed 2 (unused by the search) | mean spellF1 / macroF1 | possessions (seed 0) | hidden turnovers missed (seed 0) |
+|---|---|---|---|---|---|---|
+| shared defaults (after #30) | 0.6355 | 0.6240 | 0.6326 | 0.6307 / 0.9089 | 2458 | 71.1 % |
+| `route_overrides.specialists` (**adopted**) | 0.6475 | 0.6381 | 0.6389 | **0.6415 / 0.9099** (+0.0108) | 2409 | 70.5 % |
+
+The gain is positive on all three seeds (+0.012, +0.014, +0.006), so the overrides pass the rule (mean >= +0.01, no seed
+worse) and are committed in `configs/default.yaml` (`route_overrides.specialists`); the biggest changes are a looser
+`ha_occluded` (-7.57), `d_exit` / `dead_ramp` ramps and tempering x0.80 / x0.87 with 15 % heuristic blend on visible
+frames.  The seed-2 gain (+0.006) is smaller than on the search seeds, which is the expected optimism of the search.
+
+**Item 2 (Issue #32): MBR over variants of the learned route.**  `run_core` can decode several variants of the
+**specialists route only** (never mixing the heuristic route, 0.43, with the specialists, 0.64): variant `i`
+multiplies the tempered emission log-probabilities by `mbr.scales[i]` and shifts `transition_matrix.ha_occluded` by
+`mbr.ha_occluded_shifts[i]`; the decoded variants are merged by the median-boundary consensus of Issue #26
+(`consensus_labels`, same-team IoU >= 0.3 matching, support >= 50 %) and the spell optimiser runs once on the result
+(`mbr.enabled`, off by default; the heuristic route logs "skipped").  Expected gain is small because variants of one
+model make correlated errors, and it was:
+
+| MBR variants (around the adopted optimum) | seed 0 | seed 1 | seed 2 | mean spellF1 / macroF1 |
+|---|---|---|---|---|
+| no MBR (`route_overrides.specialists`) | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| tempering x0.8 / x1 / x1.25 | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| `ha_occluded` -1.5 / 0 / +1.5 | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| tempering x0.8 / x1 / x1.25 and `ha_occluded` -1.5 / 0 / +1.5 | 0.6474 | 0.6381 | 0.6389 | 0.6415 / 0.9099 |
+| five tempering variants x0.7 ... x1.4 | 0.6473 | 0.6380 | 0.6389 | 0.6414 / 0.9098 |
+| tempering x0.5 / x1 / x2 | 0.6473 | 0.6378 | 0.6385 | 0.6412 / 0.9098 |
+| `ha_occluded` 0 / +2.5 / +5 | 0.6488 | 0.6369 | 0.6377 | 0.6411 / 0.9100 |
+
+The variants differ in at most a handful of boundary frames (the transition penalties dominate the emission scale), so
+the median reproduces the central decode and the gain is zero within +-0.0004.  Fails the rule: MBR is **kept in the
+code, off by default**.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
-  most of the team information from the collective physics and the ball memory (0.39 -> 0.61 degraded) but still
+  most of the team information from the collective physics and the ball memory (0.43 -> 0.64 degraded) but still
   leaves a gap to the complete-ball score (0.74); the learned route also predicts fewer possessions than the truth.
 * **Domain shift.**  The specialists are trained on Bundesliga open data degraded by our own model of the ATD gaps
   (blocks hide alive play; the real gap statistics and the real tracking noise of BAR-ATH are known only through

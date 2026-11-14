@@ -89,7 +89,7 @@ def test_fusion_uses_a_where_visible_and_b_where_hidden(trained, match):
     assert lp.min() >= np.log(trained.fusion.prob_floor) - 1e-6 and (lp <= 0).all()
     from mtah2027.models.specialist_features import build_feature_matrix
 
-    x = build_feature_matrix(fe, heur).x
+    x = build_feature_matrix(fe, heur, play_blocks=match["blocks"]).x
     vis = fe.visible
     exp_a = np.log(np.maximum(trained.a.predict_proba(x[vis]), 0.001))
     exp_b = np.log(np.maximum(trained.b.predict_proba(x[~vis]), 0.001))
@@ -194,3 +194,62 @@ def test_find_bench_dir(tmp_path, monkeypatch, external_like_dir):
     assert sf.find_bench_dir(tmp_path) != tmp_path
     monkeypatch.setenv(sf.BENCH_ENV, str(external_like_dir))
     assert sf.find_bench_dir(tmp_path) == external_like_dir
+
+
+def test_context_features_are_block_local_and_nan_safe():
+    from mtah2027.models import specialist_features as sf
+
+    n = 300
+    names = ["cp:depth_home", "other"]
+    x = np.zeros((n, 2), np.float32)
+    x[:150, 0] = 1.0
+    x[150:, 0] = 5.0
+    x[40:45, 0] = np.nan
+    cx, cn = sf.context_features(x, names, [(0, 149), (150, 299)], (20,))
+    assert cn == ["ctx:cp:depth_home:cm20", "ctx:cp:depth_home:dd20"]
+    assert np.allclose(cx[:150, 0], 1.0) and np.allclose(cx[150:, 0], 5.0)     # nothing crosses the boundary
+    assert np.allclose(cx[:150, 1], 0.0)                                         # constant block: no change
+    cx2, _ = sf.context_features(x, names, [(0, 299)], (20,))
+    assert cx2[149, 1] > 0 and cx2[150, 1] > 0                                  # one block sees the step
+    cx3, _ = sf.context_features(x, names, [(0, 149)], (20,))
+    assert np.isnan(cx3[200]).all()                                              # outside the blocks: NaN
+    assert sf.context_features(x, names, None, ())[0].shape == (n, 0)
+
+
+def test_specialists_route_overrides_apply_only_to_the_learned_route(trained, match):
+    from mtah2027.config import _load_raw
+
+    raw = _load_raw()
+    raw["route_overrides"] = {**(raw.get("route_overrides") or {}),
+                              "specialists": {"transition_matrix": {"ha_closed": -2.0, "ha_occluded": -2.0},
+                                              "specialist_fusion": {"scale_hidden": 0.25}}}
+    base = _core(match, specialists=trained)
+    over = _core(match, specialists=trained, config_path=raw)
+    assert over.diagnostics["emission_source"] == "specialists"
+    assert not np.array_equal(base.codes, over.codes)
+    # the heuristic route is untouched by route_overrides.specialists, and the fusion override took effect
+    assert np.array_equal(_core(match).codes, _core(match, config_path=raw).codes)
+    ks = _core(match, specialists=trained, config_path=raw, keep_features=True).features["log_probs"]
+    ks0 = _core(match, specialists=trained, keep_features=True).features["log_probs"]
+    assert not np.array_equal(ks, ks0)
+
+
+def test_mbr_runs_only_on_the_learned_route_and_is_neutral_for_identical_variants(trained, match):
+    from mtah2027.config import _load_raw
+
+    raw = _load_raw()
+    raw["mbr"] = {"enabled": True, "scales": [1.0, 1.0, 1.0], "ha_occluded_shifts": [0.0, 0.0, 0.0]}
+    base = _core(match, specialists=trained)
+    same = _core(match, specialists=trained, config_path=raw)
+    assert same.diagnostics["mbr"] == {"variants": 3} and base.diagnostics["mbr"] == {}
+    assert np.array_equal(base.codes, same.codes)
+    raw["mbr"] = {"enabled": True, "scales": [0.6, 1.0, 1.6], "ha_occluded_shifts": [-1.5, 0.0, 1.5]}
+    mixed = _core(match, specialists=trained, config_path=raw)
+    assert mixed.diagnostics["mbr"] == {"variants": 3}
+    graded = np.zeros(len(mixed.codes), bool)
+    for a, b in match["blocks"]:
+        graded[a:b + 1] = True
+    assert (mixed.codes[graded] < 3).all() and (mixed.codes[~graded] == 3).all()
+    assert np.array_equal(mixed.codes, _core(match, specialists=trained, config_path=raw).codes)
+    heur = _core(match, config_path=raw)                       # heuristic route: MBR is skipped
+    assert heur.diagnostics["mbr"] == {} and np.array_equal(heur.codes, _core(match).codes)

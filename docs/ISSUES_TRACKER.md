@@ -49,3 +49,12 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #26 · wave-1 · Consenso MBR de fronteras y contrato estricto de las 199.319 filas · `feat/issue-26-mbr-consensus-and-contract`
 - [x] COMPLETADA · #27 · wave-2 · Cuadro de mando automatizado de los 6 KPIs de calidad · `feat/issue-27-six-kpi-dashboard`
 - [x] COMPLETADA · #28 · wave-1/2 · CLI reproducible generate_submission.py, TECHNICAL_REPORT.md y test E2E de determinismo · `feat/issue-28-cli-submission-and-report`
+
+## Milestone 7: Mejoras post-Optuna (oclusiones, rutas, MBR, duración)
+
+- [x] COMPLETADA · #29 · wave-4 · Overrides de ruta heurística desde el barrido Optuna externo · `feat/issue-29-heuristic-route-overrides`
+- [x] COMPLETADA · #30 · wave-4 · Giros de posesión con balón oculto: ventanas pasado/futuro para el Especialista B (adoptado) y apertura de transiciones guiada por B (medida, desactivada) · `feat/issue-30-occlusion-turnovers`
+- [x] COMPLETADA · #31 · wave-4 · Overrides de ruta `specialists` · `feat/issue-31-specialists-route-overrides`
+- [x] COMPLETADA · #32 · wave-4 · Consenso MBR sobre variantes de la ruta especialistas · `feat/issue-32-mbr-specialists`
+- [x] COMPLETADA · #33 · wave-4 · Regenerar `reports/external_evidence.json` · `feat/issue-33-external-evidence-refresh`
+- [ ] PENDIENTE · #34 · wave-4 · Decodificador consciente de la duración · `feat/issue-34-duration-aware-decoder`

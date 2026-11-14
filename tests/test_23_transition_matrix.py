@@ -129,3 +129,48 @@ def test_on_synthetic_match_runs_fast(synthetic_kin):
     assert lt.shape == (len(kin.ball_xy), 3, 3)
     assert (lt[1:, H, A] > P.ha_closed).any()       # some turnover windows opened
     assert (lt[1:, H, D] > P.dead_closed).any()
+
+
+# --- specialist-driven openings inside occlusions -------------------------------------------------
+def test_logit_flips_hysteresis_and_direction():
+    z = np.zeros(100)
+    z[:30], z[30:60], z[60:] = 2.0, -2.0, 0.2          # H, then A, then inside the dead band (no flip)
+    z[45] = 0.3                                          # a dip inside the band does not flip back and forth
+    to_home, to_away = tm.logit_flips(z, 0.5)
+    assert np.flatnonzero(to_away).tolist() == [30] and not to_home.any()
+    z[80:] = 3.0
+    to_home, _ = tm.logit_flips(z, 0.5)
+    assert np.flatnonzero(to_home).tolist() == [80]
+
+
+def test_specialist_openings_only_inside_occlusion_and_off_by_default():
+    vis = np.ones(N, bool)
+    vis[100:260] = False                                 # one long occlusion
+    z = np.full(N, 2.0)
+    z[150:] = -2.0                                       # logit flips to the away team at 150 (inside)
+    z[20], z[21] = 2.0, -2.0                             # a flip outside the occlusion must be ignored
+    pdead = np.zeros(N)
+    pdead[200] = 0.9
+    spd = np.zeros(N)
+    on = tm.TransitionParams(spec_open=True)
+    kw = dict(ball_visible=vis, spec_home_logit=z, spec_p_dead=pdead, spec_speed=spd)
+    lt_off = tm.build_log_transitions(N, params=P, **kw)
+    assert np.array_equal(lt_off, tm.build_log_transitions(N, params=P, ball_visible=vis))
+    lt = tm.build_log_transitions(N, params=on, **kw)
+    base = tm.build_log_transitions(N, params=on, ball_visible=vis)
+    assert lt[150, H, A] == on.spec_ha_open and lt[150, A, H] == base[150, A, H]   # towards the new sign only
+    assert lt[200, H, D] >= on.spec_dead_open and base[200, H, D] < on.spec_dead_open
+    assert np.array_equal(lt[:90], base[:90])                                        # nothing outside
+    assert np.array_equal(lt, tm.build_log_transitions(N, params=on, **kw))          # deterministic
+
+
+def test_specialist_acceleration_opens_both_inside_occlusion():
+    vis = np.ones(N, bool)
+    vis[100:260] = False
+    spd = np.zeros(N)
+    spd[180:] = 3.0
+    on = tm.TransitionParams(spec_open=True)
+    lt = tm.build_log_transitions(N, params=on, ball_visible=vis, spec_speed=spd)
+    assert lt[180, H, A] >= on.spec_accel_open and lt[180, A, H] >= on.spec_accel_open
+    assert lt[180, H, D] >= on.spec_accel_open
+    assert lt[120, H, A] == tm.build_log_transitions(N, params=on, ball_visible=vis)[120, H, A]

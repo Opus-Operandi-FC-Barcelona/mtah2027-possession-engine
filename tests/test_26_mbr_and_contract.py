@@ -147,3 +147,11 @@ def test_consensus_overlaps_split_at_midpoint():
     r3 = _spec((H, 40), (A, 60))
     out = mbr.consensus_labels([r1, r2, r3], blocks)
     assert (out[:50] == H).all() and (out[50:] == A).all()
+
+
+def test_mbr_params_validation_and_default_off():
+    assert mbr.MbrParams.from_config().enabled is False
+    with pytest.raises(ValueError):
+        mbr.MbrParams(scales=(1.0, 2.0), ha_occluded_shifts=(0.0,))
+    with pytest.raises(ValueError):
+        mbr.MbrParams(scales=(0.0,), ha_occluded_shifts=(0.0,))

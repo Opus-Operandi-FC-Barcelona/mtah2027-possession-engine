@@ -13,6 +13,11 @@ Column groups (prefix of the feature name):
 ``bm:``    Issue #18 phase coherence, line advance and ball memory.
 ``diff:``  home minus away of the paired physics / memory features (team-symmetric view).
 ``heur:``  the transparent wave-1 emission (its H-vs-A logit and dead probability) as a stacked prior.
+``ctx:``   past / future context of the collective signals (#17, #18) and ``dead_score`` (#13): centred
+           means over ``+-W`` frames and the change ``mean(t..t+W) - mean(t-W..t)`` for every configured
+           window ``W`` (``specialist_features.context_windows``; block-local, NaN-safe).  They let
+           the ball-absent
+           specialist see the reversal of the collective movement and short stops without the ball.
 
 Slot indices and the raw ``ball_visible`` copies are dropped (meaningless / redundant); one ``visible``
 column remains.  Team symmetry is obtained at the data level: the training sets also contain every match
@@ -21,8 +26,12 @@ with the home / away roles swapped (see ``specialist_data``).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 import numpy as np
+
+from mtah2027.config import load_section, params_from_mapping
+from mtah2027.features._utils import window_mean
 
 PHYSICS_DIFFS = ["hull_area", "spectral_area", "d_hull", "d_spectral", "depth", "width", "centroid_vx",
                  "n_field"]
@@ -35,6 +44,52 @@ BALL_BASED_SIG = ("sig:ball_out", "sig:ball_out_dist", "sig:ball_still_s", "sig:
                   "sig:t_to_ball",
                   "sig:geom_corner", "sig:geom_goal_area", "sig:geom_kickoff", "sig:geom_touchline",
                   "sig:geom_any")
+
+
+# signals whose past / future context is added (feature names before the ``ctx:`` prefix)
+CONTEXT_SIGNALS = (
+    "cp:centroid_vx_home", "cp:centroid_vx_away", "cp:depth_home", "cp:depth_away", "cp:width_home",
+    "cp:width_away", "cp:spectral_area_home", "cp:spectral_area_away", "bm:phase_R_home", "bm:phase_R_away",
+    "bm:line_vx_home", "bm:line_vx_away", "diff:centroid_vx", "diff:line_vx", "diff:phase_R",
+    "diff:spectral_area", "diff:depth", "sig:speed_mean", "sig:speed_p80", "sig:frac_walking",
+    "sig:dead_score")
+
+
+@dataclass(frozen=True)
+class FeatureParams:
+    context_windows: tuple = (50, 100)    # frames; empty = no context features
+
+    @classmethod
+    def from_config(cls, path=None) -> "FeatureParams":
+        return params_from_mapping(cls, load_section("specialist_features", path), "specialist_features")
+
+
+def context_features(x: np.ndarray, names: list[str], blocks: Sequence[tuple[int, int]] | None,
+                     windows: Sequence[int]) -> tuple[np.ndarray, list[str]]:
+    """``ctx:`` columns of the feature matrix ``x`` (see the module docstring).
+
+    Every graded block is processed on its own, so no window crosses a block / half boundary; frames
+    outside the blocks are NaN.  ``blocks=None`` treats the whole array as one block."""
+    n = len(x)
+    spans = [(0, n - 1)] if blocks is None else [(int(a), int(b)) for a, b in blocks]
+    sel = [(k, names.index(k)) for k in CONTEXT_SIGNALS if k in names]
+    cols, out_names = [], []
+    for key, j in sel:
+        for w in windows:
+            w = int(w)
+            cm = np.full(n, np.nan, np.float32)
+            dd = np.full(n, np.nan, np.float32)
+            for a, b in spans:
+                seg = x[a:b + 1, j]
+                if not len(seg):
+                    continue
+                cm[a:b + 1] = window_mean(seg, -w, w)
+                dd[a:b + 1] = window_mean(seg, 0, w) - window_mean(seg, -w, 0)
+            cols += [cm, dd]
+            out_names += [f"ctx:{key}:cm{w}", f"ctx:{key}:dd{w}"]
+    if not cols:
+        return np.zeros((n, 0), np.float32), []
+    return np.stack(cols, axis=1).astype(np.float32), out_names
 
 
 @dataclass
@@ -55,9 +110,12 @@ def _add(cols: list, names: list, matrix: np.ndarray, keys: list[str], prefix: s
         names.append(full)
 
 
-def build_feature_matrix(fe, heuristic, *, require_collective: bool = True) -> FeatureMatrix:
+def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
+                         play_blocks: Sequence[tuple[int, int]] | None = None,
+                         params: FeatureParams | None = None, config_path=None) -> FeatureMatrix:
     """Stack the feature groups of a :class:`~mtah2027.pipeline.FrontEnd` (with ``collective=True``) and its
-    heuristic :class:`~mtah2027.models.heuristic_emissions.EmissionResult`."""
+    heuristic :class:`~mtah2027.models.heuristic_emissions.EmissionResult`; ``play_blocks`` bound the
+    past / future context windows (see ``ctx:``)."""
     if require_collective and (fe.phys is None or fe.mem is None or fe.sig is None or fe.bk is None):
         raise ValueError("the specialists need the dead-ball, ball-kinematics, collective-physics and "
                          "ball-memory features")
@@ -86,6 +144,11 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True) -> F
         cols.append(np.asarray(heuristic.p_dead, dtype=np.float32))
         names.append("heur:p_dead")
     x = np.stack(cols, axis=1) if cols else np.zeros((n, 0), np.float32)
+    fp = params or FeatureParams.from_config(config_path)
+    if fp.context_windows:
+        cx, cnames = context_features(x, names, play_blocks, fp.context_windows)
+        x = np.concatenate([x, cx], axis=1)
+        names = names + cnames
     return FeatureMatrix(x=x, names=names)
 
 

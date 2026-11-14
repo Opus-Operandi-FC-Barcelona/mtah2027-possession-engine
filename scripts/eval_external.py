@@ -112,7 +112,8 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
             base[a:b + 1] = full[a:b + 1]
         row["baseline"] = score(gt, base)
     if return_codes:     # in-memory only (used by the KPI dashboard); never serialised
-        row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps}
+        row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps,
+                         "visible": np.isfinite(ball).all(axis=1)}
     return row
 
 
