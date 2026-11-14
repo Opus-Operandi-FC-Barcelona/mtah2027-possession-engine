@@ -555,6 +555,17 @@ spellF1 0.5997 -> 0.6001 (+0.0004), macroF1 0.8999 -> 0.9000, possessions 2,217 
 were trained with the old front end and still load; `#48` regenerates them.  Invariance test:
 `tests/test_51_play_block_isolation.py` fills every frame outside the play blocks with random players/balls/channels and
 asserts identical feature matrix, emissions and final labels (heuristic and specialist routes) in `HALF1` and `HALF2_PLAY`.
+### Reproducibility of the learned route (Issue #52)
+
+RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
+`--specialists auto` used to retrain at run time whenever the sibling benchmark cache was on disk, so the file depended
+on the local machine rather than on the repository.  `auto` now loads the committed `models/specialists.json` first and
+trains only when no committed file exists (`train` keeps retraining; synthetic CI runs never train).
+`tests/test_52_reproducible_specialists.py` checks the order, that the committed model was trained with the sources and
+weights declared in `configs/default.yaml`, and that the target-match adaptation (`use_pseudo_labels`) stays off
+(official issue #2).  The pipeline diagnostics now report the emissions actually used (`specialists` or `heuristic`)
+instead of a fixed `heuristic`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

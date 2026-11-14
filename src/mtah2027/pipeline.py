@@ -696,7 +696,7 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             homography=homography, keep_features=keep_features)
         codes, core_diag = core.codes, core.diagnostics
         features = core.features
-        route = "heuristic"
+        route = core_diag.get("emission_source", "heuristic")    # "specialists" or "heuristic" (Issue #52)
     except Exception as exc:  # noqa: BLE001 - last resort: still deliver a valid file
         st.log(f"heuristic route failed ({type(exc).__name__}: {exc}); "
                "falling back to the nearest-player baseline")
