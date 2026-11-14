@@ -162,7 +162,11 @@ def test_forced_dead_respects_max_back_and_falls_back_to_tag_window():
     assert a.t_star - a.dead_onset == int(sa.AnchorParams().max_dead_back_s * FPS)
     r2 = _run(_ball_path(n, 2000), _players(n), [_sp("goal kick", 1900, 2050)],
               dead_score=np.zeros(n, dtype=np.float32))
-    assert r2.anchors[0].onset_method == "tag-window" and r2.anchors[0].dead_onset == 1900
+    assert r2.anchors[0].onset_method == "fallback" and r2.anchors[0].t_star - r2.anchors[0].dead_onset == 12
+    legacy = sa.anchor_set_pieces(
+        _ball_path(n, 2000), _players(n), TEAM, [_sp("goal kick", 1900, 2050)], (), dead_score=np.zeros(n),
+        params=sa.AnchorParams(fallback_tag_window=True))          # Issue #50: legacy behaviour by config
+    assert legacy.anchors[0].onset_method == "tag-window" and legacy.anchors[0].dead_onset == 1900
 
 
 def test_goal_dead_until_next_kickoff_after_goal():

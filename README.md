@@ -72,7 +72,7 @@ with Milestone 9.
 | 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
 | 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
-| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release (there is no #41) |
+| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release, #50 set-piece anchor fallback + period-start clamp (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.

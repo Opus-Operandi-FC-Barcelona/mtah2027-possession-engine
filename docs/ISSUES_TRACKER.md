@@ -77,5 +77,6 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [ ] PENDIENTE · #46 · wave-6 · Cierre e integración del Milestone 9 · rama por definir
 | #47 | Auditoría completa contra el repositorio oficial del reto | [x] COMPLETADA | `docs/OFFICIAL_AUDIT.md` |
 - [x] COMPLETADA · #47 · wave-6 · Auditoría completa contra el repositorio oficial del reto (`docs/OFFICIAL_AUDIT.md`) · `feat/issue-47-official-audit`
+- [x] COMPLETADA · #50 · wave-6 · Anclajes de set pieces: acotar el fallback tag-window y fijar los Kick Off de inicio de periodo (Milestone 9) · `feat/issue-50-setpiece-anchor-fallback`
 - [x] COMPLETADA · #51 · wave-6 · Aislar el front-end por play_blocks (sin fuga a través del descanso ni del calentamiento) · `feat/issue-51-play-blocks-isolation`
 - [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`

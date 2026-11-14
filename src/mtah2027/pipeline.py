@@ -301,7 +301,7 @@ def compute_front_end(
         anchors = st.run("set_piece_anchors", lambda: anchor_set_pieces(
             bxy, pxy, team, smart_tagging.set_pieces, smart_tagging.goals, ball_speed=bspeed,
             players_speed=pspeed, dead_score=dead_score, fps=fps, pitch=pitch,
-            params=AnchorParams.from_config(cfg)))
+            params=AnchorParams.from_config(cfg), period_starts=[b[0] for b in play_blocks]))
     else:
         reason = "no Smart Tagging" if smart_tagging is None else "disabled by configuration"
         st.skip("set_piece_anchors", reason)
