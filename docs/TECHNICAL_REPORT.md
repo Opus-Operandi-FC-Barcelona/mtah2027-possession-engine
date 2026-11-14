@@ -1,12 +1,14 @@
 # Technical report -- Opus Operandi (More than a Hack 2027, phase 1: ball possession)
 
 Repository: `Opus-Operandi-FC-Barcelona/mtah2027-possession-engine`.  This report follows the points requested
-in the competition's `SUBMISSION.md`.  **Implemented in this version = waves 1 and 2** (a complete,
-deterministic end-to-end route whose emissions come from learned Specialists A/B trained on external open
-data, with the wave-1 heuristic emissions as fallback).  Everything marked *planned* belongs to wave 3 (or to
-the remaining wave-2 issues #15 and #27) and is not part of the submitted file unless the tracker
-(`docs/ISSUES_TRACKER.md`) says it is completed.
-
+in the competition's `SUBMISSION.md`; the short submission document is `docs/OpusOperandi.md`.  **Implemented in this
+version = Milestones 1-8 (issues #1-#40)**: a complete, deterministic end-to-end route whose emissions come from
+learned Specialists A/B trained on external open data (IDSSE + PFF), with the heuristic emissions as the fallback
+route, plus optional stages (broadcast sync, vision recovery, aerial filter, MBR, semi-Markov) that were built and
+measured and are **off** by configuration.  **Milestone 9** (issues #42-#46: player-dropout invariance, Smart Tagging
+alive prior, bounded decoder re-optimisation, documentation, release) is **in progress**; its results are not part of
+this report yet (see "Milestone 9" before section 6).  Sections 1-4 below were written for waves 1-2 and the later
+items are documented in 5.x; where they differ the later sections and `docs/OpusOperandi.md` prevail.
 ## 1. Summary of the approach and why
 
 **What is scored.**  spellF1 matches same-team possession spells between prediction and ground truth by temporal
@@ -64,10 +66,10 @@ per-frame classifiers (the official baselines show it: raw 0.04 vs smoothed 0.33
 |---|---|---|
 | Tactical ATD (`*_tactical_atd.txt/.xml`) | **used** | positions, speeds, ball; all declared channels are parsed |
 | Tactical Smart Tagging XML | **used** | set-piece/goal windows -> restart frames; weak phase prior for H/A |
-| External open tracking matches (IDSSE / DFL Bundesliga, 7 matches) | **used for training and tuning only** | training data of Specialists A/B and all hyper-parameter choices; never BAR-ATH (section 3) |
-| Tactical homography | loader implemented (#7), **not used** in wave 1 | needed for the planned attention crops |
+| External open tracking matches (IDSSE 7, PFF 20 for training; Metrica 3, PFF held-out for validation; SkillCorner tried and dropped) | **used for training and tuning only** | training data of Specialists A/B and all hyper-parameter choices; never BAR-ATH (section 3) |
+| Tactical homography | loaded and validity-checked (#7, #37) | consumed only by the optional vision / broadcast stages, which are off |
 | Broadcast ATD / homography | **not used** in wave 1 | `preprocessing/broadcast_sync.py` (#10): block-wise sync + ball injection, OFF by default (see Limitations) |
-| Videos (tactical, broadcast) | **not used** | planned YOLO attention crops (#11, wave 3) |
+| Videos (tactical, broadcast) | **not used** | YOLO / multi-frame attention crops (#11, #36) are built and off; the video was not processed for the submission |
 | Official scorer / `games.py` / starter | **used (vendored, unmodified)** | metric, constants, format check |
 | Public 5-minute ground truth | **not used for any decision** | only reserved as a format/alignment smoke test |
 
@@ -518,6 +520,17 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
+## Milestone 9 (in progress)
+
+Issues #42 (invariance to player dropout: stratified diagnostics by tracked players, removal of spurious shortcuts to
+`D`, dropout training variants) and #43 (alive prior from Smart Tagging phases while the ball is hidden, validated with
+a deterministic Smart Tagging simulator on external matches) are being implemented; #44 (bounded decoder sweep under the
+calibrated degrader, run in `mtah2027-external-benchmarks` issue #5) and #46 (release) follow.  Common protocol: B' =
+7 IDSSE leave-one-match-out with the calibrated degrader (#38), seeds 0-2, with the breakdown by tracked players
+(< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF matches; adopt if B' gains >= +0.01 spellF1 (no seed
+worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D` in the < 20-player stratum is corrected
+on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
+Results: pending (filled at #46).
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
