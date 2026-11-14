@@ -2,12 +2,12 @@
 
 Repository: `Opus-Operandi-FC-Barcelona/mtah2027-possession-engine`.  This report follows the points requested
 in the competition's `SUBMISSION.md`; the short submission document is `docs/OpusOperandi.md`.  **Implemented in this
-version = Milestones 1-8 (issues #1-#40)**: a complete, deterministic end-to-end route whose emissions come from
+version = Milestones 1-9 (issues #1-#52)**: a complete, deterministic end-to-end route whose emissions come from
 learned Specialists A/B trained on external open data (IDSSE + PFF), with the heuristic emissions as the fallback
 route, plus optional stages (broadcast sync, vision recovery, aerial filter, MBR, semi-Markov) that were built and
-measured and are **off** by configuration.  **Milestone 9** (issues #42-#46: player-dropout invariance, Smart Tagging
-alive prior, bounded decoder re-optimisation, documentation, release) is **in progress**; its results are not part of
-this report yet (see "Milestone 9" before section 6).  Sections 1-4 below were written for waves 1-2 and the later
+measured and are **off** by configuration.  **Milestone 9** (issues #42-#52) is complete: it adopted the model
+re-trained with gaps over dead ball (#48), the set-piece anchor fallback (#50), play-block isolation (#51) and
+reproducible model loading (#52); #42, #43, #44 and #49 were measured and are off (see "Milestone 9" before section 6).  Sections 1-4 below were written for waves 1-2 and the later
 items are documented in 5.x; where they differ the later sections and `docs/OpusOperandi.md` prevail.
 ## 1. Summary of the approach and why
 
@@ -769,17 +769,20 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
-## Milestone 9 (in progress)
+## Milestone 9
 
-Issues #42 (invariance to player dropout: stratified diagnostics by tracked players, removal of spurious shortcuts to
-`D`, dropout training variants) and #43 (alive prior from Smart Tagging phases while the ball is hidden, validated with
-a deterministic Smart Tagging simulator on external matches) are being implemented; #44 (bounded decoder sweep under the
-calibrated degrader, run in `mtah2027-external-benchmarks` issue #5) and #46 (release) follow.  Common protocol: B' =
-7 IDSSE leave-one-match-out with the calibrated degrader (#38), seeds 0-2, with the breakdown by tracked players
-(< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF matches; adopt if B' gains >= +0.01 spellF1 (no seed
-worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D` in the < 20-player stratum is corrected
-on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
-Results of #43 and #49: see the items "Smart Tagging alive-ball prior and transition cue" and "Restart-team rules ..." below (neither adopted); #42, #44, #46: pending.
+Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),
+seeds 0-2, with the breakdown by tracked players (< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF
+matches as a guard.  Adopt if B' gains >= +0.01 spellF1 with no seed worse than -0.003 and A drops by at most 0.03, or if
+the over-prediction of `D` in the < 20-player stratum is corrected on all three seeds; correctness fixes (#50, #51, #52)
+are adopted when they do not lose on B'.  From #48 on, B' is evaluated in the estimated world B'(33) (gaps over dead
+ball) with B'(1) as a second guard.  Outcome: adopted #48 (+0.017 on B'(33)), #50 (+0.0085), #51 (+0.0004), #52
+(reproducibility); off #42 (+0.004), #43 (+0.002), #44 (+0.009), #49 (+0.0003).  Each item below has the full tables.
+
+**Release (Issue #46).**  Final submission generated with `--specialists load` (default model = `specialists_gap.json`)
+twice with identical SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, valid for
+`validate_submission.py`; label-free aggregates on the provided match: 266 possessions, mean 12.3 s, `D` 47.5 % of the
+graded play frames (Milestone 8 submission: 243, 12.8 s, 50.1 %).
 
 ### Smart Tagging alive-ball prior and transition cue (Issue #43; B' / A on simulated tags, not adopted)
 

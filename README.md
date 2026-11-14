@@ -13,12 +13,14 @@ description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of 
 
 ## Status
 
-Milestones 1-8 (issues #1-#40) are complete and merged in `develop`/`main`; **Milestone 9** ("intelligent analysis
-over the provided data and invariance to player dropout", issues #42-#46) is **in progress**: #42 (player-dropout
-invariance) is being implemented, #43 (Smart Tagging alive prior) is measured and left off (report item), #44 (bounded decoder re-optimisation under the
-calibrated degrader) and #46 (release) come later.  Nothing about their results is claimed here; they are recorded in
-`docs/OpusOperandi.md` ("Milestone 9 results") and `docs/TECHNICAL_REPORT.md` once measured.  The submission document
-for the competition form is [`docs/OpusOperandi.md`](docs/OpusOperandi.md).
+Milestones 1-9 (issues #1-#52; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
+provided data and invariance to player dropout") adopted three changes: the set-piece anchor fallback and period-start
+clamp (#50, correctness fix), the isolation of the front end per graded play block (#51, correctness fix) and the
+re-trained default model in the estimated "gaps over dead ball" world (#48, +0.017 spellF1 on B'(33)).  #42, #43, #44
+and #49 were measured and left off by configuration; #47 is the audit against the official repository and #52 makes the
+submission depend only on the committed model.  Results: `docs/OpusOperandi.md` (section 6) and
+`docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
+[`docs/OpusOperandi.md`](docs/OpusOperandi.md).
 
 ### Architecture
 
@@ -74,7 +76,7 @@ with Milestone 9.
 | 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
 | 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
-| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release, #50 set-piece anchor fallback + period-start clamp (there is no #41) |
+| 9 Intelligent analysis and dropout invariance | #42-#52 | adopted: #48 model re-trained with gaps over dead ball, #50 set-piece anchor fallback + period-start clamp, #51 play-block isolation, #52 reproducible model loading; measured and off: #42 dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation + ensemble, #49 restart-team rules; #45 docs, #46 release, #47 official audit (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
