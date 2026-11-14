@@ -265,6 +265,15 @@ specialist_data:
   swap_teams: true              # also train with home / away swapped (team symmetry)
   only_complete_ball: true      # Metrica samples drop the ball while it is dead (leaks D) -> excluded
   min_period_frames: 250
+  # Issue #35 -- extra training matches (training rows only; evaluation stays on the degraded IDSSE matches).
+  # Prefixes of benchmark files: skillcorner_ (broadcast tracking, already degraded), pff_ (World Cup 2022, ball only
+  # where truly visible).  Neither is degraded again.  Measured, see docs/TECHNICAL_REPORT.md 5.x.
+  extra_sources: [pff_]         # adopted (Issue #35): IDSSE + the first 20 PFF matches at weight 0.5
+  skillcorner_weight: 1.0
+  skillcorner_drop_dead: false  # its D is the gap between phases_of_play, not the ball status
+  skillcorner_max_matches: 0    # 0 = all, else the first N by name
+  pff_weight: 0.5
+  pff_max_matches: 20           # 0 = all; the first N by name (deterministic)
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
 specialist_a:

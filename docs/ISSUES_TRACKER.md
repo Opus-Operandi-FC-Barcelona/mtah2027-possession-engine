@@ -58,4 +58,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #32 · wave-4 · Consenso MBR sobre variantes de la ruta especialistas · `feat/issue-32-mbr-specialists`
 - [x] COMPLETADA · #33 · wave-4 · Regenerar `reports/external_evidence.json` · `feat/issue-33-external-evidence-refresh`
 - [x] COMPLETADA · #34 · wave-4 · Decodificador semi-Markov con distribución de duración (medido, desactivado) · `feat/issue-34-duration-aware-decoder`
-- [ ] PENDIENTE · #35 · wave-4 · Entrenar los especialistas con más partidos externos (SkillCorner, PFF) · `feat/issue-35-more-training-matches`
+- [x] COMPLETADA · #35 · wave-4 · Entrenar los especialistas con más partidos externos (PFF adoptado, SkillCorner desactivado) · `feat/issue-35-more-training-matches`

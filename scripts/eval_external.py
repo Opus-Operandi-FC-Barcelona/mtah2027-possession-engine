@@ -84,6 +84,8 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     fps, pitch = float(z["fps"]), tuple(float(v) for v in z["pitch"])
     periods = [(int(a), int(b)) for a, b in z["period_bounds"]]
     gt = eb.to_codes(z["gt"])
+    if "ball_visible" in z.files:       # PFF: the file's ball includes positions estimated from the players
+        ball = np.where(z["ball_visible"][:, None], ball, np.float32(np.nan)).astype(np.float32)
     if degrade:
         dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed)
         players, ball = dm.players_xy, dm.ball_xy

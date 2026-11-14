@@ -149,6 +149,10 @@ learned route only: no gain (+-0.0004), **off**.  Issue #34: explicit-duration (
 duration tables learned from the external labels (`duration.enabled`): possessions 2409 -> 2503 of 3061 but spellF1
 0.6415 -> 0.6390-0.6409, **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
 section 5.x.
+Issue #35: extra training matches.  Validation A = held-out PFF matches with real occlusions (4 folds), validation B =
+the 7 degraded IDSSE leave-one-match-out: IDSSE + 20 PFF matches at weight 0.5 is **adopted** (A 0.4659 -> 0.5231, B
+0.6415 -> 0.6321); SkillCorner (-0.03 on B) is off.  The IDSSE-only and PFF-only models stay selectable
+(`generate_submission.py --model-variant idsse|mixed|pff`, choose with `scripts/compare_input_stats.py`).
 
 ### Possession count and the KPI 7 evidence
 
