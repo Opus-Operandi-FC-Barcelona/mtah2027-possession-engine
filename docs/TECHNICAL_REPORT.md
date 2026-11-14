@@ -790,7 +790,24 @@ false positives per frame (detections farther than 5 m), frames skipped (invalid
 read failures), detections per frame, runtime; plus the median apparent ball size in px.  The crop is centred on
 the ATD ball, so the rates are an upper bound of the gap-recovery use.
 
-Result pending: run locally by the user (the real video never leaves the user's machine).
+Result on the real BAR-ATH tactical video (run locally; aggregates only; seed 0, 1000 sampled frames out of 91,247
+eligible, 91,844 graded frames with the ATD ball visible, 597 skipped for invalid homography / off-image, 0 read
+failures; YOLO skipped because `ultralytics` is not installed):
+
+| detector, crop | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | false positives per frame | detections per frame | time |
+|---|---|---|---|---|---|---|
+| motion, centred on the ATD ball | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 4.67 | 214 s |
+| motion, crop shifted 3 m | 15.4 / 27.2 / 50.4 % | 5.2 / 10.8 / 22.0 % | 4.8 / 16.5 m | 3.73 | 4.65 | 212 s |
+| hough, centred on the ATD ball | 7.2 / 13.8 / 25.3 % | 5.8 / 9.8 / 14.7 % | 13.9 / 40.8 m | 3.92 | 4.24 | 285 s |
+| hough, crop shifted 3 m | 7.0 / 13.7 / 25.9 % | 5.8 / 9.7 / 14.8 % | 13.7 / 40.2 m | 3.93 | 4.26 | 215 s |
+
+Median apparent ball size: 4.5 px.  Reading: on the tactical camera of the stadium the ball is about 4-5 pixels wide
+and the available detectors do not find it.  Even with the crop centred on the true ball, the most confident
+detection lies within 2 m of it in only ~10 % of the frames, there are ~3.7 false positives per frame, and the
+numbers barely change when the crop is shifted by 3 m, which means most "hits" are other blobs (players, lines)
+that happen to be close to the ball rather than the ball itself.  The simulation of Issue #36 needs a ~0.3 m
+accurate detector to gain anything, so this confirms with real measurements the decision to keep `vision.enabled:
+false` in the submission.  A detector trained for this camera remains future work.
 
 ## Milestone 9
 
