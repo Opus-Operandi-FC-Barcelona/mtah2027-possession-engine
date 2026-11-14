@@ -45,6 +45,7 @@ _TEAM_WORDS = {"home": 0, "local": 0, "away": 1, "visitor": 1, "visitante": 1}
 class EmissionParams:
     w_evidence: float = 0.5
     w_phase: float = 0.3
+    w_phase_alive: float = 0.0       # Issue #43: D logit lowered where the ball is hidden in a live phase
     w_owner: float = 4.0
     owner_channels: tuple = ("owner", "owning_team", "ball_owner", "possession", "possessor", "team",
                              "teamid", "team_id", "ballowner")
@@ -149,6 +150,11 @@ def _carry_events(values: np.ndarray, tau_frames: float, backward: bool) -> tupl
     return fwd, bwd
 
 
+def alive_prior_mask(phase_alive: np.ndarray, ball_visible: np.ndarray) -> np.ndarray:
+    """1.0 where the ball is hidden and a live Smart Tagging phase covers the frame (Issue #43), else 0.0."""
+    return (np.asarray(phase_alive, dtype=bool) & ~np.asarray(ball_visible, dtype=bool)).astype(np.float64)
+
+
 def _carry(evidence: np.ndarray, valid: np.ndarray, p: EmissionParams, fps: float) -> np.ndarray:
     """Carried possession in [-1, 1] from confident evidence samples (used when there are no touch events)."""
     confident = valid & (np.abs(evidence) >= p.carry_conf_threshold)
@@ -161,7 +167,7 @@ def compute_emissions(
         dead_score: np.ndarray, possession_evidence: np.ndarray, evidence_valid: np.ndarray,
         ball_visible: np.ndarray, *, status_dead: np.ndarray | None = None,
         phase_prior_home: np.ndarray | None = None, owner_team: np.ndarray | None = None,
-        touch_signed: np.ndarray | None = None, fps: float = FPS,
+        touch_signed: np.ndarray | None = None, phase_alive: np.ndarray | None = None, fps: float = FPS,
         params: EmissionParams | None = None) -> EmissionResult:
     """``log_probs[N, 3]`` (H, A, D) from the per-frame features (see the module docstring)."""
     p = params or EmissionParams.from_config()
@@ -179,6 +185,8 @@ def compute_emissions(
     if status_dead is not None:
         st = np.asarray(status_dead, dtype=np.float64)
         zd = zd + np.where(np.isfinite(st), p.w_status * (2.0 * np.nan_to_num(st) - 1.0), 0.0)
+    if phase_alive is not None and p.w_phase_alive != 0.0:      # Issue #43
+        zd = zd - p.w_phase_alive * alive_prior_mask(phase_alive, vis)
     p_dead = sigmoid(zd)
 
     has_ev = valid & vis

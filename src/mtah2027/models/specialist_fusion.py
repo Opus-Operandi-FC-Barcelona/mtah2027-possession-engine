@@ -30,7 +30,12 @@ from mtah2027.config import FPS, REPO_ROOT, load_section, params_from_mapping
 from mtah2027.decoding.duration_model import DurationModel, DurationParams, fit_from_bench
 from mtah2027.features._utils import sigmoid
 from mtah2027.models.frame_classifier import ClassifierParams, lightgbm_available
-from mtah2027.models.heuristic_emissions import ROUND_DECIMALS, EmissionParams, EmissionResult
+from mtah2027.models.heuristic_emissions import (
+    ROUND_DECIMALS,
+    EmissionParams,
+    EmissionResult,
+    alive_prior_mask,
+)
 from mtah2027.models.pseudo_labeling import PseudoLabelParams, build_pseudo_dataset
 from mtah2027.models.specialist_ball_absent import (
     SpecialistB,
@@ -115,18 +120,22 @@ def _logit(p: np.ndarray) -> np.ndarray:
 
 
 def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarray | None,
-                 status_dead: np.ndarray | None, ep: EmissionParams) -> tuple[np.ndarray, np.ndarray]:
+                 status_dead: np.ndarray | None, ep: EmissionParams, phase_alive: np.ndarray | None = None,
+                 visible: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Add the soft priors to the model probabilities ``prob[N, 3]``; returns ``(prob, home_logit)``.
 
     With no prior channel the input is returned untouched (``home_logit = log(pH / pA)``)."""
     ph, pa, pd = prob[:, 0], prob[:, 1], prob[:, 2]
     z = np.log(np.clip(ph, 1e-6, 1)) - np.log(np.clip(pa, 1e-6, 1))
-    if phase is None and owner is None and status_dead is None:
+    use_alive = phase_alive is not None and visible is not None and ep.w_phase_alive != 0.0
+    if phase is None and owner is None and status_dead is None and not use_alive:
         return prob, z
     zd = _logit(pd)
     if status_dead is not None:
         st = np.asarray(status_dead, dtype=np.float64)
         zd = zd + np.where(np.isfinite(st), ep.w_status * (2.0 * np.nan_to_num(st) - 1.0), 0.0)
+    if use_alive:      # Issue #43: a live tactical phase over hidden-ball frames is evidence of alive ball
+        zd = zd - ep.w_phase_alive * alive_prior_mask(phase_alive, visible)
     if phase is not None:
         z = z + ep.w_phase * np.nan_to_num(np.asarray(phase, dtype=np.float64))
     if owner is not None:
@@ -171,7 +180,8 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
     ep = EmissionParams.from_config(config_path)
     sig = fe.sig
     status = sig.status_dead if (sig is not None and sig.has_status) else None
-    prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep)
+    prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep,
+                                    phase_alive=fe.phase_alive, visible=vis)
 
     logp = np.log(np.maximum(prob, fp.prob_floor))
     scale = np.where(vis, fp.scale_visible, fp.scale_hidden)[:, None]
