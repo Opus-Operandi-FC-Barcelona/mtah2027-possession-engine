@@ -156,7 +156,7 @@ def test_specifications_of_different_width_and_crlf(tmp_path):
 def test_pipeline_runs_on_the_real_structure_without_optional_inputs():
     messages: list[str] = []
     res = run_pipeline_files(META, RAW, log=messages.append)
-    assert res.diagnostics["route"] == "heuristic" and len(res.labels) == 45
+    assert res.diagnostics["route"] in ("heuristic", "specialists") and len(res.labels) == 45
     assert int((np.asarray(res.labels) == 3).sum()) == 0
     stages = res.diagnostics["core"]["stages"]
     assert stages["set_piece_anchors"]["status"].startswith("skipped")

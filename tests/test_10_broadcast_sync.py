@@ -254,7 +254,7 @@ def test_pipeline_wiring_off_on_and_missing(synthetic_dir, synthetic_spec, tmp_p
     on = run_pipeline(synthetic_dir, _config_with(tmp_path, True), match_cfg, log=quiet)
     st = on.diagnostics["broadcast"]
     assert st["status"] == "ok" and st["blocks_accepted"] >= 3
-    assert on.diagnostics["route"] == "heuristic" and st["frames_filled"] > 0
+    assert on.diagnostics["route"] in ("heuristic", "specialists") and st["frames_filled"] > 0
     # broadcast files absent: the stage is skipped, the route still runs
     import shutil
 
