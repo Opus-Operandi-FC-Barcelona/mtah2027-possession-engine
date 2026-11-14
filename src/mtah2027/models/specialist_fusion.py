@@ -18,6 +18,7 @@ matches when they are on disk, else load the committed model file (``models/spec
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -264,11 +265,16 @@ def describe_training(ts: TrainingSet, bench_dir: str | Path, a: SpecialistA, b:
 
 
 def train_specialists(bench_dir: str | Path, *, config_path=None, training: TrainingSet | None = None,
-                      exclude_match: str | None = None,
+                      exclude_match: str | None = None, seed: int | None = None,
                       log: Callable[[str], None] | None = None) -> SpecialistSet:
-    """Train A and B on the degraded external matches of ``bench_dir`` (optionally leaving one match out)."""
+    """Train A and B on the degraded external matches of ``bench_dir`` (optionally leaving one match out).
+
+    ``seed`` (Issue #60) overrides the LightGBM seed of the configuration (a member of a seed bag);
+    ``None`` keeps ``specialist_model.seed``."""
     ts = training or build_training_set(bench_dir, config_path=config_path, log=log)
     cp = ClassifierParams.from_config(config_path)
+    if seed is not None:
+        cp = dataclasses.replace(cp, seed=int(seed))
     a = train_specialist_a(ts, params=SpecialistAParams.from_config(config_path), classifier_params=cp,
                            exclude_match=exclude_match)
     if log:
@@ -322,6 +328,20 @@ def mix_probabilities(probs: list, weights: list, mode: str = "loglinear") -> np
     acc = acc - acc.max(axis=1, keepdims=True)
     e = np.exp(acc)
     return e / e.sum(axis=1, keepdims=True)
+
+
+def save_bag_manifest(files: list, path: str | Path) -> Path:
+    """Issue #60: manifest of a seed bag, an equal-weight ``linear`` ensemble of model files that sit next
+    to the manifest (same training data, different LightGBM seeds)."""
+    out = Path(path)
+    names = [Path(f).name for f in files]
+    if not names or len(set(names)) != len(names):
+        raise ValueError("a bag needs at least one distinct member file")
+    manifest = {"format": ENSEMBLE_FORMAT, "mode": "linear",
+                "members": [{"file": n, "weight": 1.0} for n in names]}
+    text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) + chr(10)
+    out.write_text(text, encoding="utf-8", newline=chr(10))
+    return out
 
 
 def load_specialists(path: str | Path = DEFAULT_MODEL_PATH, config_path=None) -> SpecialistSet:

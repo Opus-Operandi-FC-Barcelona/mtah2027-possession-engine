@@ -55,6 +55,7 @@ def main(argv=None) -> int:
                     help="Issue #48: source weights of the hidden-ball rows (Specialist B) if different")
     ap.add_argument("--train-dead-affinity", type=float, default=None,
                     help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
+    ap.add_argument("--seed", type=int, default=None, help="Issue #60: LightGBM seed (bag member)")
     ap.add_argument("--drop-dead", nargs="*", default=[], help="sources whose D rows are left out")
     args = ap.parse_args(argv)
     if os.environ.get("PYTHONHASHSEED") != "0" and not os.environ.get("MTAH_NO_REEXEC"):
@@ -90,7 +91,7 @@ def main(argv=None) -> int:
         ts = ts.select(args.sources if args.sources is not None else sorted({p.source for p in ts.parts}),
                        weights or ts.weights, args.drop_dead or ts.drop_dead,
                        weights_b=_weights(args.source_weight_b))
-    spec = sf.train_specialists(bench, config_path=args.config, training=ts, log=log)
+    spec = sf.train_specialists(bench, config_path=args.config, training=ts, seed=args.seed, log=log)
     out = sf.save_specialists(spec, args.out)
     digest = hashlib.sha256(out.read_bytes()).hexdigest()
     t = spec.training

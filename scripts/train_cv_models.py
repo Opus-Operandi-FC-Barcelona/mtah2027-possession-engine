@@ -38,6 +38,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pff-weight", type=float, default=0.5)
     ap.add_argument("--lomo", action="store_true")
     ap.add_argument("--pff-folds", action="store_true")
+    ap.add_argument("--full", action="store_true", help="one all-data model, saved to --out-dir/full.json")
+    ap.add_argument("--seed", type=int, default=None, help="Issue #60: LightGBM seed of the models (bag member)")
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--max-matches", type=int, default=20)
     ap.add_argument("--jobs", nargs="*", default=None, help="IDSSE match stems (lomo) or fold indices (pff-folds)")
@@ -62,9 +64,14 @@ def main(argv=None) -> int:
             if path.is_file():
                 continue
             t0 = time.perf_counter()
-            spec = sf.train_specialists(bench, config_path=args.config, training=ts, exclude_match=stem)
+            spec = sf.train_specialists(bench, config_path=args.config, training=ts, exclude_match=stem, seed=args.seed)
             sf.save_specialists(spec, path)
             print(f"lomo {stem}: {time.perf_counter() - t0:.0f} s", flush=True)
+    if args.full and not (out / "full.json").is_file():
+        t0 = time.perf_counter()
+        spec = sf.train_specialists(bench, config_path=args.config, training=ts, seed=args.seed)
+        sf.save_specialists(spec, out / "full.json")
+        print(f"full model ({len(ts.matches)} matches): {time.perf_counter() - t0:.0f} s", flush=True)
     if args.pff_folds:
         pff = sorted(bench.glob("pff_*.npz"))[:args.max_matches]
         folds = [int(j) for j in args.jobs] if args.jobs else list(range(args.folds))
@@ -75,7 +82,7 @@ def main(argv=None) -> int:
             held = [f.stem for i, f in enumerate(pff) if i % args.folds == fold]
             t0 = time.perf_counter()
             sub = ts.select(["idsse", "pff"], ts.weights, ts.drop_dead, exclude_matches=held)
-            spec = sf.train_specialists(bench, config_path=args.config, training=sub)
+            spec = sf.train_specialists(bench, config_path=args.config, training=sub, seed=args.seed)
             sf.save_specialists(spec, path)
             print(f"pff fold {fold} ({len(held)} matches held out): {time.perf_counter() - t0:.0f} s", flush=True)
     return 0
