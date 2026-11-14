@@ -53,6 +53,8 @@ def main(argv=None) -> int:
                          "(never used in any training)")
     ap.add_argument("--unseen-n", type=int, default=8, help="last N PFF matches by name")
     ap.add_argument("--no-folds", action="store_true", help="skip the 4-fold evaluation")
+    ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
+                    help="Issue #43: feed a simulated Smart Tagging (derived from the true labels)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -83,7 +85,7 @@ def main(argv=None) -> int:
         trained = sf.train_specialists(args.bench_dir, config_path=args.config, training=sub)
         spec = dataclasses.replace(trained, fusion=fusion)
         for f in held:
-            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec)
+            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec, sim_tags=args.sim_tags)
             rows.append({"match": f.stem, "fold": fold, **row["specialists"]})
         print(f"fold {fold} done ({len(held)} matches)", flush=True)
     if rows:

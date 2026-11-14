@@ -22,8 +22,17 @@ kick), so ``start_frame`` is never used as the restart.  For every tagged set pi
 here from the arrays when not supplied), dead evidence is ``dead_score >= dead_threshold`` with gaps
 shorter than ``dead_gap_close_s`` bridged.  The interval is ``[onset, t* - 1]`` where ``onset`` is the
 start of the evidence run that touches ``t* - 1`` (or ends at most ``dead_tail_s`` before it), searched
-no farther back than ``max_dead_back_s``.  With no evidence the tag window's own start is used
-(``onset_method='tag-window'``), if it precedes ``t*``.
+no farther back than ``max_dead_back_s``.  With no evidence (Issue #50) only a minimal window of
+``fallback_dead_s`` seconds adjacent to ``t*`` (never before the tag start) is forced
+(``onset_method='fallback'``; 0 s forces nothing and leaves the decision to Viterbi).  The legacy behaviour
+-- force ``D`` back to the tag window's own start, ``onset_method='tag-window'`` -- stays reachable with
+``fallback_tag_window: true``; the windows are ~35 s long and open while play is still alive, so it forced
+live frames to ``D``.
+
+**Period starts (Issue #50).**  A ``Kick Off (Start)`` whose search window contains the first frame of a
+play block (``period_starts``, taken by the pipeline from the match configuration) is clamped to that frame
+(``t_star = block start``), so that the restart opening ``D -> team`` happens at the first graded frame and
+not earlier (half 2: inside the forced-dead block).  Post-goal kick-offs are untouched.
 
 **Goals.**  For each GOALS tag the dead onset is the first start of an evidence run inside the goal
 window (``tag-window`` start otherwise); ``D`` is forced from there to the ``t* - 1`` of the next
@@ -70,6 +79,9 @@ class AnchorParams:
     goal_search_post_s: float = 6.0
     max_goal_to_kickoff_s: float = 150.0
     restart_mask_halfwidth: int = 0
+    fallback_dead_s: float = 0.5          # Issue #50: forced D adjacent to t* without dead-score evidence
+    fallback_tag_window: bool = False     # legacy: force D back to the tag-window start instead
+    clamp_period_starts: bool = True      # Issue #50: Kick Off (Start) t* -> first frame of its play block
 
     @classmethod
     def from_config(cls, path=None) -> "AnchorParams":
@@ -84,12 +96,12 @@ class SetPieceAnchor:
     team: int                  # 0 home, 1 away, -1 N/A
     t_star: int
     confidence: float
-    method: str                # 'ball' | 'collective' | 'unresolved'
+    method: str                # 'ball' | 'collective' | 'period-start' | 'unresolved'
     tag_start: int
     tag_end: int               # exclusive
     window: tuple[int, int]    # inclusive search window
     dead_onset: int            # first frame of the forced dead interval, -1 if none
-    onset_method: str          # 'dead-score' | 'tag-window' | 'none'
+    onset_method: str          # 'dead-score' | 'fallback' | 'tag-window' | 'none'
     rest_s: float = 0.0
 
     @property
@@ -194,8 +206,14 @@ def _dead_onset(t_star: int, tag_start: int, closed: np.ndarray, run_before: np.
         jj = lo + int(tail_hits[-1])
         start = jj - int(run_before[jj]) + 1
         return max(start, t_star - back), "dead-score"
-    if tag_start < t_star:
-        return max(tag_start, t_star - back, 0), "tag-window"
+    if p.fallback_tag_window:       # legacy (before Issue #50): force D back to the tag-window start
+        if tag_start < t_star:
+            return max(tag_start, t_star - back, 0), "tag-window"
+        return -1, "none"
+    fb = int(round(p.fallback_dead_s * fps))
+    start = max(tag_start, t_star - fb, 0)
+    if fb > 0 and start < t_star:
+        return start, "fallback"
     return -1, "none"
 
 
@@ -204,14 +222,16 @@ def anchor_set_pieces(
         set_pieces: Sequence, goals: Sequence = (), *,
         ball_speed: np.ndarray | None = None, players_speed: np.ndarray | None = None,
         dead_score: np.ndarray | None = None, fps: float = FPS, pitch: tuple[float, float] = PITCH,
-        params: AnchorParams | None = None, dead_params: DeadBallParams | None = None) -> AnchorResult:
+        params: AnchorParams | None = None, dead_params: DeadBallParams | None = None,
+        period_starts: Sequence[int] = ()) -> AnchorResult:
     """Anchor every tagged set piece and goal in the tracking.
 
     ``ball_xy[N, 2]`` (NaN when missing), ``players_xy[N, S, 2]`` and ``team_of_slot[S]`` are metres with
     home attacking +x.  ``set_pieces`` items need ``type, team, start_frame, end_frame`` (end exclusive;
     :class:`~mtah2027.io.smart_tagging_loader.SetPiece`), ``goals`` items ``team, start_frame, end_frame``.
     Speeds (m/s) are derived from the positions when not supplied; ``dead_score`` (Issue #13) is computed
-    when not supplied.  Missing tags are never invented: the result only holds what was tagged.
+    when not supplied.  ``period_starts`` are the first frames of the play blocks (Issue #50 clamp of the
+    ``Kick Off (Start)`` anchors).  Missing tags are never invented: the result only holds what was tagged.
     """
     p = params or AnchorParams.from_config()
     n = ball_xy.shape[0]
@@ -273,6 +293,14 @@ def anchor_set_pieces(
                 (t_star, conf), method = col, "collective"
             else:
                 t_star, conf, method = -1, 0.0, "unresolved"
+        if p.clamp_period_starts and "kick off" in str(sp.type) and "start" in str(sp.type):
+            near = [int(s0) for s0 in period_starts if lo <= int(s0) <= hi]
+            if near:
+                t_star = min(near, key=lambda s0: abs(s0 - max(t_star, a)))
+                if method == "unresolved":
+                    method, conf = "period-start", 0.5
+                else:
+                    conf = max(conf, 0.5)
         onset, onset_method = (-1, "none")
         if t_star >= 0:
             onset, onset_method = _dead_onset(t_star, a, closed, run_before, p, fps)

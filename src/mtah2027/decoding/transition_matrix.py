@@ -68,6 +68,13 @@ class TransitionParams:
     # ``spec_hyst``), only towards the team the new sign names; H/A->D is opened to ``spec_dead_open`` where
     # P(D) is a local peak >= ``spec_dead_min``; collective-speed accelerations above ``spec_accel_min`` m/s
     # (change of the mean player speed over +-``spec_accel_half`` frames) open both to ``spec_accel_open``.
+    # Issue #43: H<->A opened around the start of a Smart Tagging Attacking / Defensive Transition (towards
+    # the team that gains the ball), only inside occlusions when ``phase_cue_hidden_only``.  Off by default.
+    phase_cue: bool = False
+    phase_cue_open: float = -4.0
+    phase_cue_before_s: float = 4.0
+    phase_cue_after_s: float = 8.0
+    phase_cue_hidden_only: bool = True
     spec_open: bool = False
     spec_ha_open: float = -4.0
     spec_hyst: float = 0.5
@@ -143,6 +150,17 @@ def specialist_openings(n: int, occ: np.ndarray, p: TransitionParams, *, home_lo
     return to_home, to_away, to_dead, accel
 
 
+def phase_cue_masks(n: int, transitions: list, fps: float,
+                    p: TransitionParams) -> tuple[np.ndarray, np.ndarray]:
+    """``(to_home, to_away)``: True within ``[start - before, start + after]`` of a Transition won by it."""
+    pre, post = int(round(p.phase_cue_before_s * fps)), int(round(p.phase_cue_after_s * fps))
+    to_home, to_away = np.zeros(n, bool), np.zeros(n, bool)
+    for start, side in transitions:
+        target = to_home if int(side) == H else to_away
+        target[max(0, int(start) - pre):min(n, int(start) + post + 1)] = True
+    return to_home, to_away
+
+
 def touch_window_masks(touch_score: np.ndarray, d_home: np.ndarray, d_away: np.ndarray,
                        is_aerial: np.ndarray | None, p: TransitionParams) -> tuple[np.ndarray, np.ndarray]:
     """``(to_home, to_away)``: True within ``touch_halfwidth`` of a touch where that team can win the ball."""
@@ -180,7 +198,8 @@ def build_log_transitions(
         ball_out: np.ndarray | None = None, restart_frames: np.ndarray | None = None,
         restart_teams: np.ndarray | None = None, fps: float = FPS,
         params: TransitionParams | None = None, spec_home_logit: np.ndarray | None = None,
-        spec_p_dead: np.ndarray | None = None, spec_speed: np.ndarray | None = None) -> np.ndarray:
+        spec_p_dead: np.ndarray | None = None, spec_speed: np.ndarray | None = None,
+        transitions: list | None = None) -> np.ndarray:
     """Build ``log_trans[n, 3, 3]`` (float64, rounded to 1e-6) from the per-frame evidence.
 
     ``d_home`` / ``d_away`` are the distances (m) of the closest player of each team to the ball (NaN
@@ -218,6 +237,12 @@ def build_log_transitions(
         ha_ah = np.where(s_home, np.maximum(ha_ah, p.spec_ha_open), ha_ah)
         ha_ha = np.where(s_acc, np.maximum(ha_ha, p.spec_accel_open), ha_ha)
         ha_ah = np.where(s_acc, np.maximum(ha_ah, p.spec_accel_open), ha_ah)
+    if p.phase_cue and transitions:
+        cue_h, cue_a = phase_cue_masks(n, transitions, fps, p)
+        if p.phase_cue_hidden_only:
+            cue_h, cue_a = cue_h & occ, cue_a & occ
+        ha_ha = np.where(cue_a, np.maximum(ha_ha, p.phase_cue_open), ha_ha)
+        ha_ah = np.where(cue_h, np.maximum(ha_ah, p.phase_cue_open), ha_ah)
     log_trans[:, H, A] = ha_ha      # away team wins the ball
     log_trans[:, A, H] = ha_ah      # home team wins the ball
 

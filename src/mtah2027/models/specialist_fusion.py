@@ -30,7 +30,12 @@ from mtah2027.config import FPS, REPO_ROOT, load_section, params_from_mapping
 from mtah2027.decoding.duration_model import DurationModel, DurationParams, fit_from_bench
 from mtah2027.features._utils import sigmoid
 from mtah2027.models.frame_classifier import ClassifierParams, lightgbm_available
-from mtah2027.models.heuristic_emissions import ROUND_DECIMALS, EmissionParams, EmissionResult
+from mtah2027.models.heuristic_emissions import (
+    ROUND_DECIMALS,
+    EmissionParams,
+    EmissionResult,
+    alive_prior_mask,
+)
 from mtah2027.models.pseudo_labeling import PseudoLabelParams, build_pseudo_dataset
 from mtah2027.models.specialist_ball_absent import (
     SpecialistB,
@@ -115,18 +120,22 @@ def _logit(p: np.ndarray) -> np.ndarray:
 
 
 def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarray | None,
-                 status_dead: np.ndarray | None, ep: EmissionParams) -> tuple[np.ndarray, np.ndarray]:
+                 status_dead: np.ndarray | None, ep: EmissionParams, phase_alive: np.ndarray | None = None,
+                 visible: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Add the soft priors to the model probabilities ``prob[N, 3]``; returns ``(prob, home_logit)``.
 
     With no prior channel the input is returned untouched (``home_logit = log(pH / pA)``)."""
     ph, pa, pd = prob[:, 0], prob[:, 1], prob[:, 2]
     z = np.log(np.clip(ph, 1e-6, 1)) - np.log(np.clip(pa, 1e-6, 1))
-    if phase is None and owner is None and status_dead is None:
+    use_alive = phase_alive is not None and visible is not None and ep.w_phase_alive != 0.0
+    if phase is None and owner is None and status_dead is None and not use_alive:
         return prob, z
     zd = _logit(pd)
     if status_dead is not None:
         st = np.asarray(status_dead, dtype=np.float64)
         zd = zd + np.where(np.isfinite(st), ep.w_status * (2.0 * np.nan_to_num(st) - 1.0), 0.0)
+    if use_alive:      # Issue #43: a live tactical phase over hidden-ball frames is evidence of alive ball
+        zd = zd - ep.w_phase_alive * alive_prior_mask(phase_alive, visible)
     if phase is not None:
         z = z + ep.w_phase * np.nan_to_num(np.asarray(phase, dtype=np.float64))
     if owner is not None:
@@ -171,7 +180,8 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
     ep = EmissionParams.from_config(config_path)
     sig = fe.sig
     status = sig.status_dead if (sig is not None and sig.has_status) else None
-    prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep)
+    prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep,
+                                    phase_alive=fe.phase_alive, visible=vis)
 
     logp = np.log(np.maximum(prob, fp.prob_floor))
     scale = np.where(vis, fp.scale_visible, fp.scale_hidden)[:, None]
@@ -258,15 +268,19 @@ def find_bench_dir(explicit: str | Path | None = None) -> Path | None:
 
 
 def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = None,
-                        model_path: str | Path | None = None, config_path=None, prefer_file: bool = False,
+                        model_path: str | Path | None = None, config_path=None, prefer_file: bool = True,
+                        train_fallback: bool = True,
                         log: Callable[[str], None] | None = None) -> SpecialistSet | None:
     """Specialists for the pipeline, or ``None`` (heuristic emissions).
 
     ``mode``: ``off`` -> ``None``; ``train`` -> train from the external matches (error if absent);
-    ``load`` -> the committed model file (error if absent); ``auto`` -> train when the external matches are
-    on disk, else load the committed file, else ``None``.  Any failure in ``auto`` mode falls through to
-    the next option and is logged.  ``prefer_file`` makes ``auto`` skip the run-time training (used for the
-    synthetic CI run: deterministic and independent of the data on the local disk).
+    ``load`` -> the committed model file (error if absent); ``auto`` -> the committed model file when it
+    exists, else train when the external matches are on disk, else ``None``.  Any failure in ``auto`` mode
+    falls through to the next option and is logged.  Issue #52: loading first makes the submission depend
+    only on the repository (RULES.md: running it against the provided data must reproduce the same file),
+    never on whether a benchmark cache happens to sit next to it.  ``prefer_file=False`` restores the old
+    ``auto`` order (train first) for experiments; ``train_fallback=False`` makes ``auto`` never train
+    (synthetic CI runs: fast and independent of the data on the local disk).
     """
     say = log or (lambda m: None)
     if mode == "off":
@@ -275,20 +289,8 @@ def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = No
         raise ValueError(f"unknown specialists mode '{mode}'")
     path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
     strict = mode != "auto"
-    if mode == "train" or (mode == "auto" and not prefer_file):
-        found = find_bench_dir(bench_dir)
-        if found is None:
-            if mode == "train":
-                raise FileNotFoundError("no external benchmark matches found (--bench-dir / $MTAH_BENCH_DIR)")
-            say("specialists: external matches not on disk")
-        else:
-            try:
-                return train_specialists(found, config_path=config_path, log=say)
-            except Exception as exc:  # noqa: BLE001 - progressive fallback
-                if strict:
-                    raise
-                say(f"specialists: training failed ({type(exc).__name__}: {exc})")
-    if mode in ("auto", "load"):
+
+    def from_file() -> SpecialistSet | None:
         if path.is_file():
             try:
                 return load_specialists(path, config_path)
@@ -300,6 +302,35 @@ def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = No
             raise FileNotFoundError(f"{path} not found")
         else:
             say(f"specialists: no committed model file ({path.name})")
+        return None
+
+    def from_training() -> SpecialistSet | None:
+        found = find_bench_dir(bench_dir)
+        if found is None:
+            if strict:
+                raise FileNotFoundError("no external benchmark matches found (--bench-dir / $MTAH_BENCH_DIR)")
+            say("specialists: external matches not on disk")
+            return None
+        try:
+            return train_specialists(found, config_path=config_path, log=say)
+        except Exception as exc:  # noqa: BLE001 - progressive fallback
+            if strict:
+                raise
+            say(f"specialists: training failed ({type(exc).__name__}: {exc})")
+        return None
+
+    if mode == "load":
+        order = (from_file,)
+    elif mode == "train":
+        order = (from_training,)
+    else:
+        order = (from_file, from_training) if prefer_file else (from_training, from_file)
+        if not train_fallback:
+            order = (from_file,)
+    for attempt in order:
+        result = attempt()
+        if result is not None:
+            return result
     say("specialists: unavailable, using the heuristic emissions"
         + ("" if lightgbm_available() else " (lightgbm is not installed)"))
     return None

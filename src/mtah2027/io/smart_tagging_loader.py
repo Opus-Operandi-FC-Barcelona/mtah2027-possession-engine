@@ -36,6 +36,8 @@ GOAL_CODE = "goals"
 # action: the possession of the phase belongs to the opponent, so their coverage counts for the other side.
 DEFENDING_CODES: tuple[str, ...] = ("defending in attacking third", "defending in middle third",
                                     "defending in defensive third", "defensive transition")
+# Issue #43: phases that mark a change of possession (the possession side is the team that gains the ball)
+TRANSITION_CODES: tuple[str, ...] = ("attacking transition", "defensive transition")
 DEFAULT_TEAM_ALIASES: dict[str, int] = {
     "barcelona": HOME, "fc barcelona": HOME, "barca": HOME, "barça": HOME,
     "atletic club": AWAY, "athletic club": AWAY, "atletic": AWAY, "athletic": AWAY,
@@ -92,6 +94,8 @@ class SmartTagging:
     fps: int = FPS
     codes: dict[str, int] = field(default_factory=dict)
     n_flipped: int = 0                 # defensive phases whose team was flipped to the possessing side
+    phase_cover: np.ndarray | None = None      # [N] bool: any phase code covers the frame (Issue #43)
+    transitions: list = field(default_factory=list)   # (start_frame, possession_side) of Transition phases
 
     def set_pieces_of(self, kind: str) -> list[SetPiece]:
         """Set pieces whose type equals ``kind`` (case-insensitive)."""
@@ -245,6 +249,16 @@ def build_smart_tagging(events: list[TagEvent], n_frames: int = N_VIDEO_FRAMES,
     prior = np.where(total > 0, (home - away) / np.maximum(total, 1.0), 0.0).astype(np.float32)
     team = np.where(home > away, HOME, np.where(away > home, AWAY, NO_TEAM)).astype(np.int8)
 
+    cover = (home + away) > 0
+    cover_nt = np.zeros(n_frames + 1, dtype=np.int32)       # phases of unknown team (N/A) also count as live
+    for e in phases:
+        if e.team < 0 and e.end_frame > e.start_frame:
+            cover_nt[max(0, min(e.start_frame, n_frames))] += 1
+            cover_nt[max(0, min(e.end_frame, n_frames))] -= 1
+    cover = cover | (np.cumsum(cover_nt[:n_frames]) > 0)
+    transitions = sorted((e.start_frame, e.team) for e in phases
+                         if e.code in TRANSITION_CODES and e.team >= 0)
+
     sets = [SetPiece(e.type, e.team, e.start_frame, e.end_frame, e.half)
             for e in events if e.code == SET_PIECE_CODE]
     goals = [Goal(e.team, e.start_frame, e.end_frame, e.half) for e in events if e.code == GOAL_CODE]
@@ -260,7 +274,7 @@ def build_smart_tagging(events: list[TagEvent], n_frames: int = N_VIDEO_FRAMES,
     return SmartTagging(events=events, set_pieces=sets, goals=goals, phase_count_home=home,
                         phase_count_away=away, phase_prior_home=prior, phase_team=team,
                         in_set_piece=np.cumsum(diff[:n_frames]) > 0, n_frames=n_frames, fps=fps, codes=codes,
-                        n_flipped=n_flipped)
+                        n_flipped=n_flipped, phase_cover=cover, transitions=transitions)
 
 
 def load_smart_tagging(data_dir: str | os.PathLike | None = None, n_frames: int = N_VIDEO_FRAMES,
