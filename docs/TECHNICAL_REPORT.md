@@ -400,6 +400,51 @@ tracked players per frame are 21.8 (degraded IDSSE) and 22.0 (PFF).)  Rule of th
 ATD has long, few gaps close to the degraded-IDSSE profile, use `idsse`; if it has many short gaps like PFF, use the
 default `mixed`.
 
+**Item 6 (Issue #38): degrader calibrated to the real ATD gap statistics, model re-selection.**  Label-free aggregates of
+the competition tactical ATD (`scripts/compare_input_stats.py --data-dir data`; tracking only, no labels, no per-frame
+output) showed that the Issue #19 degrader had the right amount of hidden ball but the wrong shape.  The degrader was
+calibrated (random search + 8-seed pooled check on the 7 IDSSE matches; nothing from BAR-ATH beyond those aggregates,
+stored in `external_degrader_target`): log-normal block durations (`gap_model: lognormal`, median 12.5 s, sigma 0.95,
+5-240 s) separated by >= 9 s of visible ball (`guard_s`, otherwise adjacent blocks merge into long gaps), `hide_frac`
+0.424, more single-player dropouts (2.4 per min, 5-30 s) and a new group-dropout stream (0.5 per min, 3-6 players for
+5-20 s).  The Issue #19 profile is the section `external_degrader_legacy` (`gap_model: classes`) and reproduces the old
+random stream exactly.
+
+| (7 IDSSE, 8 seeds pooled) | ball missing | gaps / 10 min | gap p50 / p90 / p99 (s) | hidden time <5 / 5-20 / 20-60 / >60 s (%) | players / frame | frames < 20 players |
+|---|---|---|---|---|---|---|
+| target (BAR-ATH ATD) | 40.7 % | 12.94 | 11.5 / 37.9 / 113.7 | 0.3 / 32.7 / 48.0 / 19.0 | 20.49 | 14.9 % |
+| Issue #19 degrader (seed 0) | 40.2 % | 5.73 | 35.1 / 82.5 / 118.4 | 0.1 / 9.0 / 43.4 / 47.5 | 21.82 | 0.8 % |
+| calibrated | 40.6 % | 13.38 | 12.2 / 38.6 / 97.3 | 0.0 / 37.2 / 42.9 / 19.9 | 20.77 | 15.4 % |
+
+(The tail of the real gaps, p99, and the 5-20 s vs 20-60 s split are only approximated by a single log-normal.)
+
+Re-selection, same protocol as #35.  **B'** = 7 degraded IDSSE leave-one-match-out with the calibrated degrader, seeds
+0-2 (primary criterion now); **A** = PFF held-out, 4 folds (secondary guard: must not drop more than 0.01 vs mixed).
+"Train degrader" = degrader of the IDSSE training rows.
+
+| training set | train degrader | B' seed 0 / 1 / 2 | B' mean spellF1 / macroF1 | B' possessions (true 3061) | A spellF1 / macroF1 | A possessions (true 7069) |
+|---|---|---|---|---|---|---|
+| IDSSE + PFF 0.5 (**current default**) | legacy | 0.6008 / 0.6053 / 0.6069 | **0.6044** / 0.9016 | 2239 | 0.5231 / 0.8626 | 6395 |
+| IDSSE only | legacy | 0.6091 / 0.6100 / 0.6086 | 0.6092 / 0.9026 (+0.0048) | 2425 | 0.4659 / 0.8405 | 7897 |
+| PFF only | legacy | 0.5100 / 0.4938 / 0.4921 | 0.4986 / 0.8261 (-0.106) | 1858 | 0.5534 / 0.8707 | 5319 |
+| IDSSE only | calibrated | 0.6107 / 0.6133 / 0.6136 | 0.6125 / 0.9056 (+0.0081) | 2329 | 0.4790 / 0.8412 (-0.044) | 7377 |
+| IDSSE + PFF 0.5 | calibrated | 0.6084 / 0.6071 / 0.6099 | 0.6085 / 0.9035 (+0.0041) | 2219 | 0.5278 / 0.8639 (+0.005) | 6196 |
+
+For reference, the same models scored with the old degrader (#35): mixed B 0.6321, IDSSE-only 0.6415; the calibrated
+degrader is harder (-0.03 ... -0.04) because its gaps are less forgiving (shorter visible stretches, many player dropouts).
+Decision rule: adopt a variant if it beats the default by >= +0.01 on the B' mean with no seed below -0.003 and A not
+worse than -0.01.  The best B' gain is +0.0081 (IDSSE only, calibrated) and it also loses 0.044 on A; the calibrated
+mixed model gains +0.004 on B' (every seed better) and +0.005 on A.  **No variant passes: the default
+(`models/specialists.json` = IDSSE + PFF 0.5 trained with the legacy degrader) is kept**; `specialists.json` is unchanged.
+The calibrated mixed model is stored as `models/specialists_calib.json` (`generate_submission.py --model-variant calib`;
+training: `scripts/train_specialists.py --degrader-section external_degrader`).  `specialist_data.degrader_section`
+(default `external_degrader_legacy`) keeps the run-time training equal to the committed default.  Tools:
+`scripts/eval_pff_heldout.py` (validation A), `--degrader-section` of `eval_external.py` / `train_specialists.py`.
+Decoder overrides under the calibrated degrader (`diagnose_possessions.py`, cached LOMO models, seeds 0-2, 21 runs):
+with `route_overrides.specialists` 0.5997 / 0.8999, without 0.5954 / 0.8999 (+0.0043 from the tuned overrides), i.e. the
+Issue #31 parameters are not broken by the calibration (absolute values differ slightly from the table above because
+`diagnose_possessions.py` uses another match/seed offset).
+
 ### Real-data ingestion check (Issue #37, aggregates only)
 
 `scripts/real_data_sanity.py` on the BAR-ATH bundle (nothing per-frame is printed).  Ingestion is correct: 199,319
@@ -473,7 +518,6 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
-
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

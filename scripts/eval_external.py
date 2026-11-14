@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -39,7 +40,7 @@ for extra in (REPO_ROOT / "src", REPO_ROOT):
         sys.path.insert(0, str(extra))
 
 from mtah2027.models.baseline_labels import baseline_labels  # noqa: E402
-from mtah2027.models.external_degrader import degrade_match  # noqa: E402
+from mtah2027.models.external_degrader import DegraderParams, degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
 
@@ -87,7 +88,8 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     if "ball_visible" in z.files:       # PFF: the file's ball includes positions estimated from the players
         ball = np.where(z["ball_visible"][:, None], ball, np.float32(np.nan)).astype(np.float32)
     if degrade:
-        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed)
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed,
+                           params=DegraderParams.from_config(config))
         players, ball = dm.players_xy, dm.ball_xy
     elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
@@ -130,6 +132,16 @@ def main(argv=None) -> int:
     ap.add_argument("--seeds", type=int, nargs="*", default=None,
                     help="several seeds (mean reported); overrides --seed")
     ap.add_argument("--config", default=None, help="YAML configuration (default configs/default.yaml)")
+    ap.add_argument("--degrader-section", default=None,
+                    help="Issue #38: config section of the degrader of the IDSSE training rows "
+                         "(external_degrader_legacy = adopted models, external_degrader = calibrated); "
+                         "the held-out matches are always degraded with external_degrader")
+    ap.add_argument("--training-pickle", default=None,
+                    help="Issue #38: load / save the training rows (valid for one --training-config)")
+    ap.add_argument("--sources", nargs="*", default=None,
+                    help="Issue #38: train only on these sources (idsse skillcorner pff)")
+    ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W",
+                    help="sample weight per source")
     ap.add_argument("--matches", nargs="*", default=None, help="subset of match names (file stems)")
     ap.add_argument("--only-complete-ball", action="store_true",
                     help="skip matches whose own ball channel has gaps (Metrica samples drop the ball "
@@ -159,7 +171,7 @@ def main(argv=None) -> int:
 
         from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
-        from mtah2027.models.specialist_data import build_training_set
+        from mtah2027.models.specialist_data import TrainingDataParams, build_training_set
 
         overrides = {}
         for item in args.fusion:
@@ -168,7 +180,21 @@ def main(argv=None) -> int:
         if args.no_pseudo:
             overrides["use_pseudo_labels"] = False
         fusion = dataclasses.replace(sf.FusionParams.from_config(args.config), **overrides)
-        training = build_training_set(args.bench_dir, config_path=args.config, log=print)
+        pkl = Path(args.training_pickle) if args.training_pickle else None
+        if pkl is not None and pkl.is_file():
+            training = pickle.loads(pkl.read_bytes())
+        else:
+            dp = TrainingDataParams.from_config(args.config)
+            if args.degrader_section:
+                dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
+            training = build_training_set(args.bench_dir, params=dp, config_path=args.config, log=print)
+            if pkl is not None:
+                pkl.write_bytes(pickle.dumps(training))
+        if args.sources is not None or args.source_weight:
+            weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+            training = training.select(args.sources if args.sources is not None
+                                       else sorted({p.source for p in training.parts}),
+                                       weights or training.weights, training.drop_dead)
 
         def specialists_for(stem: str):
             if stem not in models:

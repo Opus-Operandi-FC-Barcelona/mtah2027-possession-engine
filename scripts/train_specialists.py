@@ -40,6 +40,9 @@ def main(argv=None) -> int:
     ap.add_argument("--extra-sources", nargs="*", default=None, metavar="PREFIX",
                     help="Issue #35: extra training matches, e.g. skillcorner_ pff_ (default: config)")
     ap.add_argument("--pff-max-matches", type=int, default=None, help="first N PFF matches by name (0 = all)")
+    ap.add_argument("--degrader-section", default=None,
+                    help="Issue #38: degrader of the IDSSE training rows: external_degrader_legacy (default, "
+                         "Issue #19 profile) or external_degrader (calibrated)")
     ap.add_argument("--sources", nargs="*", default=None,
                     help="train only on these sources (idsse skillcorner pff), e.g. pff for a PFF-only model")
     ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W",
@@ -68,6 +71,8 @@ def main(argv=None) -> int:
         dp = dataclasses.replace(dp, extra_sources=tuple(args.extra_sources))
     if args.pff_max_matches is not None:
         dp = dataclasses.replace(dp, pff_max_matches=args.pff_max_matches)
+    if args.degrader_section:
+        dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
     log = lambda m: print(m, flush=True)  # noqa: E731
     ts = build_training_set(bench, params=dp, config_path=args.config, log=log)
     if args.sources is not None or args.source_weight or args.drop_dead:

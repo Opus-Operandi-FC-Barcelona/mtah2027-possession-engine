@@ -35,7 +35,7 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 
 from mtah2027.config import load_section, params_from_mapping
-from mtah2027.models.external_degrader import degrade_match
+from mtah2027.models.external_degrader import DegraderParams, degrade_match
 from mtah2027.models.specialist_features import build_feature_matrix
 from mtah2027.validation import eval_bridge as eb
 
@@ -55,6 +55,9 @@ class TrainingDataParams:
     skillcorner_max_matches: int = 0      # 0 = all (sorted by name, deterministic)
     pff_weight: float = 1.0
     pff_max_matches: int = 0
+    # Issue #38: config section of the degrader of the IDSSE training rows.  ``external_degrader_legacy`` (the
+    # Issue #19 profile) keeps the adopted models; ``external_degrader`` = the calibrated degrader.
+    degrader_section: str = "external_degrader_legacy"
 
     @classmethod
     def from_config(cls, path=None) -> "TrainingDataParams":
@@ -174,7 +177,8 @@ def swap_codes(codes: np.ndarray) -> np.ndarray:
 
 
 def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[bool] = (False, True),
-                   config_path=None, min_period_frames: int = 250) -> list[MatchRows]:
+                   config_path=None, min_period_frames: int = 250,
+                   degrader_section: str = "external_degrader_legacy") -> list[MatchRows]:
     """Rows of one external match degraded with ``seed`` (one :class:`MatchRows` per swap variant)."""
     from mtah2027.pipeline import compute_front_end, heuristic_emissions  # local import: avoid a cycle
 
@@ -186,7 +190,8 @@ def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[
     gt = eb.to_codes(z["gt"])
     source = source_of(Path(path).stem)
     if source == "idsse":
-        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed)
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed,
+                           params=DegraderParams.from_config(config_path, degrader_section))
         dm_players, dm_ball = dm.players_xy, dm.ball_xy
     else:                      # already occluded tracking: use it as it is (Issue #35)
         if "ball_visible" in z.files:         # PFF: estimated ball positions are not observations
@@ -231,7 +236,8 @@ def build_training_set(bench_dir: str | Path, *, params: TrainingDataParams | No
             t0 = time.perf_counter()
             parts += rows_for_match(f, seed + i, stride=p.stride,
                                     swaps=(False, True) if p.swap_teams else (False,),
-                                    config_path=config_path, min_period_frames=p.min_period_frames)
+                                    config_path=config_path, min_period_frames=p.min_period_frames,
+                                    degrader_section=p.degrader_section)
             if log:
                 log(f"training rows {f.stem} seed {seed + i}: {len(parts[-1].y_vis)} visible / "
                     f"{len(parts[-1].y_hid)} hidden ({time.perf_counter() - t0:.1f} s)")

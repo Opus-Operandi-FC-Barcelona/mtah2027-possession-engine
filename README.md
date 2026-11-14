@@ -153,6 +153,11 @@ Issue #35: extra training matches.  Validation A = held-out PFF matches with rea
 the 7 degraded IDSSE leave-one-match-out: IDSSE + 20 PFF matches at weight 0.5 is **adopted** (A 0.4659 -> 0.5231, B
 0.6415 -> 0.6321); SkillCorner (-0.03 on B) is off.  The IDSSE-only and PFF-only models stay selectable
 (`generate_submission.py --model-variant idsse|mixed|pff`, choose with `scripts/compare_input_stats.py`).
+Issue #38: the degrader was calibrated to the label-free gap statistics of the competition ATD (`external_degrader_target`
+in the configuration; `compare_input_stats.py` prints target vs degraded; the Issue #19 profile stays in
+`external_degrader_legacy`).  Re-selection under it (validation B' = 7 degraded IDSSE LOMO, seeds 0-2; A = PFF held-out):
+no variant gains the required +0.01 on B', so the default (IDSSE + PFF 0.5, trained with the legacy degrader) is kept;
+`--model-variant calib` (calibrated-degrader training) is selectable.
 
 ### Possession count and the KPI 7 evidence
 
