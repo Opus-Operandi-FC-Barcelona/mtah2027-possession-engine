@@ -86,6 +86,7 @@ class PipelineParams:
     use_spell_optimizer: bool = True
     use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
     use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
+    isolate_play_blocks: bool = True  # Issue #51: tracking outside the play blocks is masked (no leak)
 
     @classmethod
     def from_config(cls, path=None) -> "PipelineParams":
@@ -197,6 +198,38 @@ class FrontEnd:
     is_aerial: np.ndarray | None = None   # Issue #12 mask (None when the filter is off or failed)
 
 
+def mask_outside_blocks(players_xy: np.ndarray, ball_xy: np.ndarray,
+                        ball_channels: dict[str, np.ndarray] | None,
+                        play_blocks: Sequence[tuple[int, int]]):
+    """Issue #51: copies of the tracking with every frame outside the play blocks set to NaN.
+
+    Warm-up, half-time and post-match tracking is never graded; left in place it feeds the gap interpolation,
+    the Savitzky-Golay runs, the ball memory, the visibility distances and the carry exponentials of the
+    first / last frames of a block.  NaN frames carry no information, so the front end of each block then
+    only depends on the block itself (``outside`` is returned for the diagnostics)."""
+    n = len(ball_xy)
+    inside = np.zeros(n, bool)
+    for a, b in play_blocks:
+        inside[max(int(a), 0):min(int(b), n - 1) + 1] = True
+    outside = ~inside
+    if not outside.any():
+        return players_xy, ball_xy, ball_channels, outside
+    pxy = np.array(players_xy, dtype=np.float32, copy=True)
+    pxy[outside] = np.nan
+    bxy = np.array(ball_xy, dtype=np.float32, copy=True)
+    bxy[outside] = np.nan
+    chans = None
+    if ball_channels is not None:
+        chans = {}
+        for k, v in ball_channels.items():
+            v = np.asarray(v)
+            if v.shape[:1] == (n,) and np.issubdtype(v.dtype, np.floating):
+                v = v.copy()
+                v[outside] = np.nan
+            chans[k] = v
+    return pxy, bxy, chans, outside
+
+
 def compute_front_end(
         players_xy: np.ndarray, team_of_slot: np.ndarray, ball_xy: np.ndarray, *,
         play_blocks: Sequence[tuple[int, int]], fps: float = FPS, pitch: tuple[float, float] = PITCH,
@@ -214,6 +247,11 @@ def compute_front_end(
     n = len(ball_xy)
     team = np.asarray(team_of_slot)
     play_blocks = [(int(a), int(b)) for a, b in play_blocks]
+
+    # 1b. block isolation (Issue #51) ----------------------------------------------------------------
+    if pp.isolate_play_blocks:
+        players_xy, ball_xy, ball_channels, _ = mask_outside_blocks(players_xy, ball_xy, ball_channels,
+                                                                    play_blocks)
 
     # 2. cleaning ---------------------------------------------------------------------------
     pxy = np.asarray(players_xy, dtype=np.float32)
