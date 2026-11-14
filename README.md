@@ -61,8 +61,7 @@ only if its leave-one-match-out spellF1 on degraded external matches beats the h
 Choose between them with label-free input statistics (`scripts/compare_input_stats.py --data-dir data`), never with
 labels of the provided game.
 
-**Tests.**  446 tests are collected on `develop` at the time of writing (`pytest --collect-only -q`); the count grows
-with Milestone 9.
+**Tests.**  520 tests are collected on `develop` at the time of writing (`pytest --collect-only -q`).
 
 ### Issues by milestone
 
@@ -453,3 +452,17 @@ and the end-to-end determinism check (two full-length synthetic runs must give t
 **unmodified** from <https://github.com/metrica-sports/more-than-a-hack-2027> at commit
 `f8f2629ff1e0985f81d7e59d8413678514ee1530` (MIT; licence in `THIRD_PARTY_LICENSES/`).  The engine imports
 them -- through `mtah2027.validation.eval_bridge` and `mtah2027.config` -- and never re-implements them.
+
+## External data
+
+No external data is redistributed in this repository; the matches are downloaded and prepared by
+`mtah2027-external-benchmarks`.
+
+* **IDSSE / DFL Sportec open data** (7 Bundesliga matches; training, tuning and validation), licensed **CC BY 4.0**.
+  Citation: Bassek, M., Rein, R., Weber, H., & Memmert, D. (2025). An integrated dataset of spatiotemporal and event
+  data in elite soccer. *Scientific Data*, 12, 195. <https://doi.org/10.1038/s41597-025-04505-y>.  Data: Figshare
+  <https://doi.org/10.6084/m9.figshare.28196177> and Hugging Face `pysport/idsse-data`
+  (<https://huggingface.co/datasets/pysport/idsse-data>).
+* **PFF FC World Cup 2022 Open Data** (training and validation under real occlusions): free public access under PFF's
+  terms at <https://data.pff.com>; not redistributed.
+* **Metrica Sports sample data** (evaluation only): <https://github.com/metrica-sports/sample-data>.
