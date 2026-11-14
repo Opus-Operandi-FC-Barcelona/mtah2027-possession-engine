@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "note": "external open data only (no BAR-ATH); aggregates of leave-one-match-out evaluations",
-  "date": "2026-10-26",
-  "git_sha": "000a9c8e875d2f9382cc861ddd5f48415ea64710",
-  "git_dirty": false,
+  "date": "2026-11-03",
+  "git_sha": "0bb13f32473c174fab0e2c4ab279216afe2815a3",
+  "git_dirty": true,
   "matches": [
     "idsse_J03WMX",
     "idsse_J03WN1",
@@ -24,16 +24,16 @@
       "n_matches": 7,
       "routes": {
         "heuristic": {
-          "spell_f1": 0.4348376960011026,
-          "macro_f1": 0.7732000824168177,
-          "possessions_pred_mean": 310.42857142857144,
+          "spell_f1": 0.4078221452191512,
+          "macro_f1": 0.7773147271983415,
+          "possessions_pred_mean": 315.04761904761904,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 21
         },
         "specialists_lomo": {
-          "spell_f1": 0.6320582972855695,
-          "macro_f1": 0.9070575169382492,
-          "possessions_pred_mean": 323.6190476190476,
+          "spell_f1": 0.6016870853133895,
+          "macro_f1": 0.895246967063657,
+          "possessions_pred_mean": 315.76190476190476,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 21
         }
@@ -48,15 +48,15 @@
       "routes": {
         "heuristic": {
           "spell_f1": 0.6912261815261542,
-          "macro_f1": 0.9163319064381759,
+          "macro_f1": 0.9163328468392253,
           "possessions_pred_mean": 402.85714285714283,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 7
         },
         "specialists_lomo": {
-          "spell_f1": 0.7448384546703678,
-          "macro_f1": 0.9458402676475336,
-          "possessions_pred_mean": 359.57142857142856,
+          "spell_f1": 0.7494656407884649,
+          "macro_f1": 0.9474502595058178,
+          "possessions_pred_mean": 358.57142857142856,
           "possessions_true_mean": 437.2857142857143,
           "n_runs": 7
         }

@@ -46,6 +46,10 @@ def main(argv=None) -> int:
     ap.add_argument("--training-pickle", default=None)
     ap.add_argument("--sources", nargs="*", default=None)
     ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W")
+    ap.add_argument("--source-weight-b", nargs="*", default=None, metavar="SOURCE=W",
+                    help="Issue #48: source weights of the hidden-ball rows (Specialist B) if different")
+    ap.add_argument("--train-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
     ap.add_argument("--max-matches", type=int, default=20, help="first N PFF matches by name")
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--unseen-model", default=None,
@@ -55,6 +59,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-folds", action="store_true", help="skip the 4-fold evaluation")
     ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
                     help="Issue #43: feed a simulated Smart Tagging (derived from the true labels)")
+    ap.add_argument("--folds-only", type=int, nargs="*", default=None,
+                    help="run only these folds (parallel runs)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -72,16 +78,22 @@ def main(argv=None) -> int:
         dp = TrainingDataParams.from_config(args.config)
         if args.degrader_section:
             dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
+        if args.train_dead_affinity is not None:
+            dp = dataclasses.replace(dp, dead_affinity=args.train_dead_affinity)
         ts = build_training_set(args.bench_dir, params=dp, config_path=args.config, log=lambda m: None)
         if pkl is not None:
             pkl.write_bytes(pickle.dumps(ts))
     weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+    wb = ({k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight_b)}
+          if args.source_weight_b else None)
     sources = args.sources if args.sources is not None else sorted({p.source for p in ts.parts})
     fusion = sf.FusionParams.from_config(args.config)
     rows = []
-    for fold in range(0 if args.no_folds else args.folds):
+    folds = [] if args.no_folds else (args.folds_only if args.folds_only is not None else range(args.folds))
+    for fold in folds:
         held = [f for i, f in enumerate(pff) if i % args.folds == fold]
-        sub = ts.select(sources, weights or ts.weights, ts.drop_dead, exclude_matches=[f.stem for f in held])
+        sub = ts.select(sources, weights or ts.weights, ts.drop_dead,
+                        exclude_matches=[f.stem for f in held], weights_b=wb)
         trained = sf.train_specialists(args.bench_dir, config_path=args.config, training=sub)
         spec = dataclasses.replace(trained, fusion=fusion)
         for f in held:

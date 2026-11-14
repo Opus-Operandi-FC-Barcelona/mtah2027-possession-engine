@@ -26,6 +26,7 @@ overrides ``specialist_fusion`` parameters for tuning sweeps (external matches o
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import pickle
 import sys
@@ -80,7 +81,7 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
                    degrade: bool = False, specialists=None, return_codes: bool = False,
-                   sim_tags: str | None = None) -> dict:
+                   dead_affinity: float | None = None, sim_tags: str | None = None) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
@@ -90,8 +91,10 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     if "ball_visible" in z.files:       # PFF: the file's ball includes positions estimated from the players
         ball = np.where(z["ball_visible"][:, None], ball, np.float32(np.nan)).astype(np.float32)
     if degrade:
-        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed,
-                           params=DegraderParams.from_config(config))
+        dparams = DegraderParams.from_config(config)
+        if dead_affinity is not None:
+            dparams = dataclasses.replace(dparams, dead_affinity=float(dead_affinity))
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed, params=dparams)
         players, ball = dm.players_xy, dm.ball_xy
     elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
@@ -148,6 +151,12 @@ def main(argv=None) -> int:
                     help="Issue #38: config section of the degrader of the IDSSE training rows "
                          "(external_degrader_legacy = adopted models, external_degrader = calibrated); "
                          "the held-out matches are always degraded with external_degrader")
+    ap.add_argument("--eval-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the HELD-OUT matches (default: config)")
+    ap.add_argument("--train-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
+    ap.add_argument("--source-weight-b", nargs="*", default=None, metavar="SOURCE=W",
+                    help="Issue #48: source weights of the hidden-ball rows (Specialist B) if different")
     ap.add_argument("--training-pickle", default=None,
                     help="Issue #38: load / save the training rows (valid for one --training-config)")
     ap.add_argument("--sources", nargs="*", default=None,
@@ -186,8 +195,6 @@ def main(argv=None) -> int:
     models: dict = {}
     training = None
     if args.specialists == "lomo":
-        import dataclasses
-
         from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
         from mtah2027.models.specialist_data import TrainingDataParams, build_training_set
@@ -206,14 +213,18 @@ def main(argv=None) -> int:
             dp = TrainingDataParams.from_config(args.config)
             if args.degrader_section:
                 dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
+            if args.train_dead_affinity is not None:
+                dp = dataclasses.replace(dp, dead_affinity=args.train_dead_affinity)
             training = build_training_set(args.bench_dir, params=dp, config_path=args.config, log=print)
             if pkl is not None:
                 pkl.write_bytes(pickle.dumps(training))
-        if args.sources is not None or args.source_weight:
+        if args.sources is not None or args.source_weight or args.source_weight_b:
             weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+            wb = ({k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight_b)}
+                  if args.source_weight_b else None)
             training = training.select(args.sources if args.sources is not None
                                        else sorted({p.source for p in training.parts}),
-                                       weights or training.weights, training.drop_dead)
+                                       weights or training.weights, training.drop_dead, weights_b=wb)
 
         def specialists_for(stem: str):
             if stem not in models:
@@ -248,7 +259,7 @@ def main(argv=None) -> int:
         for i, f in enumerate(files):
             row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
                                  args.degrade, specialists_for(f.stem) if training is not None else None,
-                                 sim_tags=args.sim_tags)
+                                 dead_affinity=args.eval_dead_affinity, sim_tags=args.sim_tags)
             row["seed"] = seed
             all_rows.append(row)
             e = row["engine"]
