@@ -206,6 +206,29 @@ Only aggregates are printed (crops scanned, detections kept, share of hidden fra
 **AGPL-3.0**: it is imported only by `--detector yolo`, is a separate optional extra, and nothing in the
 submission path needs it.  It stays off until validated locally on the real video.
 
+**Multi-frame motion detector (Issue #36, `--detector motion`).**  A TrackNet-style temporal cue with OpenCV only:
+the reader supplies the frame triplet (t-1, t, t+1) of each 640x640 crop, the camera pan is compensated
+(phase correlation + sub-pixel warp), `min(|I_t - W(I_t-1)|, |I_t - W(I_t+1)|)` keeps what moves in both,
+a morphological filter keeps blobs of the apparent ball size (taken from the homography scale, `vision.ball_diameter_m`),
+the positions at t-1 / t+1 are checked in metres with `H^-1` against `vision.max_speed_mps`, and the centroid is
+refined to sub-pixel.  Static lines and boots cancel out; a ball that does not move is not detectable.  Selectable
+with `vision.detector: motion`; `vision.enabled` stays `false`.
+
+## Audit video (local debugging only)
+
+```bash
+python scripts/render_audit_video.py --synthetic                                   # no data needed
+python scripts/render_audit_video.py --data-dir data --start-frame 11185 --end-frame 11500
+python scripts/render_audit_video.py --data-dir data --from-audit-csv outputs/audit_transitions.csv   # KPI 5 export
+```
+
+`vision/overlay_renderer.py` + `scripts/render_audit_video.py` (Issue #36) draw, over the tactical mp4 (or a plain
+pitch when there is none): the pitch lines projected with `H_t`, a minimap (22 players, ball, possessor, collective-coherence
+arrows), a 25-frame ball trail, a halo on the possessor and a HUD with the predicted H/A/D, P(H)/P(A)/P(D) and ball
+visible/hidden.  Output: `outputs/audit_video.mp4` (`*.mp4` and `outputs/` are git-ignored).  **The audit video of
+BAR-ATH is for local pipeline debugging only (alignment, format, bugs): never to label frames by hand or tune
+parameters, and never uploaded.**  The script prints only aggregates and paths.
+
 ## Broadcast sync (optional, off by default)
 
 `preprocessing/broadcast_sync.py` (Issue #10) places the TV tracking (`data/broadcast/*_broadcast_atd.*` +
@@ -235,7 +258,7 @@ src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9), broadcast_sync (#10, off)
-  vision/                            attention_crops, detectors, recovery (#11, off); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
+  vision/                            attention_crops, detectors (+ motion, #36), recovery (#11, off), overlay_renderer (#36); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),

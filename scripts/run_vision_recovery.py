@@ -73,7 +73,7 @@ def benchmark(ball, players, hom, blocks, video, detector, params, fps, pitch, n
                        origin=ac.crop_window(u, v, params.crop_size, params.frame_width, params.frame_height),
                        gap_id=np.zeros(len(frames), np.int64), n_hidden=0, n_gaps=0)
     t0 = time.perf_counter()
-    ds = rec.run_detection(video, plan, detector, hom, params, pitch=pitch)
+    ds = rec.run_detection(video, plan, detector, hom, params, pitch=pitch, fps=fps)
     wall = time.perf_counter() - t0
     scanned = max(ds.n_scanned, 1)
     per_crop = ds.seconds_detect / scanned
@@ -93,7 +93,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data-dir", default=None, help="folder with tactical/ (default: the repo data folder)")
     ap.add_argument("--config", default=None, help="YAML configuration (default configs/default.yaml)")
-    ap.add_argument("--detector", choices=("yolo", "hough", "dryrun"), default=None,
+    ap.add_argument("--detector", choices=("yolo", "hough", "motion", "dryrun"), default=None,
                     help="default: vision.detector of the configuration")
     ap.add_argument("--weights", default=None, help="ultralytics weights (default vision.weights)")
     ap.add_argument("--device", default=None, help="ultralytics device, e.g. cpu, 0, mps")

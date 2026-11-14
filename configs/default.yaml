@@ -365,7 +365,7 @@ vision:
   closing_gain_mps: 3.0
   pressure_weight: 0.5          # 0 = pure interpolation, 1 = pressure centroid
   vel_half_span: 2
-  detector: hough               # yolo | hough | dryrun
+  detector: hough               # yolo | hough | motion | dryrun
   weights: yolov8n.pt           # public COCO weights downloaded by ultralytics (AGPL-3.0, optional extra yolo)
   confidence: 0.25
   batch_size: 16
@@ -377,6 +377,13 @@ vision:
   hough_param2: 10.0
   hough_min_brightness: 170.0
   hough_max_candidates: 5
+  motion_threshold: 22.0        # Issue #36 detector "motion" (frame triplet t-1,t,t+1; off unless selected)
+  ball_diameter_m: 0.22
+  motion_size_tolerance: 3.0
+  motion_max_candidates: 5
+  motion_min_response: 0.1
+  motion_blur_sigma: 1.0
+  motion_neighbor_penalty: 0.6
   pitch_margin_m: 1.0
   max_search_dist_m: 30.0
   max_speed_mps: 40.0

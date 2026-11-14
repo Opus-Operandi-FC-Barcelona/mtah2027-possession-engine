@@ -62,6 +62,14 @@ class VisionParams:
     hough_param2: float = 10.0        # accumulator threshold (lower = more circles)
     hough_min_brightness: float = 170.0   # mean grey level inside the circle (0-255)
     hough_max_candidates: int = 5
+    # --- multi-frame motion detector (Issue #36; detector "motion")
+    motion_threshold: float = 22.0    # grey-level difference (0-255) of the compensated temporal difference
+    ball_diameter_m: float = 0.22     # real ball size: apparent size comes from the homography scale
+    motion_size_tolerance: float = 3.0    # accepted blob area between ball_area / tol and ball_area * tol
+    motion_max_candidates: int = 5
+    motion_min_response: float = 0.1  # phase-correlation response below which the background is not shifted
+    motion_blur_sigma: float = 1.0    # pre-blur against sub-pixel registration residue on sharp edges
+    motion_neighbor_penalty: float = 0.6   # confidence factor when no t-1 / t+1 position of the blob is found
     # --- selection / injection
     pitch_margin_m: float = 1.0       # detections farther outside the pitch than this are dropped
     max_search_dist_m: float = 30.0   # candidates farther than this from the search point are dropped

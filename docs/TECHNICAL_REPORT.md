@@ -365,6 +365,20 @@ ball is hidden.  Fails the adoption rule (needs +0.01): code, table and tests ar
   `t*`) and an optional emission prior (`throwin_resolver.emission_bias`, off: no gain measured).  On the
   synthetic match 55 of 56 gradable throw-ins are right and none is wrong (one abstains); its effect on spellF1
   is nil there (the transition columns were already open), so the resolver is a safety net, not a gain claim.
+* Multi-frame ball detector and audit video (Issue #36).  `MultiFrameMotionBallDetector` (`vision/detectors.py`,
+  `detector: motion`, OFF) takes the frame triplet (t-1, t, t+1) of each attention crop, compensates the camera pan by
+  phase correlation, keeps what moves in both temporal differences, filters blobs by the apparent ball size from the
+  homography scale, validates the t-1 / t+1 positions in metres through `H^-1` (max 40 m/s) and refines the centroid to
+  sub-pixel.  On synthetic video with a panning camera, static pitch lines, a centre circle and ball-sized static
+  "boots" it returns only the moving ball with a mean error of 0.4 px (max 0.6 px) and nothing for a static scene, a
+  pure pan or a player-sized mover; a ball slower than about half its own diameter per frame (or standing) is not
+  detectable by construction.  It has NOT been run on the real video and no spellF1 value is claimed.
+  `vision/overlay_renderer.py` + `scripts/render_audit_video.py` render an audit video (projected pitch lines,
+  minimap with possessor and collective-coherence arrows, 25-frame ball trail, HUD with the predicted label and
+  P(H/A/D), ball visible/hidden) from the pipeline's own outputs (`run_pipeline(keep_features=True)` exposes the
+  emission probabilities without changing the labels).  Rule: the audit video of BAR-ATH is for local pipeline
+  debugging only (alignment, format, bugs); it is never used to label frames by hand or to tune parameters, is
+  git-ignored (`*.mp4`, `outputs/`) and is never uploaded.
 * Video ball recovery (`vision/`, #11) is built and tested on synthetic video only and is OFF by default
   (`vision.enabled: false`); the real tactical video has not been processed.  Simulated value on the 7 degraded
   IDSSE matches (a detector that recovers the true ball on X % of the planned crops, one per 5 frames of each
