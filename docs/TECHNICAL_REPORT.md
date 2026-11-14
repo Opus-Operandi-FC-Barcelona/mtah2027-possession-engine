@@ -449,6 +449,31 @@ reduces the mean |error| from 208 to 126 (IDSSE), 247 to 181 (PFF) and 259 to 14
 unresolved anchors (nothing is invented); adopted, since it is better on all three sources.  It cannot be scored in
 spellF1 (the external matches carry no Smart Tagging).
 
+### Broadcast synchronisation on the real match (Issue #39, aggregates only)
+
+`scripts/real_broadcast_check.py` on `data/broadcast` (deterministic: two runs give the same injected ball).  117
+continuous blocks (median 26 s), 74 synchronised (63 %; 39 rejected by the position test, 2 by fingerprint, 2 by ball);
+fingerprint correlation median 0.78 (accepted blocks 0.62-0.93), median nearest-same-team residual 0.29 m, median
+tactical-vs-TV ball disagreement 0.78 m (p90 1.5 m); the accepted blocks share essentially one offset (median 160.6 s
+broadcast-to-tactical, 10-90 % range 160-1077 s) and are in broadcast order 100 % of the time.  They cover 58.8 % of
+the graded frames, but the TV ball only fills **7.4 %** of the hidden tactical-ball frames (4,720 of 64,079; 88 runs, median
+0.7 s): ball missing 41.1 % -> 38.1 %.  Physical consistency: no injected point off the pitch, in-run speed p90 9 m/s,
+0.3 % of steps > 35 m/s; the jump between the last tactical ball and the first injected one has median 1.5 m but p90
+13 m and p99 53 m (about 39 % of the borders imply > 35 m/s, mostly 1-frame gaps with ~1.5 m disagreement).  Switching
+the injection on changes 2.0 % of the graded labels (243 -> 257 possessions, `D` 50.1 -> 49.7 %).
+
+Value on external matches (`simulate_broadcast_value.py`, simulated TV view, 3 seeds x the 7 IDSSE + 3 Metrica matches,
+spellF1 without -> with injection).  Two *non-leave-one-out* setups were also run and are **not** the production route:
+`simf` (PFF-only specialists `models/specialists_pff.json`, which have never seen IDSSE / Metrica and are weak there,
+0.51): +0.045 to +0.053, 30/30 runs up; `simm` (the production file `models/specialists.json`, mixed IDSSE + PFF, loaded):
++0.001 / +0.004 (seeds 0 / 1), but 7 of the 10 target matches are in its training set, so its baseline (0.68) is
+inflated.  The setup that corresponds to production (mixed specialists applied to a match they were *not* trained
+on) is leave-one-match-out: specialists trained on all other matches, the target as unlabelled input, 30 runs: **+0.0050**
+mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6198 -> 0.6283 on the first four IDSSE
+matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
+worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
+%), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
