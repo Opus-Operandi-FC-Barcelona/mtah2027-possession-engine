@@ -532,6 +532,29 @@ worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D`
 on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
 Results: pending (filled at #46).
 
+**#51 -- the front end of a graded block only sees its own block.**  The warm-up (`0..11184`), half-time
+(`90652..110807`), the dead start of the second half (`110808..113741`, forced `D` by the contract) and the post-match are
+never graded, but the tracking there used to flow into the graded frames: the 5-frame gap interpolation, the
+Savitzky-Golay runs (a valid run crossing a block edge is filtered as one), the cleaning (duplicate slots keep the
+*longest* trajectory over the whole file), the visible-ball distances (`frames_since/until_visible`), the ball memory
+(`last/next visible`, interpolation, last/next touch team) and the carry exponentials of the heuristic emissions.
+BAR-ATH has 21,644 ball frames outside the two play blocks.  `pipeline.compute_front_end` now masks (NaN) players, ball and
+float ball channels outside `play_blocks` before stage 2 (`pipeline.isolate_play_blocks: true`, `mask_outside_blocks`), so every
+accumulator starts empty at the block edge and nothing is interpolated or filtered across it.  The second half starts at
+`HALF2_PLAY` (`113742`), the same block the pipeline passes to the decoder and to the orientation detector; the `HALF2_DEAD`
+frames are therefore blank for the front end (they are forced to `D` after decoding, so they never needed features).
+Measured with `scripts/audit_block_leak.py` (isolation off vs on, committed specialists, aggregates only): on BAR-ATH
+2,927 of 155,923 graded frames (1.9 %) change at least one feature, 2,309 of them within 60 s of a block edge (largest
+distance 84.7 s; `bm:*` 2,346, `heur:*` 1,920, `sig:*` 643, `ctx:*` 808, kinematics 17-42, `bxy` 0), 1,923 emission rows,
+and **0.006 % of the final labels** (D share 50.10 % -> 50.11 %, 243 possessions both).  On the 10 external matches
+(0.05-2 % of frames between periods) 4-13 % of the graded frames change a feature (mostly `ctx:*`, 375-1,196 of them within
+60 s of an edge; the rest, up to ~1,500 s from an edge, comes from the file-wide choice of the duplicate slot to keep).
+B' (7 IDSSE leave-one-match-out, calibrated degrader, seeds 0-2, the cached legacy-mixed models, same models both arms):
+spellF1 0.5997 -> 0.6001 (+0.0004), macroF1 0.8999 -> 0.9000, possessions 2,217 -> 2,215 (seed means 0.6017/0.5972/0.6003 ->
+0.6024/0.5975/0.6005).  A correctness fix, adopted (gate: B' not worse than -0.003).  The committed `models/specialists*.json`
+were trained with the old front end and still load; `#48` regenerates them.  Invariance test:
+`tests/test_51_play_block_isolation.py` fills every frame outside the play blocks with random players/balls/channels and
+asserts identical feature matrix, emissions and final labels (heuristic and specialist routes) in `HALF1` and `HALF2_PLAY`.
 ### Reproducibility of the learned route (Issue #52)
 
 RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
