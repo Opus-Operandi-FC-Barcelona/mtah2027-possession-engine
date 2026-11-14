@@ -67,7 +67,7 @@ COUNT_COLUMNS = ("cp:n_field_home", "cp:n_field_away", "diff:n_field", "sig:n_ac
 @dataclass(frozen=True)
 class FeatureParams:
     context_windows: tuple = (50, 100)    # frames; empty = no context features
-    # Issue #56 -- goalkeeper depth and its change over +-gk_span frames (6 s) as context columns (off = adopted).
+    # Issue #56 -- goalkeeper depth and its +-gk_span (6 s) change as context columns (off = adopted).
     gk_context: bool = False
     gk_span: int = 150
     # Issue #42 -- invariance to player dropout (all off = the adopted feature set).
