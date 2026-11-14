@@ -73,6 +73,7 @@ from mtah2027.models.heuristic_emissions import (
     resolve_owner_team,
     touch_signal,
 )
+from mtah2027.postprocessing.boundary_snap import BoundarySnapParams, snap_boundaries
 from mtah2027.postprocessing.spell_optimizer import SpellParams, optimize_spells
 from mtah2027.postprocessing.submission_contract import enforce_submission_contract
 from mtah2027.preprocessing.clean_tracks import clean_tracks
@@ -609,6 +610,21 @@ def run_core(
     else:
         st.skip("spell_optimizer", "disabled by configuration")
 
+    # 10b. boundary refinement to the physical touch / restart frame (Issue #61, off by default) -----
+    bsp = BoundarySnapParams.from_config(cfg)
+    snap_stats: dict = {}
+    if bsp.enabled:
+        def _snap():
+            return snap_boundaries(
+                codes, play_blocks=play_blocks, touch_score=bk.touch_score if bk is not None else None,
+                nearest_team=bk.nearest_team if bk is not None else None, ball_visible=visible,
+                is_aerial=fe.is_aerial, restart_frames=restart_frames,
+                forced_dead_mask=anchors.forced_dead_mask if anchors is not None else None, params=bsp)
+
+        res = st.run("boundary_snap", _snap)
+        if res is not None:
+            codes, snap_stats = res
+
     diagnostics = {
         "stages": st.info, "n_frames": int(n), "n_slots": int(players_xy.shape[1]),
         "ball_visible_share": float(visible.mean()) if n else 0.0,
@@ -621,7 +637,7 @@ def run_core(
         "emission_source": emission_source, "restart_rules": fe.rules_report,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
-        "optimizer": opt_stats, "mbr": mbr_info,
+        "optimizer": opt_stats, "boundary_snap": snap_stats, "mbr": mbr_info,
     }
     if keep_features:
         feats.update({"dead_score": dead_score, "visible": visible, "log_probs": em.log_probs,
