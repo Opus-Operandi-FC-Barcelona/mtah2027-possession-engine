@@ -27,6 +27,7 @@ Rows are sub-sampled every ``stride`` frames of the graded periods (a 0.4 s step
 """
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +59,10 @@ class TrainingDataParams:
     # Issue #38: config section of the degrader of the IDSSE training rows.  ``external_degrader_legacy`` (the
     # Issue #19 profile) keeps the adopted models; ``external_degrader`` = the calibrated degrader.
     degrader_section: str = "external_degrader_legacy"
+    # Issue #48: hidden-ball <-> dead-ball affinity of the degrader of the IDSSE training rows (1 = blind).
+    dead_affinity: float = 1.0
+    # Issue #48: PFF weight of the hidden-ball rows (Specialist B); < 0 = same as ``pff_weight``.
+    pff_weight_b: float = -1.0
 
     @classmethod
     def from_config(cls, path=None) -> "TrainingDataParams":
@@ -98,6 +103,7 @@ class TrainingSet:
     base_seeds: tuple = ()           # degradation seeds requested for every match (before the match offset)
     weights: dict = field(default_factory=dict)       # source -> sample weight (absent = 1)
     drop_dead: tuple = ()                             # sources whose D rows are left out
+    weights_b: dict = field(default_factory=dict)     # Issue #48: source weights of the hidden rows (B)
 
     def stack(self, kind: str, exclude_match: str | None = None, only_match: str | None = None):
         """``(x, y, groups)`` of the ``vis`` or ``hid`` rows (groups = match name)."""
@@ -119,20 +125,22 @@ class TrainingSet:
             xs.append(x)
             ys.append(y)
             gs.append(np.full(len(y), part.match, dtype=object))
-            ws.append(np.full(len(y), float(self.weights.get(part.source, 1.0))))
+            wmap = (getattr(self, "weights_b", None) or self.weights) if kind == "hid" else self.weights
+            ws.append(np.full(len(y), float(wmap.get(part.source, 1.0))))
         if not xs:
             raise ValueError("no training rows selected")
         w = np.concatenate(ws)
         return np.concatenate(xs), np.concatenate(ys), np.concatenate(gs), (None if (w == 1.0).all() else w)
 
     def select(self, sources: Iterable[str], weights: dict | None = None,
-               drop_dead: Iterable[str] = (), exclude_matches: Iterable[str] = ()) -> "TrainingSet":
+               drop_dead: Iterable[str] = (), exclude_matches: Iterable[str] = (),
+               weights_b: dict | None = None) -> "TrainingSet":
         """View with the rows of ``sources`` (minus ``exclude_matches``) and the given weights / policy."""
         keep, out = set(sources), set(exclude_matches)
         return TrainingSet(names=self.names,
                            parts=[q for q in self.parts if q.source in keep and q.match not in out],
                            base_seeds=self.base_seeds, weights=dict(weights or {}),
-                           drop_dead=tuple(drop_dead))
+                           drop_dead=tuple(drop_dead), weights_b=dict(weights_b or {}))
 
     @property
     def matches(self) -> list[str]:
@@ -147,7 +155,9 @@ class TrainingSet:
                 "sources": {src: sorted({p.match for p in self.parts if p.source == src})
                             for src in sorted({p.source for p in self.parts}) if src != "idsse"},
                 "source_weights": {k: float(v) for k, v in sorted(self.weights.items())},
-                "source_drop_dead": list(self.drop_dead)}
+                "source_drop_dead": list(self.drop_dead),
+                "source_weights_hidden": {k: float(v) for k, v in sorted(
+                    (getattr(self, "weights_b", None) or {}).items())}}
 
 
 def list_external_matches(bench_dir: str | Path, params: TrainingDataParams | None = None) -> list[Path]:
@@ -178,7 +188,8 @@ def swap_codes(codes: np.ndarray) -> np.ndarray:
 
 def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[bool] = (False, True),
                    config_path=None, min_period_frames: int = 250,
-                   degrader_section: str = "external_degrader_legacy") -> list[MatchRows]:
+                   degrader_section: str = "external_degrader_legacy",
+                   dead_affinity: float = 1.0) -> list[MatchRows]:
     """Rows of one external match degraded with ``seed`` (one :class:`MatchRows` per swap variant)."""
     from mtah2027.pipeline import compute_front_end, heuristic_emissions  # local import: avoid a cycle
 
@@ -191,7 +202,9 @@ def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[
     source = source_of(Path(path).stem)
     if source == "idsse":
         dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed,
-                           params=DegraderParams.from_config(config_path, degrader_section))
+                           params=dataclasses.replace(
+                               DegraderParams.from_config(config_path, degrader_section),
+                               dead_affinity=float(dead_affinity)))
         dm_players, dm_ball = dm.players_xy, dm.ball_xy
     else:                      # already occluded tracking: use it as it is (Issue #35)
         if "ball_visible" in z.files:         # PFF: estimated ball positions are not observations
@@ -199,7 +212,10 @@ def rows_for_match(path: str | Path, seed: int, *, stride: int, swaps: Sequence[
         if "observed" in z.files:             # SkillCorner: nothing is known where the pitch is off screen
             gt = np.where(z["observed"], gt, X).astype(gt.dtype)
         dm_players, dm_ball = players, ball
-    graded = np.flatnonzero(gt != X)
+    in_block = np.zeros(len(gt), bool)      # Issue #51: the front end is blank outside the play blocks
+    for a0, b0 in periods:
+        in_block[a0:b0 + 1] = True
+    graded = np.flatnonzero((gt != X) & in_block)
     keep = graded[(graded % stride) == (seed % stride)]
     out = []
     for swap in swaps:
@@ -237,11 +253,13 @@ def build_training_set(bench_dir: str | Path, *, params: TrainingDataParams | No
             parts += rows_for_match(f, seed + i, stride=p.stride,
                                     swaps=(False, True) if p.swap_teams else (False,),
                                     config_path=config_path, min_period_frames=p.min_period_frames,
-                                    degrader_section=p.degrader_section)
+                                    degrader_section=p.degrader_section, dead_affinity=p.dead_affinity)
             if log:
                 log(f"training rows {f.stem} seed {seed + i}: {len(parts[-1].y_vis)} visible / "
                     f"{len(parts[-1].y_hid)} hidden ({time.perf_counter() - t0:.1f} s)")
     weights = {"skillcorner": p.skillcorner_weight, "pff": p.pff_weight}
+    weights_b = {"pff": p.pff_weight_b} if p.pff_weight_b >= 0 else {}
     return TrainingSet(names=parts[0].names, parts=parts, base_seeds=tuple(p.seeds), weights=weights,
+                       weights_b=weights_b,
                        drop_dead=("skillcorner",) if p.skillcorner_drop_dead else ())
 

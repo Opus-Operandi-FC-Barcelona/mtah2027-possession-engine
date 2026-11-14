@@ -1,0 +1,1 @@
+{"format":"ensemble","members":[{"file":"specialists_gap.json","weight":0.75},{"file":"specialists_mixed.json","weight":0.25}],"mode":"linear"}

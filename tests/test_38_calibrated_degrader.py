@@ -132,8 +132,9 @@ def test_legacy_section_is_the_issue_19_profile_and_selected_for_training():
     cal = DegraderParams.from_config()
     assert (legacy.noise_player_m, legacy.cut_rate_per_min) == (cal.noise_player_m, cal.cut_rate_per_min)
     assert cal.gap_model == "lognormal" and cal.hide_frac > 0.41
-    # the adopted specialists were trained with the Issue #19 profile
-    assert TrainingDataParams.from_config().degrader_section == "external_degrader_legacy"
+    # Issue #48: the adopted specialists are trained with the calibrated degrader (affinity 33); the Issue #19
+    # profile produced models/specialists_mixed.json
+    assert TrainingDataParams.from_config().degrader_section == "external_degrader"
 
 
 def test_calibrated_degrader_hits_the_configured_target_on_a_long_match():
@@ -155,4 +156,6 @@ def test_calibrated_model_file_is_selectable_and_default_unchanged():
 
     assert sf.load_specialists(ROOT / "models" / "specialists_calib.json").a is not None
     default = (ROOT / "models" / "specialists.json").read_bytes()
-    assert default == (ROOT / "models" / "specialists_mixed.json").read_bytes()
+    # Issue #48: default = model trained at hidden<->dead affinity 33; the former default stays as mixed
+    assert default == (ROOT / "models" / "specialists_gap.json").read_bytes()
+    assert sf.load_specialists(ROOT / "models" / "specialists_mixed.json").b is not None

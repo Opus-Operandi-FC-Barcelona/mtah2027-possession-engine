@@ -26,6 +26,7 @@ overrides ``specialist_fusion`` parameters for tuning sweeps (external matches o
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import pickle
 import sys
@@ -42,6 +43,7 @@ for extra in (REPO_ROOT / "src", REPO_ROOT):
 from mtah2027.models.baseline_labels import baseline_labels  # noqa: E402
 from mtah2027.models.external_degrader import DegraderParams, degrade_match  # noqa: E402
 from mtah2027.pipeline import run_core  # noqa: E402
+from mtah2027.validation import dropout_strata as ds  # noqa: E402
 from mtah2027.validation import eval_bridge as eb  # noqa: E402
 
 DEFAULT_BENCH_DIR = REPO_ROOT.parent / "mtah2027-external-benchmarks" / "cache"
@@ -78,7 +80,8 @@ def score(gt: np.ndarray, pred: np.ndarray) -> dict:
 
 
 def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, with_baseline: bool,
-                   degrade: bool = False, specialists=None, return_codes: bool = False) -> dict:
+                   degrade: bool = False, specialists=None, return_codes: bool = False,
+                   dead_affinity: float | None = None, sim_tags: str | None = None) -> dict:
     z = np.load(path, allow_pickle=True)
     players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
     ball = z["ball_xy"].astype(np.float32)
@@ -88,27 +91,39 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
     if "ball_visible" in z.files:       # PFF: the file's ball includes positions estimated from the players
         ball = np.where(z["ball_visible"][:, None], ball, np.float32(np.nan)).astype(np.float32)
     if degrade:
-        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed,
-                           params=DegraderParams.from_config(config))
+        dparams = DegraderParams.from_config(config)
+        if dead_affinity is not None:
+            dparams = dataclasses.replace(dparams, dead_affinity=float(dead_affinity))
+        dm = degrade_match(players, team, ball, gt, fps=fps, seed=seed, params=dparams)
         players, ball = dm.players_xy, dm.ball_xy
     elif hide_frac > 0:
         ball = hide_ball(ball, periods, hide_frac, fps, np.random.default_rng(seed))
     t0 = time.perf_counter()
     durations = getattr(specialists, "durations", None)    # Issue #34 (used only when duration.enabled)
+    smart = None
+    if sim_tags:       # Issue #43: simulated Smart Tagging from the true labels (optimistic by design)
+        from mtah2027.io.smart_tagging_sim import simulate_smart_tagging
+
+        smart = simulate_smart_tagging(gt, periods, fps, noise=sim_tags, seed=seed, n_frames=len(gt))
     core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                    log=lambda m: None, durations=durations)
+                    log=lambda m: None, durations=durations, smart_tagging=smart)
     seconds = time.perf_counter() - t0
     row = {"match": path.stem, "seconds": round(seconds, 1),
            "ball_visible": float(np.isfinite(ball).all(axis=1)[gt != 3].mean())}
     row["engine"] = score(gt, core.codes)
+    n_tracked = ds.tracked_counts(players)
+    visible = np.isfinite(ball).all(axis=1)
+    row["engine"]["strata"] = ds.stratum_counts(gt, core.codes, n_tracked, visible)    # Issue #42
     codes_spec = None
     if specialists is not None:
         t0 = time.perf_counter()
         learned = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=config,
-                           log=lambda m: None, specialists=specialists, durations=durations)
+                           log=lambda m: None, specialists=specialists, durations=durations,
+                           smart_tagging=smart)
         row["specialists"] = score(gt, learned.codes)
         row["specialists"]["seconds"] = round(time.perf_counter() - t0, 1)
         row["specialists"]["source"] = learned.diagnostics["emission_source"]
+        row["specialists"]["strata"] = ds.stratum_counts(gt, learned.codes, n_tracked, visible)
         codes_spec = learned.codes
     if with_baseline:
         base = np.full(len(gt), 3, dtype=np.int8)
@@ -118,7 +133,7 @@ def evaluate_match(path: Path, hide_frac: float, seed: int, config: str | None, 
         row["baseline"] = score(gt, base)
     if return_codes:     # in-memory only (used by the KPI dashboard); never serialised
         row["_codes"] = {"gt": gt, "engine": core.codes, "specialists": codes_spec, "fps": fps,
-                         "visible": np.isfinite(ball).all(axis=1)}
+                         "visible": visible, "n_tracked": n_tracked}
     return row
 
 
@@ -136,6 +151,12 @@ def main(argv=None) -> int:
                     help="Issue #38: config section of the degrader of the IDSSE training rows "
                          "(external_degrader_legacy = adopted models, external_degrader = calibrated); "
                          "the held-out matches are always degraded with external_degrader")
+    ap.add_argument("--eval-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the HELD-OUT matches (default: config)")
+    ap.add_argument("--train-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
+    ap.add_argument("--source-weight-b", nargs="*", default=None, metavar="SOURCE=W",
+                    help="Issue #48: source weights of the hidden-ball rows (Specialist B) if different")
     ap.add_argument("--training-pickle", default=None,
                     help="Issue #38: load / save the training rows (valid for one --training-config)")
     ap.add_argument("--sources", nargs="*", default=None,
@@ -151,7 +172,14 @@ def main(argv=None) -> int:
     ap.add_argument("--no-pseudo", action="store_true", help="with --specialists: no Issue #21 adaptation")
     ap.add_argument("--fusion", nargs="*", default=[], metavar="KEY=VALUE",
                     help="override specialist_fusion parameters (tuning on external matches only)")
+    ap.add_argument("--lomo-cache", default=None,
+                    help="Issue #42: LOMO specialists cache (JSON); valid for one "
+                         "training set / configuration")
+    ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
+                    help="Issue #43: feed a simulated Smart Tagging (from the true labels)")
     ap.add_argument("--no-baseline", action="store_true")
+    ap.add_argument("--strata", action="store_true",
+                    help="Issue #42: pooled breakdown by number of tracked players (<16, <20, >=20)")
     ap.add_argument("--json", default=None, help="write the aggregate rows to this JSON file")
     args = ap.parse_args(argv)
 
@@ -167,8 +195,6 @@ def main(argv=None) -> int:
     models: dict = {}
     training = None
     if args.specialists == "lomo":
-        import dataclasses
-
         from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
         from mtah2027.models.specialist_data import TrainingDataParams, build_training_set
@@ -187,22 +213,35 @@ def main(argv=None) -> int:
             dp = TrainingDataParams.from_config(args.config)
             if args.degrader_section:
                 dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
+            if args.train_dead_affinity is not None:
+                dp = dataclasses.replace(dp, dead_affinity=args.train_dead_affinity)
             training = build_training_set(args.bench_dir, params=dp, config_path=args.config, log=print)
             if pkl is not None:
                 pkl.write_bytes(pickle.dumps(training))
-        if args.sources is not None or args.source_weight:
+        if args.sources is not None or args.source_weight or args.source_weight_b:
             weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+            wb = ({k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight_b)}
+                  if args.source_weight_b else None)
             training = training.select(args.sources if args.sources is not None
                                        else sorted({p.source for p in training.parts}),
-                                       weights or training.weights, training.drop_dead)
+                                       weights or training.weights, training.drop_dead, weights_b=wb)
 
         def specialists_for(stem: str):
             if stem not in models:
                 t0 = time.perf_counter()
-                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
-                                            exclude_match=stem)
-                models[stem] = dataclasses.replace(spec, fusion=fusion)
-                print(f"  trained specialists without {stem} ({time.perf_counter() - t0:.0f} s)", flush=True)
+                cached = Path(args.lomo_cache) / f"{stem}.json" if args.lomo_cache else None
+                if cached is not None and cached.is_file():
+                    loaded = sf.load_specialists(cached, args.config)
+                    models[stem] = dataclasses.replace(loaded, fusion=fusion)
+                    print(f"  loaded cached specialists without {stem}", flush=True)
+                else:
+                    spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                                                exclude_match=stem)
+                    models[stem] = dataclasses.replace(spec, fusion=fusion)
+                    if cached is not None:
+                        sf.save_specialists(models[stem], cached)
+                    dt = time.perf_counter() - t0
+                    print(f"  trained specialists without {stem} ({dt:.0f} s)", flush=True)
             if models[stem].durations is None:     # Issue #34: duration table without the held-out match
                 from mtah2027.decoding.duration_model import fit_from_bench
 
@@ -219,7 +258,8 @@ def main(argv=None) -> int:
     for seed in seeds:
         for i, f in enumerate(files):
             row = evaluate_match(f, args.hide_ball_frac, seed + i, args.config, not args.no_baseline,
-                                 args.degrade, specialists_for(f.stem) if training is not None else None)
+                                 args.degrade, specialists_for(f.stem) if training is not None else None,
+                                 dead_affinity=args.eval_dead_affinity, sim_tags=args.sim_tags)
             row["seed"] = seed
             all_rows.append(row)
             e = row["engine"]
@@ -255,6 +295,15 @@ def main(argv=None) -> int:
     if training is not None:
         print(f"{'MEAN + specialists':<23}{mean['specialists_spell_f1']:8.4f}"
               f"{mean['specialists_macro_f1']:8.4f}")
+    if args.strata:
+        for key in ("engine", "specialists"):
+            if key == "specialists" and training is None:
+                continue
+            pooled = ds.pool([r[key]["strata"] for r in rows])
+            print(f"strata ({key}, pooled over {len(rows)} runs):")
+            total = pooled["lt20"]["frames"] + pooled["ge20"]["frames"]
+            for line in ds.format_table(ds.summarize(pooled), total):
+                print("  " + line)
     if args.json:
         Path(args.json).write_text(json.dumps({"mean": mean, "rows": rows}, indent=2), encoding="utf-8")
     return 0

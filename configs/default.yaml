@@ -94,6 +94,13 @@ setpiece_anchor:
   goal_search_post_s: 6.0
   max_goal_to_kickoff_s: 150.0  # a Kick Off (After Goal) farther than this is not linked to the goal
   restart_mask_halfwidth: 0     # restart_mask is True on t* +- this many frames
+  fallback_dead_s: 0.5          # Issue #50: no dead-score evidence -> force D only this long right before t* (0 = never force)
+  fallback_tag_window: false    # Issue #50: true = legacy, force D back to the tag-window start (the 35 s windows open in live play)
+  clamp_period_starts: true     # Issue #50: Kick Off (Start) t* -> first frame of its play block (config / games.py constants)
+  offset_prior: false           # Issue #49: collective-cue search restricted to the t* - tag_start band learned from the ball-method anchors
+  offset_prior_min_n: 3
+  offset_prior_quantiles: [0.05, 0.95]
+  offset_prior_margin_s: 1.0
 
 # Issue #16 -- ball-to-player distances, control weights, touches and the possession evidence.
 ball_kinematics:
@@ -135,6 +142,13 @@ transition_matrix:
   restart_open: -1.0            # D -> restart team around a restart frame t*
   restart_halfwidth: 3          # window = t* +- this many frames
   restart_other_team: -3.0      # extra log-penalty for the other team when the restart team is known
+  restart_team_before_s: 0.0    # Issue #49: the penalty also holds from t* - before ... (0 = only t* +- restart_halfwidth)
+  restart_team_after_s: 0.0     # ... to t* + after
+  phase_cue: false              # Issue #43: open H<->A around Smart Tagging Attacking / Defensive Transition starts
+  phase_cue_open: -4.0          # ... to this log-value (towards the team that gains the ball)
+  phase_cue_before_s: 4.0
+  phase_cue_after_s: 8.0
+  phase_cue_hidden_only: true   # ... only inside occlusions
 
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:
@@ -175,6 +189,8 @@ spell_optimizer:
 heuristic_emissions:
   w_evidence: 0.5               # logit of H vs A per unit of possession_evidence (in [-1, 1]); weak term
   w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
+  w_long_ball: 0.0              # Issue #49: D logit lowered on hidden-ball frames of Long Ball / Ball in the Box phases
+  w_phase_alive: 0.0            # Issue #43: D logit lowered by this where the ball is hidden in a live phase (0 = off)
   w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
   owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
   dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
@@ -197,8 +213,14 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+  alive_exclude_dead_evidence: false   # Issue #43: live-phase mask also drops frames with dead-ball evidence
+  alive_dead_threshold: 0.6
+  alive_dead_after_s: 3.0
   use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
   use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
+  use_native_speed: false       # Issue #42: ATD speed channel (s, km/h) as player-speed fallback at track edges
+  native_speed_edge_frames: 3
+  isolate_play_blocks: true     # Issue #51: tracking outside the play blocks is masked (no leak across blocks)
 
 # Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
 # artefacts).  Used only to build validation / self-supervision data, never on the competition match.
@@ -218,6 +240,7 @@ external_degrader:
   density_radius_m: 5.0            # players within this distance of the ball define the crowding
   density_floor: 0.25              # added to the mean crowding so empty areas keep some probability
   density_gamma: 1.0               # block weight = (floor + mean crowding) ** gamma
+  dead_affinity: 1.0               # Issue #48: block weight x dead_affinity ** (share of D frames in the block); 1 = blind to D
   noise_player_m: 0.12             # i.i.d. Gaussian jitter of every player position
   noise_ball_m: 0.08               # ... and of the visible ball
   noise_corr_s: 0.5                # correlation time of the jitter (AR(1)); 0 = white noise
@@ -312,7 +335,9 @@ specialist_data:
   pff_max_matches: 20           # 0 = all; the first N by name (deterministic)
   # Issue #38: degrader of the IDSSE training rows.  external_degrader_legacy (Issue #19 profile) = the adopted
   # models; external_degrader = the degrader calibrated to the competition ATD gap statistics (measured, not adopted).
-  degrader_section: external_degrader_legacy
+  degrader_section: external_degrader   # Issue #48: calibrated degrader (#38) ...
+  dead_affinity: 33.0           # ... with hidden<->dead affinity 33 (realised odds ratio ~18; label-free estimate, see report)
+  pff_weight_b: -1.0            # Issue #48: PFF weight of the hidden-ball rows (Specialist B); < 0 = same as pff_weight
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
 specialist_a:
@@ -545,3 +570,49 @@ route_overrides:
       scale_hidden: 0.8652
       blend_visible: 0.1515
       blend_hidden: 0.0229
+
+# Issue #49 -- restart-team rules of Smart Tagging (goal / half-time rules + tracking vote) and Long Ball occlusion flags.
+# Measured on simulated tags (B' IDSSE, A PFF) and left OFF unless the adoption rule is met (docs/TECHNICAL_REPORT.md).
+restart_rules:
+  enabled: false
+  kickoff_after_goal: true      # Kick Off (After Goal) = team that conceded the preceding GOALS tag
+  second_half_opposite: true    # second-half Kick Off (Start) = opposite of the first-half one
+  tracking_vote: true           # first clear controller after t* votes with the tag
+  ctrl_window_s: 1.4
+  ctrl_radius_m: 3.0
+  ctrl_margin_m: 1.0
+  goal_link_s: 150.0
+  unreliable_conf: 0.5          # team_conf of a restart whose sources disagree
+  fill_unnamed: true
+  calibrate_weight: false       # team penalty scaled by the agreement of the tags with Specialist A's confident states
+  calib_window_s: 3.0
+  calib_prior: 1.0
+  long_ball_codes: [long ball, ball in the box]
+  auto_long_ball_weight: false  # heuristic_emissions.w_long_ball from Specialist A's confident visible frames
+  long_ball_cap: 1.5
+  long_ball_min_frames: 250
+
+# Issue #44 -- best decoder / fusion block found by the bounded sweep under the calibrated degrader (B' = 7 IDSSE
+# leave-one-match-out at dead_affinity 33, selection seeds 0-1, blind seed 2) together with the ensemble
+# `--model-variant ensemble` (models/specialists_ensemble.json = linear mix 0.75 gap + 0.25 mixed).  It gained +0.0091 on
+# B'(33) (needed +0.010), so it is NOT applied: copy these sections into route_overrides.specialists to use it.
+# Read by nothing; tests/test_44_decoder_ensemble.py checks that every key is a valid parameter.
+decoder_candidates:
+  issue_44:
+    specialist_fusion:
+      scale_visible: 0.7
+      scale_hidden: 1.0
+      blend_visible: 0.1
+      blend_hidden: 0.0229
+    transition_matrix:
+      ha_occluded: -6.0
+      ha_closed: -22.0
+      ha_open: -2.0
+      dead_open: -1.208
+      dead_closed: -9.0
+      d_exit_open: -3.0
+      touch_min_score: 0.7778
+    spell_optimizer:
+      micro_poss_s: 0.4
+      min_dead_s: 2.5
+      min_isolated_poss_s: 1.2596

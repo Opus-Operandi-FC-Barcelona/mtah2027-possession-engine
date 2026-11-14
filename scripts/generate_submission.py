@@ -52,17 +52,21 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="with --synthetic: use a short match of this many frames instead (tests)")
     ap.add_argument("--specialists", choices=("auto", "train", "load", "off"), default="auto",
                     help="learned emissions (Issues #20-#22): train = fit on the external matches at run "
-                         "time; load = committed models/specialists.json; auto = train if the external "
-                         "matches are on disk, else load, else heuristic emissions (with --synthetic, auto "
-                         "never trains); off = wave-1 heuristic emissions")
+                         "time; load = committed models/specialists.json; auto = the committed file when "
+                         "present (Issue #52: the submission depends only on the repository), else train "
+                         "if the external matches are on disk, else heuristic emissions; off = wave-1 "
+                         "heuristic emissions")
     ap.add_argument("--bench-dir", default=None,
                     help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
                          "mtah2027-external-benchmarks/cache)")
     ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
-    ap.add_argument("--model-variant", choices=("default", "idsse", "mixed", "pff", "calib"),
+    ap.add_argument("--model-variant",
+                    choices=("default", "idsse", "mixed", "pff", "calib", "gap", "ensemble"),
                     default="default",
                     help="Issue #35: specialists trained on IDSSE (degraded), IDSSE + PFF (mixed) or "
-                         "PFF only; Issue #38: calib = IDSSE degraded with the calibrated degrader + PFF "
+                         "PFF only; Issue #38: calib = IDSSE degraded with the calibrated degrader + PFF; "
+                         "Issue #48: gap = same with hidden<->dead affinity 33 (= the default); "
+                         "Issue #44: ensemble = per-frame mix of committed models (manifest) "
                          "(models/specialists_<variant>.json); implies --specialists load; pick it "
                          "with scripts/compare_input_stats.py")
     ap.add_argument("--kpi", action="store_true",
@@ -140,11 +144,11 @@ def main(argv=None) -> int:
             cache_dir = None if args.no_cache else REPO_ROOT / "cache"
 
         say = (lambda m: None) if args.quiet else print
-        # --synthetic (CI / tests): never train at run time, so the run is fast and independent of local data
+        # auto loads the committed file first: the run is fast and independent of data on the local disk
         t_models = time.perf_counter()
         specialists = resolve_specialists(
             args.specialists, bench_dir=args.bench_dir, model_path=args.model_path, config_path=cfg_path,
-            prefer_file=args.synthetic, log=lambda m: say(f"[specialists] {m}"))
+            train_fallback=not args.synthetic, log=lambda m: say(f"[specialists] {m}"))
         print(f"specialists: {specialists.source if specialists else 'none (heuristic emissions)'} "
               f"({time.perf_counter() - t_models:.1f} s)")
         if specialists is not None and specialists.training:

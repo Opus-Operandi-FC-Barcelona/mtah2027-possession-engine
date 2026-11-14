@@ -11,13 +11,72 @@ so the engine optimises the *number* of possessions and the precision of their b
 description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of every issue:
 [`docs/ISSUES_TRACKER.md`](docs/ISSUES_TRACKER.md).
 
-> **Wave 2 (this version)** adds the learned specialists: Specialist A (ball visible, #20) and Specialist B
-> (ball absent, #22) -- calibrated gradient-boosting models trained on degraded **external** open matches
-> (home/away-swap augmentation) -- fused into the decoder emissions, plus the block-masking pseudo-labelling of
-> the target match (#21).  The wave-1 heuristic emissions remain the fallback when no model is available.
-> Still planned: throw-in resolver (#15), KPI dashboard (#27) and wave 3 (broadcast sync, YOLO crops, aerial
-> ball, MBR over several models); see the tracker.
+## Status
 
+Milestones 1-9 (issues #1-#52; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
+provided data and invariance to player dropout") adopted three changes: the set-piece anchor fallback and period-start
+clamp (#50, correctness fix), the isolation of the front end per graded play block (#51, correctness fix) and the
+re-trained default model in the estimated "gaps over dead ball" world (#48, +0.017 spellF1 on B'(33)).  #42, #43, #44
+and #49 were measured and left off by configuration; #47 is the audit against the official repository and #52 makes the
+submission depend only on the committed model.  Results: `docs/OpusOperandi.md` (section 6) and
+`docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
+[`docs/OpusOperandi.md`](docs/OpusOperandi.md).
+
+### Architecture
+
+```
+ATD (x, y, s) + Smart Tagging + homography
+  -> ingest (io/)  -> clean + kinematics + orientation (preprocessing/)
+  -> features: dead-ball signals, set-piece anchors t*, throw-in resolver, ball kinematics / touches,
+               collective physics, ball memory (features/)
+  -> emissions log_probs[N,3]: Specialist A (ball visible) + Specialist B (ball absent) fused by ball visibility
+               (models/); heuristic emissions as fallback route
+  -> time-dependent transitions log A_t[N,3,3] (decoding/transition_matrix.py)
+  -> Viterbi per graded half (numba kernel, bit-identical NumPy fallback; decoding/dynamic_viterbi.py)
+  -> spell optimiser (micro-possession pruning, D bridge; postprocessing/spell_optimizer.py)
+  -> submission contract (X / D forced outside the graded blocks, no internal X; postprocessing/submission_contract.py)
+  -> outputs/<team>.csv  (+ KPI dashboard, validation, SHA256)
+```
+
+Optional stages that were built, measured on other matches and left **off** by configuration: broadcast (TV) sync
+(#10, #39), attention crops / YOLO / multi-frame detector (#11, #36), aerial filter (#12), pseudo-labelling of the
+target match (#21), MBR consensus (#26, #32), semi-Markov decoder (#34), specialist-opened transitions (#30 A2).
+
+**Route decision (KPI 7).**  The learned route (Specialists A/B) is preferred over the training-free heuristic route
+only if its leave-one-match-out spellF1 on degraded external matches beats the heuristic one by >= 0.04
+(`reports/external_evidence.json`, or `--external-lomo`); the public 5 minutes are never used to choose.
+
+**Selectable models** (`generate_submission.py --model-variant`, implies `--specialists load`):
+
+| variant | file | training data |
+|---|---|---|
+| `default` (same as `gap`) | `models/specialists.json` | IDSSE degraded with the calibrated degrader at hidden<->dead affinity 33 (#48) + 20 PFF matches at weight 0.5 |
+| `gap` | `models/specialists_gap.json` | = default |
+| `mixed` | `models/specialists_mixed.json` | IDSSE (degraded, legacy degrader, blind to the play state) + 20 PFF matches at weight 0.5 (the default before #48) |
+| `idsse` | `models/specialists_idsse.json` | IDSSE only |
+| `pff` | `models/specialists_pff.json` | PFF only |
+| `calib` | `models/specialists_calib.json` | IDSSE degraded with the calibrated degrader (#38, affinity 1) + PFF 0.5 |
+| `ensemble` | `models/specialists_ensemble.json` | Issue #44 manifest: linear per-frame mix, 0.75 `gap` + 0.25 `mixed` (committed files only; measured +0.002 over the default on B'(33) without the decoder block, not adopted) |
+
+Choose between them with label-free input statistics (`scripts/compare_input_stats.py --data-dir data`), never with
+labels of the provided game.
+
+**Tests.**  446 tests are collected on `develop` at the time of writing (`pytest --collect-only -q`); the count grows
+with Milestone 9.
+
+### Issues by milestone
+
+| Milestone | Issues | Topic |
+|---|---|---|
+| 1 Infrastructure, CI/CD, fixtures, evaluation bridge | #1-#4 | scaffold, CI + security gate, synthetic match, official-scorer bridge |
+| 2 Streaming ingest, slot cleaning, TV sync | #5-#10 | ATD / Smart Tagging / homography loaders, cleaning, kinematics, broadcast sync (off) |
+| 3 Vision and aerial ball | #11-#12 | attention crops + detectors (off), aerial filter (off) |
+| 4 Dead ball, set-piece anchors, collective physics | #13-#18 | dead-ball signals, `t*` anchors, throw-in resolver, ball kinematics, collective physics, ball memory |
+| 5 Degrader, self-supervision, specialists | #19-#22 | realistic degrader, Specialist A, block-masking pseudo-labels, Specialist B + fusion |
+| 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
+| 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
+| 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
+| 9 Intelligent analysis and dropout invariance | #42-#52 | adopted: #48 model re-trained with gaps over dead ball, #50 set-piece anchor fallback + period-start clamp, #51 play-block isolation, #52 reproducible model loading; measured and off: #42 dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation + ensemble, #49 restart-team rules; #45 docs, #46 release, #47 official audit (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
@@ -43,9 +102,13 @@ ever processed locally; tests and CI use a deterministic **synthetic match** gen
 ## Reproduce the submission
 
 ```bash
+python -m venv .venv && source .venv/bin/activate           # Windows: .venv\Scripts\activate
+pip install -r requirements.txt && pip install -e . --no-deps
 python scripts/generate_submission.py --data-dir data --team OpusOperandi
 # -> outputs/OpusOperandi.csv   (199,319 rows + header, validated with the official format check)
 python evaluation/validate_submission.py outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --team OpusOperandi --kpi      # + seven-KPI dashboard
+python scripts/generate_submission.py --data-dir data --model-variant idsse          # another specialists file
 ```
 
 * The script prints only aggregates (rows, label shares, number / mean duration of possessions, SHA256,
@@ -57,10 +120,11 @@ python evaluation/validate_submission.py outputs/OpusOperandi.csv
 * Self-check without the real data (what CI does): `python scripts/generate_submission.py --synthetic --out
   /tmp/sub_run1.csv` generates the full-length synthetic match with a fixed seed and also reports its score
   against the synthetic ground truth.
-* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) trains the specialists at run time
-  from the external open matches if they are on disk (`--bench-dir`, `$MTAH_BENCH_DIR` or the sibling
-  `mtah2027-external-benchmarks/cache`), otherwise loads the committed `models/specialists.json`, otherwise
-  uses the heuristic emissions.  With `--synthetic`, `auto` means `load` (deterministic and fast).  The training
+* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) loads the committed
+  `models/specialists.json` whenever it exists (Issue #52: the submission depends only on the repository, as
+  RULES.md requires); only if it is missing does it train from the external open matches on disk (`--bench-dir`,
+  `$MTAH_BENCH_DIR` or the sibling `mtah2027-external-benchmarks/cache`), otherwise it uses the heuristic emissions.
+  `train` always retrains.  With `--synthetic`, `auto` never trains (deterministic and fast).  The training
   is deterministic (LightGBM `deterministic=True`, `num_threads=1`, `seed=0`) and reproducible with
   `python scripts/train_specialists.py` (the committed file is its output).  See "Training data" in the
   technical report: only external open data, labelled algorithmically; nothing from BAR-ATH.
@@ -158,6 +222,18 @@ in the configuration; `compare_input_stats.py` prints target vs degraded; the Is
 `external_degrader_legacy`).  Re-selection under it (validation B' = 7 degraded IDSSE LOMO, seeds 0-2; A = PFF held-out):
 no variant gains the required +0.01 on B', so the default (IDSSE + PFF 0.5, trained with the legacy degrader) is kept;
 `--model-variant calib` (calibrated-degrader training) is selectable.
+Issue #48: the degrader gained a hidden-ball <-> dead-ball affinity (`dead_affinity`).  A label-free estimator (ball-free
+player features + prior-shift EM, validated on IDSSE with planted affinity, PFF and Metrica; `scripts/estimate_gap_affinity.py`)
+puts the D share of the BAR-ATH ball gaps at >= ~80 % (point estimate 94 %, aggregates only).  Training the specialists
+with the calibrated degrader at affinity 33 gains +0.0174 on B' in that world (every seed >= +0.013) and passes the PFF guard
+(A +0.005): **adopted as the default** (`models/specialists.json` = `--model-variant gap`); the previous default stays as
+`--model-variant mixed`.  Details and the per-specialist PFF ablation: `docs/TECHNICAL_REPORT.md`, Item 7.
+Issue #44: bounded decoder / fusion / ensemble sweep under the calibrated degrader (B'(33) seeds 0-1 selection, seed 2 blind, guards B'(1) and PFF): best +0.0091 on B'(33) (needed +0.01), not adopted.  `--model-variant ensemble` (`models/specialists_ensemble.json`, linear 0.75 `gap` + 0.25 `mixed`, committed files only) and the block `decoder_candidates.issue_44` of `configs/default.yaml` stay available, OFF; tools `scripts/decoder_sweep.py`, `scripts/train_cv_models.py`; Item 8 of the report.
+Issue #42 (player-dropout invariance): `eval_external.py --strata` / `diagnose_possessions.py` break the results down by tracked
+players (< 16, < 20, >= 20); on the calibrated degrader the model does not over-predict `D` under dropout.  Sample-size-robust
+shape features (`specialist_features.normalise_shape`, `shape_min_field`) gain +0.002/+0.003 on B' and the native speed channel
+(`pipeline.use_native_speed`) cannot be validated externally, so all stay OFF; the loader now maps the ATD channel `s` to
+speed and checks its unit against the positions (the competition `s` is in m/s although the XML says km/h).
 
 ### Possession count and the KPI 7 evidence
 
@@ -290,6 +366,41 @@ tag).  The collective restart cue (ball hidden around the set piece) is now gate
 (`setpiece_anchor.collective_dead_lag_s`, external pseudo-window check, three sources: mean |t* error| 208 -> 126,
 247 -> 181, 259 -> 143 frames).
 
+## Smart Tagging alive-ball prior (Issue #43, off by default)
+
+```bash
+python scripts/smart_tagging_stats.py --data-dir data          # structure of the real tagging (aggregates only)
+python scripts/eval_phase_alive.py --protocol b --noise none medium high \
+    --variants off a1:heuristic_emissions.w_phase_alive=1.0 --training-pickle t.pkl \
+    --sources idsse pff --source-weight pff=0.5 --model-dir models_cache --json out.json
+python scripts/eval_external.py --degrade --sim-tags medium    # any external run with simulated tags
+```
+
+`heuristic_emissions.w_phase_alive` lowers the `D` logit on hidden-ball frames covered by a live Smart Tagging phase
+outside the pre-`t*` / post-goal windows (`pipeline.live_phase_mask`); `transition_matrix.phase_cue` opens `H<->A`
+around `Attacking` / `Defensive Transition` starts; `pipeline.alive_exclude_dead_evidence` drops frames with dead-ball
+evidence from the mask.  `io/smart_tagging_sim.py` derives a Smart Tagging from the true labels of an external match
+(BAR-ATH structure, jitter / missed / spurious tags, dead-time bleed; levels low / medium / high) because the external
+matches have none -- optimistic by construction.  Measured on B' and A at three noise levels the best gain is +0.002
+spellF1, far from the +0.01 rule, so everything stays **off** (`docs/TECHNICAL_REPORT.md`, Issue #43).
+
+## Restart-team rules and Long Ball flags (Issue #49, off by default)
+
+```bash
+python scripts/eval_phase_alive.py --protocol b --sim-restart --noise medium high     --variants off rules:restart_rules.enabled=true     wide:transition_matrix.restart_team_before_s=4.0,transition_matrix.restart_team_after_s=2.0     offset:setpiece_anchor.offset_prior=true --training-pickle t.pkl --sources idsse pff --source-weight pff=0.5
+```
+
+`features/restart_rules.py`: the team of every restart is voted among the tag, the rules of the game (`Kick Off (After
+Goal)` = team that conceded the preceding `GOALS` tag; second-half `Kick Off (Start)` = opposite of the first-half
+one) and the tracking (first clear controller after `t*`); dissent lowers `team_conf`, which scales
+`transition_matrix.restart_other_team`; `restart_team_before_s / after_s` widen the window of that penalty beyond
+`t* +- 3` frames; `setpiece_anchor.offset_prior` restricts the collective-cue search to the `t* - tag_start` band learned
+from the ball-method anchors of the same match; `restart_rules.calibrate_weight` and `auto_long_ball_weight` take the
+weights from Specialist A's confident states (never the ground truth); `heuristic_emissions.w_long_ball` lowers the `D`
+logit on hidden-ball frames of `Long Ball` / `Ball in the Box` phases.  `--sim-restart` makes the simulated tags
+name the kick-off teams and flip 5 / 10 / 20 % of the set-piece teams.  Decision and numbers:
+`docs/TECHNICAL_REPORT.md`, Issue #49.
+
 ## Broadcast sync on the real bundle (Issue #39)
 
 `python scripts/real_broadcast_check.py --data-dir data [--effect]` prints aggregates only (blocks synchronised,
@@ -317,12 +428,12 @@ src/mtah2027/
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
   validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py
   pipeline.py                        run_core (arrays) and run_pipeline (files -> contract-compliant labels)
-models/specialists.json              Specialists A/B trained on external open data (reproduced by train_specialists.py)
+models/specialists*.json             Specialists A/B trained on external open data (default, idsse, mixed, pff, calib; reproduced by train_specialists.py)
 scripts/                             generate_submission.py, train_specialists.py, eval_external.py,
                                      generate_synthetic_fixtures.py, ...
 tests/                               one test module per issue + shared synthetic-match fixtures
 evaluation/  games.py  starter/      vendored official scorer, constants and starter kit (unmodified)
-docs/                                TECHNICAL_REPORT.md, ISSUES_TRACKER.md
+docs/                                OpusOperandi.md (submission document), TECHNICAL_REPORT.md, ISSUES_TRACKER.md, official/
 ```
 
 ## Tests and CI

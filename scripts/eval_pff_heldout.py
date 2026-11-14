@@ -27,6 +27,15 @@ for _extra in (REPO_ROOT / "src", REPO_ROOT, REPO_ROOT / "scripts"):
 
 import eval_external as ee  # noqa: E402
 
+from mtah2027.validation import dropout_strata as ds  # noqa: E402
+
+
+def _print_strata(rows) -> None:
+    pooled = ds.pool([r["strata"] for r in rows])
+    total = pooled["lt20"]["frames"] + pooled["ge20"]["frames"]
+    for line in ds.format_table(ds.summarize(pooled), total):
+        print("  " + line)
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -37,8 +46,21 @@ def main(argv=None) -> int:
     ap.add_argument("--training-pickle", default=None)
     ap.add_argument("--sources", nargs="*", default=None)
     ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W")
+    ap.add_argument("--source-weight-b", nargs="*", default=None, metavar="SOURCE=W",
+                    help="Issue #48: source weights of the hidden-ball rows (Specialist B) if different")
+    ap.add_argument("--train-dead-affinity", type=float, default=None,
+                    help="Issue #48: dead_affinity of the degrader of the IDSSE training rows")
     ap.add_argument("--max-matches", type=int, default=20, help="first N PFF matches by name")
     ap.add_argument("--folds", type=int, default=4)
+    ap.add_argument("--unseen-model", default=None,
+                    help="Issue #42: also score this committed model file on the last --unseen-n PFF matches "
+                         "(never used in any training)")
+    ap.add_argument("--unseen-n", type=int, default=8, help="last N PFF matches by name")
+    ap.add_argument("--no-folds", action="store_true", help="skip the 4-fold evaluation")
+    ap.add_argument("--sim-tags", choices=("clean", "low", "medium", "high"), default=None,
+                    help="Issue #43: feed a simulated Smart Tagging (derived from the true labels)")
+    ap.add_argument("--folds-only", type=int, nargs="*", default=None,
+                    help="run only these folds (parallel runs)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -56,26 +78,46 @@ def main(argv=None) -> int:
         dp = TrainingDataParams.from_config(args.config)
         if args.degrader_section:
             dp = dataclasses.replace(dp, degrader_section=args.degrader_section)
+        if args.train_dead_affinity is not None:
+            dp = dataclasses.replace(dp, dead_affinity=args.train_dead_affinity)
         ts = build_training_set(args.bench_dir, params=dp, config_path=args.config, log=lambda m: None)
         if pkl is not None:
             pkl.write_bytes(pickle.dumps(ts))
     weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+    wb = ({k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight_b)}
+          if args.source_weight_b else None)
     sources = args.sources if args.sources is not None else sorted({p.source for p in ts.parts})
     fusion = sf.FusionParams.from_config(args.config)
     rows = []
-    for fold in range(args.folds):
+    folds = [] if args.no_folds else (args.folds_only if args.folds_only is not None else range(args.folds))
+    for fold in folds:
         held = [f for i, f in enumerate(pff) if i % args.folds == fold]
-        sub = ts.select(sources, weights or ts.weights, ts.drop_dead, exclude_matches=[f.stem for f in held])
+        sub = ts.select(sources, weights or ts.weights, ts.drop_dead,
+                        exclude_matches=[f.stem for f in held], weights_b=wb)
         trained = sf.train_specialists(args.bench_dir, config_path=args.config, training=sub)
         spec = dataclasses.replace(trained, fusion=fusion)
         for f in held:
-            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec)
+            row = ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec, sim_tags=args.sim_tags)
             rows.append({"match": f.stem, "fold": fold, **row["specialists"]})
         print(f"fold {fold} done ({len(held)} matches)", flush=True)
-    sp = np.mean([r["spell_f1"] for r in rows])
-    mf = np.mean([r["macro_f1"] for r in rows])
-    print(f"A (PFF held-out, {len(rows)} matches): spellF1 {sp:.4f}  macroF1 {mf:.4f}  possessions predicted "
-          f"{sum(r['n_pred_spells'] for r in rows)} (true {sum(r['n_gt_spells'] for r in rows)})")
+    if rows:
+        sp = np.mean([r["spell_f1"] for r in rows])
+        mf = np.mean([r["macro_f1"] for r in rows])
+        print(f"A (PFF held-out, {len(rows)} matches): spellF1 {sp:.4f}  macroF1 {mf:.4f}  possessions "
+              f"predicted {sum(r['n_pred_spells'] for r in rows)} "
+              f"(true {sum(r['n_gt_spells'] for r in rows)})")
+        _print_strata(rows)
+    if args.unseen_model:
+        unseen = sorted(Path(args.bench_dir).glob("pff_*.npz"))[-args.unseen_n:]
+        spec = sf.load_specialists(args.unseen_model, args.config)
+        urows = [ee.evaluate_match(f, 0.0, 0, args.config, False, False, spec)["specialists"] for f in unseen]
+        sp_u = np.mean([r["spell_f1"] for r in urows])
+        mf_u = np.mean([r["macro_f1"] for r in urows])
+        print(f"A-unseen ({len(urows)} PFF matches never used in training): spellF1 {sp_u:.4f}  "
+              f"macroF1 {mf_u:.4f}")
+        _print_strata(urows)
+        if args.json:
+            Path(str(args.json) + ".unseen.json").write_text(json.dumps(urows, indent=1), encoding="utf-8")
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=1), encoding="utf-8")
     return 0

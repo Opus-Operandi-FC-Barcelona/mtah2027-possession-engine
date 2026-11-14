@@ -67,3 +67,17 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #38 · wave-4 · Degradador calibrado a las estadísticas de huecos del ATD real y reselección de modelo (medido; el modelo por defecto se mantiene, `specialists_calib.json` seleccionable) · `feat/issue-38-calibrated-degrader`
 - [x] COMPLETADA · #39 · wave-5 · Sincronización TV en datos reales: cobertura y decisión de activación (medida, desactivada) · `feat/issue-39-broadcast-real`
 - [x] COMPLETADA · #40 · wave-5 · Smart Tagging real: fase de juego con el equipo poseedor (fases de defensa invertidas), anclajes t* y saques de banda · `feat/issue-40-smart-tagging-real`
+
+## Milestone 9: Análisis inteligente sobre datos facilitados e invarianza a caída de jugadores
+
+- [x] COMPLETADA · #42 · wave-6 · Invarianza a caída de jugadores: diagnóstico por estratos, canal `s` nativo (m/s verificado), forma robusta al tamaño muestral (medido, no adoptado: desactivado por config) · `feat/issue-42-player-dropout-invariance`
+- [x] COMPLETADA · #43 · wave-6 · Prior de balón vivo y transiciones desde Smart Tagging con balón oculto (simulador de tags; medido, no adoptado: desactivado por config) · `feat/issue-43-smart-tagging-alive-prior`
+- [x] COMPLETADA · #44 · wave-6 · Re-optimización acotada del decodificador bajo el degradador calibrado y ensemble de modelos (barrido en external-benchmarks #5; mejor +0.0091 en B'(33) < +0.01, no adoptado: variante `--model-variant ensemble` y bloque `decoder_candidates.issue_44` desactivados) · `feat/issue-44-decoder-reopt`
+- [x] COMPLETADA · #45 · wave-6 · Documentación y sincronización de todos los repos de la organización · `feat/issue-45-docs-and-org-repos-sync`
+- [x] COMPLETADA · #46 · wave-6 · Cierre e integración del Milestone 9: docs finales, entrega regenerada con `--specialists load` (SHA256 doble), develop a main · `feat/issue-46-milestone9-release`
+- [x] COMPLETADA · #47 · wave-6 · Auditoría completa contra el repositorio oficial del reto (`docs/OFFICIAL_AUDIT.md`) · `feat/issue-47-official-audit`
+- [x] COMPLETADA · #48 · wave-6 · Colocación realista de huecos (afinidad balón oculto / balón muerto): degradador, estimador sin etiquetas validado, curva y reselección (adoptado: entrenamiento con afinidad 33) · `feat/issue-48-gap-placement`
+- [x] COMPLETADA · #49 · wave-6 · Smart Tagging: reglas de equipo en reinicios (gol/2ª parte/voto con tracking), ventana de equipo más ancha, prior de posición de t* y banderas Long Ball (medido en B'/A con tags simulados, no adoptado: desactivado por config) · `feat/issue-49-restart-team-rules`
+- [x] COMPLETADA · #50 · wave-6 · Anclajes de set pieces: acotar el fallback tag-window y fijar los Kick Off de inicio de periodo (Milestone 9) · `feat/issue-50-setpiece-anchor-fallback`
+- [x] COMPLETADA · #51 · wave-6 · Aislar el front-end por play_blocks (sin fuga a través del descanso ni del calentamiento) · `feat/issue-51-play-blocks-isolation`
+- [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`

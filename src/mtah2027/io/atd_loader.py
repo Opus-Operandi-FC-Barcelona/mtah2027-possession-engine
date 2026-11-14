@@ -44,12 +44,13 @@ import numpy as np
 
 from mtah2027.config import FPS, PITCH, REPO_ROOT, load_games_module
 
-CACHE_VERSION = 3
+CACHE_VERSION = 5
 DEFAULT_CACHE_DIR = REPO_ROOT / "cache"
 BLOCK_BYTES = 8 * 1024 * 1024
 DEFAULT_CHANNELS = ("x", "y", "speed")
 _METRE_UNITS = {"m", "meter", "meters", "metre", "metres"}
 _KMH_UNITS = {"km/h", "kmh", "kph"}
+_SPEED_ALIASES = ("s", "spd", "speed_kph", "speed_kmh", "speed_ms")   # Issue #42: native speed channel names
 _STATE_CODES = {"alive": 1, "dead": 0}
 _NUMERIC_SEPARATORS = ":;,"
 _NUMBER = re.compile(r"[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?")
@@ -192,6 +193,24 @@ def _segment_leaves(spec: ET.Element, pc_map: dict) -> list[tuple[str, Any]]:
     return leaves
 
 
+def speed_alias(channels, units: dict[str, str]) -> str | None:
+    """Name of the channel that carries the native speed when it is not called ``speed`` (Issue #42).
+
+    The competition ATD declares ``s`` (speed in km/h).  Rule: if no ``speed`` channel exists, the first
+    channel that is called like a speed alias (``s``, ``spd``, ...) or whose unit is km/h (and is not a
+    coordinate) is the speed; ``None`` when there is nothing to rename."""
+    names = [str(c).lower() for c in channels]
+    if "speed" in names:
+        return None
+    for c in names:
+        if c in _SPEED_ALIASES:
+            return c
+    for c in names:
+        if c not in ("x", "y", "z") and units.get(c, "") in _KMH_UNITS:
+            return c
+    return None
+
+
 def parse_atd_meta(meta_path: str | os.PathLike) -> AtdLayout:
     """Read teams, slot -> team assignment and the declared channel layout(s) from ``atd.xml``."""
     root = ET.parse(meta_path).getroot()
@@ -228,8 +247,15 @@ def parse_atd_meta(meta_path: str | os.PathLike) -> AtdLayout:
 
     parsed = []        # (start, end, n_tokens, frame_col, {pid: {ch: col}}, [(ball ch, col)])
     slot_ids: list[str] = []
+    first_player_channels = sorted({v[1] for k, v in _segment_leaves(specs[0], pc_map) if k == "player"})
+    alias = speed_alias(first_player_channels, units)       # Issue #42: native speed called ``s`` / in km/h
+    if alias:
+        units["speed"] = units.get(alias, "")
     for spec in specs:
         leaves = _segment_leaves(spec, pc_map)
+        if alias:
+            leaves = [(k, (v[0], "speed") if (k == "player" and v[1] == alias)
+                       else ("speed" if (k == "ball" and v == alias) else v)) for k, v in leaves]
         frame_cols = [i for i, (kind, _) in enumerate(leaves) if kind == "frame"]
         if not frame_cols:
             raise AtdFormatError(f"{meta_path}: specification has no frameCount register")
@@ -598,6 +624,27 @@ def load_tracking_cache(path: str | os.PathLike) -> TrackingData:
             periods=tuple((int(a), int(b)) for a, b in meta.get("periods", [])))
 
 
+def _check_speed_unit(players_xy: np.ndarray, speed: np.ndarray, fps: float, step: int = 10,
+                      max_speed: float = 9.0) -> float:
+    """Factor to apply to a native speed (as converted by the declared unit) so that it agrees with the speed
+    derived from the positions: 1.0 (consistent or not enough data), 3.6 or 1/3.6 (Issue #42: the competition
+    XML declares km/h but the player values are m/s).  Uses every ``step``-th frame; the median ratio must be
+    within ~35 % of the factor to trigger it."""
+    if not np.isfinite(speed).any():
+        return 1.0
+    xy = players_xy[::step].astype(np.float64)
+    nat = speed[::step][1:]
+    d = np.linalg.norm(xy[1:] - xy[:-1], axis=-1) / (step / fps)      # mean speed over step frames
+    ok = np.isfinite(nat[: len(d)]) & np.isfinite(d) & (d > 0.5) & (d < max_speed)
+    if ok.sum() < 1000:
+        return 1.0
+    ratio = float(np.median(nat[: len(d)][ok] / d[ok]))
+    for factor in (3.6, 1 / 3.6):
+        if abs(np.log(ratio * factor)) < 0.3:
+            return factor
+    return 1.0
+
+
 def load_atd_files(meta_path: str | os.PathLike, raw_path: str | os.PathLike, *, source: str = "tactical",
                    n_frames: int | None = None, pitch: tuple[float, float] | None = None,
                    expected_frames: int | None = None, block_bytes: int = BLOCK_BYTES) -> TrackingData:
@@ -628,14 +675,24 @@ def load_atd_files(meta_path: str | os.PathLike, raw_path: str | os.PathLike, *,
     speed = sink.speed[:n]
     if kmh:
         speed /= 3.6
+    unit_fix = _check_speed_unit(players_xy, speed, float(layout.frame_rate or FPS))
+    if unit_fix != 1.0:     # Issue #42: the declared unit disagrees with the positions -> trust the data
+        speed *= unit_fix
     ball_channels: dict[str, np.ndarray] = {}
     for j, ch in enumerate(layout.ball_channels):
         col = sink.ball[:n, j]
         if not metres and ch in ("x", "y"):
             col = col * (length if ch == "x" else width)
-        elif ch == "speed" and kmh:
-            col = col / 3.6
+        elif ch == "speed":
+            col = col / (3.6 if kmh else 1.0)
         ball_channels[ch] = np.ascontiguousarray(col, dtype=np.float32)
+    ball_fix = 1.0
+    if "speed" in ball_channels:     # the ball is checked on its own: its ``s`` may be labelled differently
+        ball_fix = _check_speed_unit(np.stack([ball_channels["x"], ball_channels["y"]], axis=1)[:, None, :],
+                                     ball_channels["speed"][:, None], float(layout.frame_rate or FPS),
+                                     max_speed=30.0)
+        if ball_fix != 1.0:
+            ball_channels["speed"] = (ball_channels["speed"] * ball_fix).astype(np.float32)
     col_name = {int(c): layout.ball_channels[j] for j, c in enumerate(layout.ball_cols)}
     codes = {col_name[c]: t for c, t in coder.codes.items() if c in col_name}
     report = dict(stats)
@@ -643,6 +700,8 @@ def load_atd_files(meta_path: str | os.PathLike, raw_path: str | os.PathLike, *,
         "n_frames": int(n), "n_present": int(sink.present[:n].sum()), "from_spec": layout.from_spec,
         "player_channels": list(layout.player_channels), "ball_channels": list(layout.ball_channels),
         "ball_extra_channels": [c for c in layout.ball_channels if c not in ("x", "y", "speed")],
+        "speed_unit_declared_kmh": bool(kmh), "speed_unit_factor_applied": float(unit_fix),
+        "ball_speed_unit_factor_applied": float(ball_fix),
         "n_slots": layout.n_slots, "expected_frames": expected_frames,
         "matches_expected": expected_frames is None or n == expected_frames,
         "contiguous": bool(sink.present[:n].all()),

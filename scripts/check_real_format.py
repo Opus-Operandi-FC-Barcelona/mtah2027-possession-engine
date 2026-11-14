@@ -101,7 +101,7 @@ def main(argv=None) -> int:
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2), encoding="utf-8")
     failed = [k for k, v in report["pipeline"]["stages"].items() if v.startswith("failed")]
-    return 1 if failed or d["route"] != "heuristic" or report["pipeline"]["x_in_graded"] else 0
+    return 1 if failed or d["route"] == "baseline-fallback" or report["pipeline"]["x_in_graded"] else 0
 
 
 if __name__ == "__main__":
