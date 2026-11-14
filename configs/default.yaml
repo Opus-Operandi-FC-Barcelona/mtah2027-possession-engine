@@ -199,6 +199,7 @@ pipeline:
   use_spell_optimizer: true
   use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
   use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
+  isolate_play_blocks: true     # Issue #51: tracking outside the play blocks is masked (no leak across blocks)
 
 # Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
 # artefacts).  Used only to build validation / self-supervision data, never on the competition match.
