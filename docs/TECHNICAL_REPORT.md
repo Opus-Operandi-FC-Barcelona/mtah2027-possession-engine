@@ -318,6 +318,32 @@ The variants differ in at most a handful of boundary frames (the transition pena
 the median reproduces the central decode and the gain is zero within +-0.0004.  Fails the rule: MBR is **kept in the
 code, off by default**.
 
+**Item 4 (Issue #34): duration-aware (semi-Markov) decoder.**  43 % of the true possessions last < 3 s while the
+HMM has an implicit flat duration, so an explicit-duration decoder was built and measured.
+`decoding/duration_model.py` fits, from the **ground-truth labels of the external training matches only** (interior
+runs of H, A and D per graded block, border runs dropped), a histogram per state on a 23-bin grid up to 60 s plus a
+geometric tail (add-0.5 smoothing); the table (1523 H, 1510 A, 696 D runs from the 7 IDSSE matches) is stored in
+`models/specialists.json` (`durations`) and refitted without the held-out match in every LOMO model.
+`decoding/semi_markov.py` maximises, per graded block, entry transition `log A_t(s' -> s)` (touch / restart gates of
+#23) + `w` * duration log-pmf + emissions, with the first and last segment censored (survival function) and durations
+up to the cap explicit; longer ones use the geometric tail through a running maximum.  A numba kernel and a NumPy
+fallback give identical paths (tested, and exact against brute-force enumeration); cost is O(N * cap * 3), about 0.3 s
+for a 76 000-frame half with numba (2 s without), far below the 30 s budget.  Switch: `duration.enabled` (off).
+
+| LOMO, 7 IDSSE matches, `--degrade` | seed 0 | seed 1 | seed 2 | mean spellF1 / macroF1 | possessions (seed 0, true 3061) | hidden turnovers missed (seed 0) |
+|---|---|---|---|---|---|---|
+| reference (HMM, `route_overrides.specialists`) | 0.6475 | 0.6381 | 0.6389 | 0.6415 / 0.9099 | 2409 | 70.5 % |
+| HSMM, weight 0.5, centred | 0.6470 | 0.6369 | 0.6387 | 0.6409 / 0.9099 | 2427 | 70.1 % |
+| HSMM, weight 1.0, centred | 0.6475 | 0.6368 | 0.6374 | 0.6406 / 0.9099 | 2450 | 69.8 % |
+| HSMM, weight 2.0, centred | 0.6468 | 0.6346 | 0.6357 | 0.6390 / 0.9096 | 2503 | 69.1 % |
+| HSMM, weight 1.0, not centred | 0.6417 | 0.6333 | 0.6369 | 0.6373 / 0.9094 | 2267 | 71.6 % |
+| heuristic route: HMM -> HSMM weight 1.0 | 0.4417 -> 0.4414 | 0.4362 -> 0.4356 | 0.4266 -> 0.4276 | 0.4348 -> 0.4349 | 2225 -> 2264 | 97.1 -> 97.4 % |
+
+The decoder raises the possession count towards the truth (2409 -> 2503) but the extra possessions are as often wrong
+as right, so spellF1 moves by -0.0009 ... -0.0042 (heuristic: +0.0001): the transition matrix, tuned for the HMM,
+already encodes the rarity of switching and the duration prior carries no evidence about *which* frame flips while the
+ball is hidden.  Fails the adoption rule (needs +0.01): code, table and tests are kept, **off**.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

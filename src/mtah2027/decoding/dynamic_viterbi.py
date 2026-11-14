@@ -208,11 +208,13 @@ def decode_match_halves(
         log_probs: np.ndarray, log_trans: np.ndarray, *,
         play_blocks: Sequence[tuple[int, int]] = (HALF1, HALF2_PLAY),
         dead_blocks: Sequence[tuple[int, int]] = (HALF2_DEAD,),
-        log_init: np.ndarray | None = None, use_numba: bool | None = None) -> np.ndarray:
+        log_init: np.ndarray | None = None, use_numba: bool | None = None,
+        duration=None) -> np.ndarray:
     """Decode each graded block independently into a full-length int8 code array.
 
     ``play_blocks`` (inclusive ``(first, last)``) are decoded separately with a fresh start; ``dead_blocks``
     are forced to ``D`` (the second-half period before the centre kick-off); every other frame is ``X`` (3).
+    ``duration = (tables, weight)`` (Issue #34) switches every block to the semi-Markov decoder.
     """
     lp = np.asarray(log_probs)
     n = lp.shape[0]
@@ -224,6 +226,13 @@ def decode_match_halves(
     for a, b in play_blocks:
         a, b = max(0, int(a)), min(n - 1, int(b))
         if b >= a:
-            out[a:b + 1] = viterbi_dynamic(lp[a:b + 1], np.asarray(log_trans)[a:b + 1], log_init,
-                                           use_numba=use_numba)
+            if duration is not None:
+                from mtah2027.decoding.semi_markov import viterbi_semi_markov
+
+                init = default_log_init() if log_init is None else log_init
+                out[a:b + 1] = viterbi_semi_markov(lp[a:b + 1], np.asarray(log_trans)[a:b + 1], init,
+                                                   duration[0], duration[1], use_numba=use_numba)
+            else:
+                out[a:b + 1] = viterbi_dynamic(lp[a:b + 1], np.asarray(log_trans)[a:b + 1], log_init,
+                                               use_numba=use_numba)
     return out

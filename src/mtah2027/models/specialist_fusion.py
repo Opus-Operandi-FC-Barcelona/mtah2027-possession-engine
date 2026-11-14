@@ -27,6 +27,7 @@ from typing import Callable
 import numpy as np
 
 from mtah2027.config import FPS, REPO_ROOT, load_section, params_from_mapping
+from mtah2027.decoding.duration_model import DurationModel, DurationParams, fit_from_bench
 from mtah2027.features._utils import sigmoid
 from mtah2027.models.frame_classifier import ClassifierParams, lightgbm_available
 from mtah2027.models.heuristic_emissions import ROUND_DECIMALS, EmissionParams, EmissionResult
@@ -81,10 +82,14 @@ class SpecialistSet:
     fusion: FusionParams = field(default_factory=FusionParams.from_config)
     training: dict = field(default_factory=dict)
     source: str = "memory"
+    durations: object = None          # DurationModel of the training labels (Issue #34), optional
 
     def to_dict(self) -> dict:
-        return {"format": MODEL_FORMAT, "a": self.a.to_dict(), "b": self.b.to_dict(),
-                "training": self.training}
+        out = {"format": MODEL_FORMAT, "a": self.a.to_dict(), "b": self.b.to_dict(),
+               "training": self.training}
+        if self.durations is not None:
+            out["durations"] = self.durations.to_dict()
+        return out
 
     @classmethod
     def from_dict(cls, data: dict, config_path=None) -> "SpecialistSet":
@@ -94,7 +99,8 @@ class SpecialistSet:
         return cls(a=SpecialistA.from_dict(data["a"], SpecialistAParams.from_config(config_path), cp),
                    b=SpecialistB.from_dict(data["b"], SpecialistBParams.from_config(config_path), cp),
                    fusion=FusionParams.from_config(config_path), training=dict(data.get("training", {})),
-                   source="file")
+                   source="file",
+                   durations=DurationModel.from_dict(data["durations"]) if data.get("durations") else None)
 
 
 @dataclass
@@ -218,8 +224,14 @@ def train_specialists(bench_dir: str | Path, *, config_path=None, training: Trai
                            exclude_match=exclude_match)
     if log:
         log(f"specialist B trained ({b.classifier.meta['n_samples']} rows, T={b.classifier.temperature:.3f})")
+    try:      # Issue #34: duration table of the training labels (leaving out the same held-out match)
+        durations = fit_from_bench(bench_dir, matches=ts.matches, exclude=exclude_match,
+                                   params=DurationParams.from_config(config_path))
+    except Exception:  # noqa: BLE001 - optional component
+        durations = None
     return SpecialistSet(a=a, b=b, fusion=FusionParams.from_config(config_path),
-                         training=describe_training(ts, bench_dir, a, b), source="trained")
+                         training=describe_training(ts, bench_dir, a, b), source="trained",
+                         durations=durations)
 
 
 def save_specialists(specialists: SpecialistSet, path: str | Path) -> Path:
