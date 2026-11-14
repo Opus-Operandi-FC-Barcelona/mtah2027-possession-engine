@@ -285,6 +285,13 @@ tag).  The collective restart cue (ball hidden around the set piece) is now gate
 (`setpiece_anchor.collective_dead_lag_s`, external pseudo-window check, three sources: mean |t* error| 208 -> 126,
 247 -> 181, 259 -> 143 frames).
 
+## Broadcast sync on the real bundle (Issue #39)
+
+`python scripts/real_broadcast_check.py --data-dir data [--effect]` prints aggregates only (blocks synchronised,
+correlation / residual / offset distributions, share of the hidden tactical frames filled, physical consistency of
+the injected ball, label change with injection).  Decision (adoption rule: +0.01 spellF1 on the external simulation,
+no seed worse than -0.003): **stays off** (`broadcast_sync.enabled: false`), see `docs/TECHNICAL_REPORT.md`.
+
 ## Repository layout
 
 ```
