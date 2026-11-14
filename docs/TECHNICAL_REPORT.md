@@ -590,6 +590,31 @@ the block is stored as `decoder_candidates.issue_44` in `configs/default.yaml` (
 so the second adoption path (correcting D over-prediction under dropout) does not apply.  Spell-utility MBR over the ensemble members was not run
 (the existing MBR of Issue #32 stays off).
 
+**Item 9 (Issue #55): all available PFF matches in training (56 instead of 20; not adopted).**
+Training rows: the 7 IDSSE matches (calibrated degrader, `dead_affinity` 33) plus the first 56 PFF matches by name at weight 0.5
+(`pff_max_matches: 56`); the 8 last PFF matches by name stay out of training (they are the unseen validation set).
+Same harness and models as Item 8 (`scripts/train_cv_models.py`: LOMO over the 7 IDSSE matches, PFF 4-fold over the 56 matches,
+`--full` all-data model scored on the 8 unseen; `scripts/decoder_sweep.py run --n-pff 56`).  The baseline was recomputed with the
+same harness and reproduces Item 8 exactly.  Candidate: spellF1, seeds 0 / 1 / 2.
+
+| | default (20 PFF) | 56 PFF | delta |
+|---|---|---|---|
+| B'(33) mean | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6578 (0.6613 / 0.6514 / 0.6608) | **-0.0115** (-0.0096 / -0.0161 / -0.0087) |
+| B'(33) macroF1 | 0.9206 | 0.9176 | -0.0030 |
+| B'(1) guard | 0.6017 (0.6019 / 0.5991 / 0.6041) | 0.5948 (0.6014 / 0.5905 / 0.5923) | -0.0069 |
+| A, first 20 PFF, 4-fold | 0.5263 (macroF1 0.8636) | 0.5497 (0.8696) | +0.0235 |
+| A, 56 PFF, 4-fold over the 56 | 0.5311 (0.8706) | 0.5560 (0.8773) | +0.0249 |
+| A, 8 unseen PFF | 0.5263 (0.8652) | 0.5559 (0.8722) | +0.0296 |
+
+The 56-match fold is index modulo 4 over the first 56 matches (14 held out per fold, so the first-20 subset keeps its folds); the
+default models never saw matches 21-56, which makes that row conservative for the default.  Rule: B'(33) >= +0.010 and no seed below
+-0.003; reject if B'(1) drops > 0.01 or A drops > 0.03.  **Rejected: B'(33) is lower in all three seeds (-0.0115 on average).**  The guards
+pass (B'(1) -0.0069, A improves), so the cause is not a broken model but a shift of the mixture: the PFF rows grow 2.8x at the same
+weight 0.5, so the model fits the world of real, visible-ball occlusions (A +0.025 to +0.030) at the cost of the degraded-IDSSE world that
+mimics the competition ATD (B').  Not run (would be a selection on the same B' world): re-weighting PFF to keep its total mass
+(about 0.18 per match).  `configs/default.yaml` and `models/specialists.json` are unchanged; `train_cv_models.py --full` and
+`decoder_sweep.py --n-pff / unseen_<variant>.json` stay as tools.
+
 ### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
 
 *Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players
