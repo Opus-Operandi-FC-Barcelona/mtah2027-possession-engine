@@ -60,3 +60,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #34 · wave-4 · Decodificador semi-Markov con distribución de duración (medido, desactivado) · `feat/issue-34-duration-aware-decoder`
 - [x] COMPLETADA · #35 · wave-4 · Entrenar los especialistas con más partidos externos (PFF adoptado, SkillCorner desactivado) · `feat/issue-35-more-training-matches`
 - [x] COMPLETADA · #36 · wave-4 · Detector de balón multi-frame (movimiento t-1,t,t+1, desactivado) y vídeo de auditoría con HUD · `feat/issue-36-multiframe-ball-and-visual-hud`
+- [x] COMPLETADA · #38 · wave-4 · Degradador calibrado a las estadísticas de huecos del ATD real y reselección de modelo (medido; el modelo por defecto se mantiene, `specialists_calib.json` seleccionable) · `feat/issue-38-calibrated-degrader`

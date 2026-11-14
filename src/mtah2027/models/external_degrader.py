@@ -38,7 +38,16 @@ H, A, D, X = 0, 1, 2, 3
 
 @dataclass(frozen=True)
 class DegraderParams:
-    hide_frac: float = 0.41
+    hide_frac: float = 0.424
+    # Block durations.  ``classes`` = Issue #19 (log-uniform inside the 5-20 / 20-60 / 60-120 s classes);
+    # ``lognormal`` = Issue #38 (log-normal around ``gap_median_s`` clipped to [``gap_min_s``, ``gap_max_s``],
+    # ``guard_s`` of visible ball kept between two blocks so that they do not merge into longer gaps).
+    gap_model: str = "lognormal"
+    gap_median_s: float = 12.5
+    gap_sigma: float = 0.95
+    gap_min_s: float = 5.0
+    gap_max_s: float = 240.0
+    guard_s: float = 9.0
     dur_edges_s: tuple = (5.0, 20.0, 60.0, 120.0)
     dur_probs: tuple = (0.33, 0.48, 0.19)
     density_radius_m: float = 5.0
@@ -53,10 +62,19 @@ class DegraderParams:
     dup_rate_per_min: float = 0.3
     dup_duration_s: tuple = (5.0, 40.0)
     dup_offset_m: float = 0.4
-    drop_rate_per_min: float = 0.5
-    drop_duration_s: tuple = (2.0, 20.0)
+    drop_rate_per_min: float = 2.4
+    drop_duration_s: tuple = (5.0, 30.0)
+    group_drop_rate_per_min: float = 0.5    # Issue #38: episodes in which several players are lost together
+    group_drop_players: tuple = (3, 6)       # ... how many (min, max)
+    group_drop_duration_s: tuple = (5.0, 20.0)
 
     def __post_init__(self):
+        if self.gap_model not in ("classes", "lognormal"):
+            raise ValueError("gap_model must be 'classes' or 'lognormal'")
+        if self.gap_model == "lognormal" and not 0 < self.gap_min_s <= self.gap_max_s:
+            raise ValueError("need 0 < gap_min_s <= gap_max_s")
+        if self.group_drop_players[0] < 1 or self.group_drop_players[1] < self.group_drop_players[0]:
+            raise ValueError("group_drop_players must be 1 <= min <= max")
         if not 0.0 <= self.hide_frac < 1.0:
             raise ValueError("hide_frac must be in [0, 1)")
         if len(self.dur_edges_s) != len(self.dur_probs) + 1:
@@ -67,8 +85,13 @@ class DegraderParams:
             raise ValueError("dur_edges_s must be positive and increasing")
 
     @classmethod
-    def from_config(cls, path=None) -> "DegraderParams":
-        return params_from_mapping(cls, load_section("external_degrader", path), "external_degrader")
+    def from_config(cls, path=None, section: str = "external_degrader") -> "DegraderParams":
+        """``section`` other than ``external_degrader`` (e.g. ``external_degrader_legacy``, the Issue #19
+        profile) is merged key by key over the ``external_degrader`` section."""
+        raw = load_section("external_degrader", path)
+        if section != "external_degrader":
+            raw = {**raw, **load_section(section, path)}
+        return params_from_mapping(cls, raw, section)
 
 
 @dataclass
@@ -107,7 +130,11 @@ def crowding(players_xy: np.ndarray, ball_xy: np.ndarray, radius_m: float) -> np
 
 
 def sample_block_frames(rng: np.random.Generator, p: DegraderParams, fps: float) -> int:
-    """Duration (frames) of one block: class by ``dur_probs``, log-uniform inside the class."""
+    """Duration (frames) of one block: ``classes`` -> class by ``dur_probs``, log-uniform inside the class;
+    ``lognormal`` -> log-normal clipped to ``[gap_min_s, gap_max_s]``."""
+    if p.gap_model == "lognormal":
+        sec = float(np.exp(rng.normal(np.log(p.gap_median_s), p.gap_sigma)))
+        return max(1, int(round(min(max(sec, p.gap_min_s), p.gap_max_s) * fps)))
     probs = np.asarray(p.dur_probs, dtype=np.float64)
     k = int(rng.choice(len(probs), p=probs / probs.sum()))
     lo, hi = p.dur_edges_s[k], p.dur_edges_s[k + 1]
@@ -133,13 +160,15 @@ def _hide_blocks(codes: np.ndarray, crowd: np.ndarray, fps: float, p: DegraderPa
     cs_crowd = np.concatenate([[0.0], np.cumsum(crowd.astype(np.float64))])
     cs_alive = np.concatenate([[0], np.cumsum(alive.astype(np.int64))])
     covered = 0
+    guard = int(round(p.guard_s * fps)) if p.gap_model == "lognormal" else 0
     for _ in range(100000):
         if covered >= target:
             break
         dur = min(sample_block_frames(rng, p, fps), longest)
         starts = np.arange(n - dur + 1)
         free = np.concatenate([[0], np.cumsum(hidden.astype(np.int64))])
-        ok = graded[starts] & (starts + dur <= run_end[starts]) & ((free[starts + dur] - free[starts]) == 0)
+        lo, hi = np.maximum(starts - guard, 0), np.minimum(starts + dur + guard, n)
+        ok = graded[starts] & (starts + dur <= run_end[starts]) & ((free[hi] - free[lo]) == 0)
         if not ok.any():
             if dur <= int(fps):                      # nothing fits any more
                 break
@@ -214,16 +243,31 @@ def _apply_duplicates(pxy, team, graded_idx, fps, p, rng) -> int:
 
 
 def _apply_drops(pxy, graded_idx, fps, p, rng) -> int:
-    n_ev = _n_events(p.drop_rate_per_min, len(graded_idx) / fps / 60.0, rng)
+    """Dropped-player episodes: single players (``drop_*``, Issue #19) and, from Issue #38, groups of players
+    lost together (``group_drop_*``; e.g. a whole line leaving the camera field of the automatic tracking)."""
     done = 0
-    for _ in range(n_ev):
-        t = int(rng.choice(graded_idx))
-        dur = int(round(rng.uniform(*p.drop_duration_s) * fps))
-        live = np.flatnonzero(np.isfinite(pxy[t, :, 0]))
-        if not len(live):
-            continue
-        pxy[t:t + dur, int(rng.choice(live))] = np.nan
-        done += 1
+    episodes = ((p.drop_rate_per_min, (1, 1), p.drop_duration_s),
+                (p.group_drop_rate_per_min, p.group_drop_players, p.group_drop_duration_s))
+    for rate, k_range, dur_range in episodes:
+        n_ev = _n_events(rate, len(graded_idx) / fps / 60.0, rng)
+        for _ in range(n_ev):
+            t = int(rng.choice(graded_idx))
+            if k_range == (1, 1):                     # Issue #19 behaviour, same random stream
+                dur = int(round(rng.uniform(*dur_range) * fps))
+                live = np.flatnonzero(np.isfinite(pxy[t, :, 0]))
+                if not len(live):
+                    continue
+                pxy[t:t + dur, int(rng.choice(live))] = np.nan
+                done += 1
+                continue
+            live = np.flatnonzero(np.isfinite(pxy[t, :, 0]))
+            if not len(live):
+                continue
+            k = min(int(rng.integers(k_range[0], k_range[1] + 1)), len(live))
+            for slot in rng.choice(live, size=k, replace=False):
+                dur = int(round(rng.uniform(*dur_range) * fps))
+                pxy[t:t + dur, int(slot)] = np.nan
+            done += 1
     return done
 
 

@@ -33,7 +33,7 @@ def test_dataset_and_leave_one_match_out(explore, bench_dir):
     d = datasets[0]
     assert d["X"].shape == (len(d["y"]), len(d["names"])) and d["X"].shape[1] > 60
     assert set(np.unique(d["y"])) <= {0, 1} and len(d["rule_home"]) == len(d["y"])
-    assert d["hidden_share"] == pytest.approx(0.41, abs=0.01)
+    assert d["hidden_share"] == pytest.approx(0.424, abs=0.01)
     assert len(d["groups"]["physics"]) > 20 and len(d["groups"]["memory"]) > 20
     res = explore.leave_one_match_out(datasets, stride=5, importance=True)
     assert 0.0 <= res["mean"] <= 1.0 and len(res["acc"]) == 2

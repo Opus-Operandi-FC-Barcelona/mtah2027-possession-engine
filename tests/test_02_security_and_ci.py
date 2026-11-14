@@ -100,7 +100,9 @@ def test_issue_template_and_tracker():
     tracker = (ROOT / "docs" / "ISSUES_TRACKER.md").read_text(encoding="utf-8")
     pattern = r"^- \[( |x|~)\] (?:COMPLETADA|PENDIENTE|OLEADA [12]) · #(\d\d) · (wave-\d)"
     all_rows = re.findall(pattern, tracker, re.M)
-    assert [int(n) for _, n, _ in all_rows] == list(range(1, 37))        # 28 original + Milestone 7 (#29-#36)
+    numbers = [int(n) for _, n, _ in all_rows]
+    # 28 original + Milestone 7 (#29-...): #1-#36 consecutive, later rows (#37+) strictly increasing
+    assert numbers[:36] == list(range(1, 37)) and numbers == sorted(set(numbers))
     assert "## Milestone 7" in tracker
     rows = [r for r in all_rows if int(r[1]) <= 28]
     waves = {int(n): w for _, n, w in rows}
