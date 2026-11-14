@@ -211,8 +211,8 @@ Provided match, label-free aggregates of the submission (no ground truth involve
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e . --no-deps
 # unpack the organisers' bundle into data/ (tactical/ and broadcast/), see data/README.md
-python scripts/generate_submission.py --data-dir data --specialists load --team OpusOperandi   # -> outputs/OpusOperandi.csv
-python evaluation/validate_submission.py outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"   # -> "outputs/Opus Operandi.csv"
+python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 python scripts/generate_submission.py --data-dir data --specialists load --kpi                 # + KPI quality dashboard
 python scripts/generate_submission.py --data-dir data --model-variant mixed  # alternatives: gap (= default) | mixed | calib | idsse | pff | ensemble
 python scripts/generate_submission.py --synthetic --out /tmp/sub.csv         # self-check without the data (what CI does)

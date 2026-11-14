@@ -7,7 +7,7 @@ Auditor: read-only review. Date of review: 2026-11-02. Nothing in this file was 
 * Read in full: `docs/official/*.md` (README, OVERVIEW, CHALLENGE, DATA, EVALUATION, FAQ, RULES, SUBMISSION),
   `games.py`, `evaluation/possession_metrics.py` (spell/fill/segment logic), `evaluation/run_evaluation.py`,
   `evaluation/validate_submission.py`, `starter/*.py` (baseline, load_atd, load_smart_tagging), and our
-  `README.md`, `docs/TECHNICAL_REPORT.md`, `docs/OpusOperandi.md`, `configs/default.yaml` and the src modules cited below.
+  `README.md`, `docs/TECHNICAL_REPORT.md`, `docs/Opus Operandi.md`, `configs/default.yaml` and the src modules cited below.
 * Never opened: `data/`, `cache/`, `outputs/`, videos, any prediction CSV (including `evaluation/results/*.csv`).
 * Public ground truth: I did **not** open `evaluation/gt/*.csv` and did not run the scorer. In section 2 I used
   one set of numbers that is **derived from the public 5-minute GT**: the 4x4 confusion matrix already stored by the
@@ -39,7 +39,7 @@ annotation clarifications.
 | 11 | closed | Training need not be exactly reproducible; **submission must be byte-for-byte** from the committed weights, CPU inference, pinned deps, fixed seeds. | We commit `models/specialists*.json`; **default `--specialists auto` retrains at run time if the benchmark cache is on disk** (see 0.2). |
 | 14 | closed | Committing intermediate outputs with script/model/settings: yes. Watching video to understand: yes; turning it into labels/corrections/**rules and constants tied to specific frames**: no. | OK; audit video policy in report is consistent. |
 | 15 | closed | Post-match task: using future frames is allowed. | Our non-causal windows are fine. |
-| 16 | closed | IDSSE (CC BY 4.0) explicitly allowed; **cite the dataset**; keep all hyperparameters chosen on other games. | `OpusOperandi.md` cites Bassek et al. 2025, CC BY 4.0. Keep the citation in the PDF. |
+| 16 | closed | IDSSE (CC BY 4.0) explicitly allowed; **cite the dataset**; keep all hyperparameters chosen on other games. | `Opus Operandi.md` cites Bassek et al. 2025, CC BY 4.0. Keep the citation in the PDF. |
 | 17 | **open** | A team points out that in the **public GT** a Barca *won header* with no further control is labelled `H` for 1.32 s between two `A` spells (frames 15766-15798), contradicting the "aerial duel won without control" rule; organisers have not answered. | Important semantic evidence, see section 5. |
 | 20, 22, 25, 26, 27, 28, 29 | open | Validation-only hand labels (unanswered; by #10 surely no), cloud GPU inference, GPU determinism, "is checking output against the video allowed", requests for another match from the same pipeline (#27, #28), running time when hosts re-run. | If a second Metrica-pipeline match is released (#28), it would be by far the best calibration source for gap placement; watch the repo until 17/11. |
 
@@ -51,14 +51,14 @@ annotation clarifications.
    run-time training. Training is declared deterministic, but issue #11 asks for byte equality *with the committed
    weights*. **Generate the final CSV with `--specialists load` (and an explicit `--model-variant`)** and put that exact
    command in the README. Cheap, removes a whole class of risk.
-2. **Docs not final.** `docs/OpusOperandi.md` section 6 still contains "placeholders ... pending" for #42-#46 and says
+2. **Docs not final.** `docs/Opus Operandi.md` section 6 still contains "placeholders ... pending" for #42-#46 and says
    "in progress". `README.md` still says specialists "keep the shared defaults (+0.0195, under the +0.02 rule)" while the
-   report (5.x item 1) says the overrides were adopted. `OpusOperandi.md` says micro-possessions "< 1.2 s" are absorbed but
+   report (5.x item 1) says the overrides were adopted. `Opus Operandi.md` says micro-possessions "< 1.2 s" are absorbed but
    the active `route_overrides.specialists.spell_optimizer.micro_poss_s` is **0.9847** (`configs/default.yaml:~530`) and
    the heuristic route's is 1.7542. SUBMISSION.md asks the document to state "the possession rules you implemented";
    state the numbers actually in force.
 3. **Accessibility of external data (RULES.md "organisers can access and inspect").** IDSSE is open (CC BY 4.0). Metrica
-   sample-data is public (`OpusOperandi.md` says "no licence file in the repository"; check the licence before citing).
+   sample-data is public (`Opus Operandi.md` says "no licence file in the repository"; check the licence before citing).
    PFF FC World Cup 2022 tracking is available on request, not openly; the document must say how to obtain it. SkillCorner
    is MIT. Training data section per SUBMISSION.md ("who labelled and how much") is mostly there; add "PFF events are
    human-annotated by PFF" (other game = allowed).

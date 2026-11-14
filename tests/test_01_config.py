@@ -42,7 +42,7 @@ def test_games_cross_check_detects_mismatch():
 
 def test_yaml_load():
     conf = cfg.load_config()
-    assert conf.team_name == "OpusOperandi"
+    assert conf.team_name == "Opus Operandi"
     assert conf.seed == 0
     assert conf.match == cfg.MatchConfig()
     assert conf.match.graded_blocks == cfg.GRADED_BLOCKS

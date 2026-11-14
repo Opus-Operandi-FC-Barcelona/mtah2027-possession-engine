@@ -1,6 +1,6 @@
 # Default configuration (Issue #1). Match constants are the published BAR-ATH values
 # (DATA.md); they are cross-checked against games.py at load time.
-team_name: OpusOperandi
+team_name: "Opus Operandi"
 seed: 0
 
 match:

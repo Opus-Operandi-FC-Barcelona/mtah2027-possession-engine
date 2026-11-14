@@ -18,9 +18,9 @@ provided data and invariance to player dropout") adopted three changes: the set-
 clamp (#50, correctness fix), the isolation of the front end per graded play block (#51, correctness fix) and the
 re-trained default model in the estimated "gaps over dead ball" world (#48, +0.017 spellF1 on B'(33)).  #42, #43, #44
 and #49 were measured and left off by configuration; #47 is the audit against the official repository and #52 makes the
-submission depend only on the committed model.  Results: `docs/OpusOperandi.md` (section 6) and
+submission depend only on the committed model.  Results: `docs/Opus Operandi.md` (section 6) and
 `docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
-[`docs/OpusOperandi.md`](docs/OpusOperandi.md).
+[`docs/Opus Operandi.md`](<docs/Opus Operandi.md>).
 
 ### Architecture
 
@@ -103,10 +103,10 @@ ever processed locally; tests and CI use a deterministic **synthetic match** gen
 ```bash
 python -m venv .venv && source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e . --no-deps
-python scripts/generate_submission.py --data-dir data --team OpusOperandi
-# -> outputs/OpusOperandi.csv   (199,319 rows + header, validated with the official format check)
-python evaluation/validate_submission.py outputs/OpusOperandi.csv
-python scripts/generate_submission.py --data-dir data --team OpusOperandi --kpi      # + seven-KPI dashboard
+python scripts/generate_submission.py --data-dir data --team "Opus Operandi"
+# -> "outputs/Opus Operandi.csv"   (199,319 rows + header, validated with the official format check)
+python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
+python scripts/generate_submission.py --data-dir data --team "Opus Operandi" --kpi      # + seven-KPI dashboard
 python scripts/generate_submission.py --data-dir data --model-variant idsse          # another specialists file
 ```
 
@@ -134,7 +134,7 @@ python scripts/generate_submission.py --data-dir data --model-variant idsse     
 ## Quality control: the seven-KPI dashboard
 
 ```bash
-python scripts/run_kpi_dashboard.py --data-dir data --submission outputs/OpusOperandi.csv
+python scripts/run_kpi_dashboard.py --data-dir data --submission "outputs/Opus Operandi.csv"
 python scripts/run_kpi_dashboard.py --data-dir data --external-lomo        # + leave-one-match-out specialists
 python scripts/run_kpi_dashboard.py --synthetic                            # full-length synthetic self-check
 python scripts/generate_submission.py --data-dir data --kpi               # submission + dashboard in one go
@@ -327,7 +327,7 @@ and logged.
 
 ```bash
 # 1. set broadcast_sync.enabled: true in configs/default.yaml (needs data/broadcast/ next to data/tactical/)
-python scripts/generate_submission.py --data-dir data --out outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --out "outputs/Opus Operandi.csv"
 #    the log prints "broadcast: N/M blocks synchronised, K hidden frames filled"; diagnostics["broadcast"] has
 #    only aggregates (blocks, accepted, offset/corr/residual medians, fill rate, seconds)
 # 2. value estimate on other matches with a simulated camera (never BAR-ATH):
@@ -432,7 +432,7 @@ scripts/                             generate_submission.py, train_specialists.p
                                      generate_synthetic_fixtures.py, ...
 tests/                               one test module per issue + shared synthetic-match fixtures
 evaluation/  games.py  starter/      vendored official scorer, constants and starter kit (unmodified)
-docs/                                OpusOperandi.md (submission document), TECHNICAL_REPORT.md, ISSUES_TRACKER.md, official/
+docs/                                Opus Operandi.md (submission document), TECHNICAL_REPORT.md, ISSUES_TRACKER.md, official/
 ```
 
 ## Tests and CI

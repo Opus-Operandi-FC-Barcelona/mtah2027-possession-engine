@@ -79,7 +79,7 @@ class KpiAlarms:
 
 @dataclass(frozen=True)
 class Config:
-    team_name: str = "OpusOperandi"
+    team_name: str = "Opus Operandi"
     seed: int = 0
     match: MatchConfig = MatchConfig()
     kpi_alarms: KpiAlarms = KpiAlarms()

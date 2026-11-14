@@ -3,7 +3,7 @@
 
 Examples::
 
-    python scripts/generate_submission.py --data-dir data --team OpusOperandi
+    python scripts/generate_submission.py --data-dir data --team "Opus Operandi"
     python scripts/generate_submission.py --synthetic --out /tmp/sub_run1.csv     # CI determinism check
     python scripts/generate_submission.py --data-dir data --kpi                   # + the 7-KPI dashboard
 
