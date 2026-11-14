@@ -769,6 +769,29 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
+### Ball detectors on the real tactical video (Issue #58, aggregates only)
+
+Purpose: the broadcast route was measured label-free on the real match (Issue #39) but the ball detectors of the
+vision route (motion #36, optional YOLO) had only been tested on synthetic video.  `scripts/real_video_ball_check.py`
+samples (seeded, default 1000) video frames of the evaluated halves where the ATD ball is visible and the
+homography is usable, cuts the 640x640 attention crop around the projected ATD ball (`--search-offset-m` shifts
+it by a seeded random offset to mimic a real search point), runs the available detectors, reprojects the detections
+with H^-1 and compares them with the ATD ball.  It never reads possession labels, never writes crops or per-frame
+rows, and refuses to print anything that is not an aggregate.  A detector that cannot be built (no ultralytics or
+weights) is skipped and listed under `skipped_detectors`.  The submission path and defaults are not changed.
+
+```bash
+python scripts/real_video_ball_check.py --data-dir data --sample 1000 --json reports/real_video_ball_check.json
+```
+
+Numbers printed, per detector: detection rate (% of sampled frames with a detection within 1 / 2 / 5 m of the ATD
+ball, any candidate and highest-confidence candidate), median and p90 error in metres of the nearest detection,
+false positives per frame (detections farther than 5 m), frames skipped (invalid homography / off-image, video
+read failures), detections per frame, runtime; plus the median apparent ball size in px.  The crop is centred on
+the ATD ball, so the rates are an upper bound of the gap-recovery use.
+
+Result pending: run locally by the user (the real video never leaves the user's machine).
+
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),
