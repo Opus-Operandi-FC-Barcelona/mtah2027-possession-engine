@@ -268,15 +268,19 @@ def find_bench_dir(explicit: str | Path | None = None) -> Path | None:
 
 
 def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = None,
-                        model_path: str | Path | None = None, config_path=None, prefer_file: bool = False,
+                        model_path: str | Path | None = None, config_path=None, prefer_file: bool = True,
+                        train_fallback: bool = True,
                         log: Callable[[str], None] | None = None) -> SpecialistSet | None:
     """Specialists for the pipeline, or ``None`` (heuristic emissions).
 
     ``mode``: ``off`` -> ``None``; ``train`` -> train from the external matches (error if absent);
-    ``load`` -> the committed model file (error if absent); ``auto`` -> train when the external matches are
-    on disk, else load the committed file, else ``None``.  Any failure in ``auto`` mode falls through to
-    the next option and is logged.  ``prefer_file`` makes ``auto`` skip the run-time training (used for the
-    synthetic CI run: deterministic and independent of the data on the local disk).
+    ``load`` -> the committed model file (error if absent); ``auto`` -> the committed model file when it
+    exists, else train when the external matches are on disk, else ``None``.  Any failure in ``auto`` mode
+    falls through to the next option and is logged.  Issue #52: loading first makes the submission depend
+    only on the repository (RULES.md: running it against the provided data must reproduce the same file),
+    never on whether a benchmark cache happens to sit next to it.  ``prefer_file=False`` restores the old
+    ``auto`` order (train first) for experiments; ``train_fallback=False`` makes ``auto`` never train
+    (synthetic CI runs: fast and independent of the data on the local disk).
     """
     say = log or (lambda m: None)
     if mode == "off":
@@ -285,20 +289,8 @@ def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = No
         raise ValueError(f"unknown specialists mode '{mode}'")
     path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
     strict = mode != "auto"
-    if mode == "train" or (mode == "auto" and not prefer_file):
-        found = find_bench_dir(bench_dir)
-        if found is None:
-            if mode == "train":
-                raise FileNotFoundError("no external benchmark matches found (--bench-dir / $MTAH_BENCH_DIR)")
-            say("specialists: external matches not on disk")
-        else:
-            try:
-                return train_specialists(found, config_path=config_path, log=say)
-            except Exception as exc:  # noqa: BLE001 - progressive fallback
-                if strict:
-                    raise
-                say(f"specialists: training failed ({type(exc).__name__}: {exc})")
-    if mode in ("auto", "load"):
+
+    def from_file() -> SpecialistSet | None:
         if path.is_file():
             try:
                 return load_specialists(path, config_path)
@@ -310,6 +302,35 @@ def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = No
             raise FileNotFoundError(f"{path} not found")
         else:
             say(f"specialists: no committed model file ({path.name})")
+        return None
+
+    def from_training() -> SpecialistSet | None:
+        found = find_bench_dir(bench_dir)
+        if found is None:
+            if strict:
+                raise FileNotFoundError("no external benchmark matches found (--bench-dir / $MTAH_BENCH_DIR)")
+            say("specialists: external matches not on disk")
+            return None
+        try:
+            return train_specialists(found, config_path=config_path, log=say)
+        except Exception as exc:  # noqa: BLE001 - progressive fallback
+            if strict:
+                raise
+            say(f"specialists: training failed ({type(exc).__name__}: {exc})")
+        return None
+
+    if mode == "load":
+        order = (from_file,)
+    elif mode == "train":
+        order = (from_training,)
+    else:
+        order = (from_file, from_training) if prefer_file else (from_training, from_file)
+        if not train_fallback:
+            order = (from_file,)
+    for attempt in order:
+        result = attempt()
+        if result is not None:
+            return result
     say("specialists: unavailable, using the heuristic emissions"
         + ("" if lightgbm_available() else " (lightgbm is not installed)"))
     return None

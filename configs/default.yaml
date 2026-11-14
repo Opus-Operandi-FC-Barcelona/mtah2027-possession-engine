@@ -94,6 +94,9 @@ setpiece_anchor:
   goal_search_post_s: 6.0
   max_goal_to_kickoff_s: 150.0  # a Kick Off (After Goal) farther than this is not linked to the goal
   restart_mask_halfwidth: 0     # restart_mask is True on t* +- this many frames
+  fallback_dead_s: 0.5          # Issue #50: no dead-score evidence -> force D only this long right before t* (0 = never force)
+  fallback_tag_window: false    # Issue #50: true = legacy, force D back to the tag-window start (the 35 s windows open in live play)
+  clamp_period_starts: true     # Issue #50: Kick Off (Start) t* -> first frame of its play block (config / games.py constants)
 
 # Issue #16 -- ball-to-player distances, control weights, touches and the possession evidence.
 ball_kinematics:
@@ -208,6 +211,7 @@ pipeline:
   alive_dead_after_s: 3.0
   use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
   use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
+  isolate_play_blocks: true     # Issue #51: tracking outside the play blocks is masked (no leak across blocks)
 
 # Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
 # artefacts).  Used only to build validation / self-supervision data, never on the competition match.

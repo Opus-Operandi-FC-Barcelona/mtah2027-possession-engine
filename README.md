@@ -72,7 +72,7 @@ with Milestone 9.
 | 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
 | 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
-| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release (there is no #41) |
+| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release, #50 set-piece anchor fallback + period-start clamp (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
@@ -116,10 +116,11 @@ python scripts/generate_submission.py --data-dir data --model-variant idsse     
 * Self-check without the real data (what CI does): `python scripts/generate_submission.py --synthetic --out
   /tmp/sub_run1.csv` generates the full-length synthetic match with a fixed seed and also reports its score
   against the synthetic ground truth.
-* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) trains the specialists at run time
-  from the external open matches if they are on disk (`--bench-dir`, `$MTAH_BENCH_DIR` or the sibling
-  `mtah2027-external-benchmarks/cache`), otherwise loads the committed `models/specialists.json`, otherwise
-  uses the heuristic emissions.  With `--synthetic`, `auto` means `load` (deterministic and fast).  The training
+* Learned emissions (`--specialists auto|train|load|off`).  `auto` (default) loads the committed
+  `models/specialists.json` whenever it exists (Issue #52: the submission depends only on the repository, as
+  RULES.md requires); only if it is missing does it train from the external open matches on disk (`--bench-dir`,
+  `$MTAH_BENCH_DIR` or the sibling `mtah2027-external-benchmarks/cache`), otherwise it uses the heuristic emissions.
+  `train` always retrains.  With `--synthetic`, `auto` never trains (deterministic and fast).  The training
   is deterministic (LightGBM `deterministic=True`, `num_threads=1`, `seed=0`) and reproducible with
   `python scripts/train_specialists.py` (the committed file is its output).  See "Training data" in the
   technical report: only external open data, labelled algorithmically; nothing from BAR-ATH.
