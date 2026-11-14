@@ -107,6 +107,7 @@ class PipelineResult:
 
     labels: np.ndarray
     diagnostics: dict
+    features: dict = field(default_factory=dict)   # only with keep_features (audit video: log_probs ...)
 
 
 def _log_default(message: str) -> None:
@@ -515,14 +516,17 @@ def resolve_config(config: str | Path | Config | None) -> tuple[Path, Config | N
 
 def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config | None = None,
                  blocks: MatchConfig | None = None, *, cache_dir: str | Path | None = None,
-                 log: Callable[[str], None] | None = None, specialists: Any = None) -> PipelineResult:
+                 log: Callable[[str], None] | None = None, specialists: Any = None,
+                 keep_features: bool = False) -> PipelineResult:
     """Tracking bundle in ``data_dir`` -> contract-compliant labels (see the module docstring).
 
     ``config`` is a YAML path or a typed :class:`Config` (default ``configs/default.yaml``); ``blocks`` the
     match layout (default: the official BAR-ATH one, or ``config.match``).  ``cache_dir`` enables the
     ``.npz`` cache of the parsed ATD (``None`` = no cache).  ``specialists`` (optional
     :class:`~mtah2027.models.specialist_fusion.SpecialistSet`) switches the emissions from the heuristic
-    to the learned ones (Issues #20-#22); the heuristic emissions remain the fallback.
+    to the learned ones (Issues #20-#22); the heuristic emissions remain the fallback.  ``keep_features``
+    only keeps the per-frame arrays of the core (emission ``log_probs``, ...) in ``PipelineResult.features``
+    for the audit video (Issue #36); it never changes the labels.
     """
     from mtah2027.io.atd_loader import load_atd
     from mtah2027.io.smart_tagging_loader import load_smart_tagging
@@ -552,7 +556,8 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
                    f"({100 * vision.stats['fill_rate']:.1f}%)")
     elif not vp.enabled:
         st.skip("vision_recovery", "disabled by configuration")
-    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision, broadcast)
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision, broadcast,
+                          keep_features=keep_features)
 
 
 def _apply_broadcast_sync(td, data_dir, match: MatchConfig, cfg_path, st: _Stages, cache_dir):
@@ -632,7 +637,7 @@ def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
 
 def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any,
                    homography: np.ndarray | None = None, vision: Any = None,
-                   broadcast: dict | None = None) -> PipelineResult:
+                   broadcast: dict | None = None, keep_features: bool = False) -> PipelineResult:
     """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
     n = match.n_video_frames
     t_total = time.perf_counter()
@@ -643,14 +648,16 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
         ball = vision.ball_xy       # tracking where seen, recovered video points where it was missing
 
     core_diag: dict = {}
+    features: dict = {}
     try:
         core = run_core(
             players, td.team_of_slot, ball, play_blocks=play_blocks, dead_blocks=dead_blocks, fps=td.fps,
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
-            homography=homography)
+            homography=homography, keep_features=keep_features)
         codes, core_diag = core.codes, core.diagnostics
+        features = core.features
         route = "heuristic"
     except Exception as exc:  # noqa: BLE001 - last resort: still deliver a valid file
         st.log(f"heuristic route failed ({type(exc).__name__}: {exc}); "
@@ -670,4 +677,4 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
         "final": summarize_labels(labels, play_blocks, td.fps),
         "seconds_total": round(time.perf_counter() - t_total, 3),
     }
-    return PipelineResult(labels=labels, diagnostics=diagnostics)
+    return PipelineResult(labels=labels, diagnostics=diagnostics, features=features)
