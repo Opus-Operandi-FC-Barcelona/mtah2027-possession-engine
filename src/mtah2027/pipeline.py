@@ -86,6 +86,12 @@ class PipelineParams:
     use_spell_optimizer: bool = True
     use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
     use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
+    # Issue #43: the live-phase mask additionally drops frames with physical dead-ball evidence
+    # (ball out of bounds or dead_score >= alive_dead_threshold) and ``alive_dead_after_s`` s after them,
+    # because the phases lag when the ball leaves the pitch and quick restarts carry no set-piece tag
+    alive_exclude_dead_evidence: bool = False
+    alive_dead_threshold: float = 0.6
+    alive_dead_after_s: float = 3.0
 
     @classmethod
     def from_config(cls, path=None) -> "PipelineParams":
@@ -223,6 +229,20 @@ def live_phase_mask(smart_tagging: Any, anchors: Any, n: int, goal_tail_s: float
     return live
 
 
+def dead_evidence_mask(dead_score: np.ndarray, ball_out: np.ndarray | None, threshold: float, after_s: float,
+                       fps: float = FPS) -> np.ndarray:
+    """Frames with physical dead-ball evidence plus ``after_s`` seconds after each of them (Issue #43)."""
+    ev = np.nan_to_num(np.asarray(dead_score, dtype=np.float64), nan=0.0) >= threshold
+    if ball_out is not None:
+        ev |= np.nan_to_num(np.asarray(ball_out, dtype=np.float64)) > 0.5
+    k = int(round(after_s * fps))
+    if k > 0 and ev.any():
+        idx = np.arange(len(ev))
+        last = np.maximum.accumulate(np.where(ev, idx, -10 ** 9))
+        ev = ev | ((idx - last) <= k)
+    return ev
+
+
 def compute_front_end(
         players_xy: np.ndarray, team_of_slot: np.ndarray, ball_xy: np.ndarray, *,
         play_blocks: Sequence[tuple[int, int]], fps: float = FPS, pitch: tuple[float, float] = PITCH,
@@ -323,6 +343,9 @@ def compute_front_end(
     if (smart_tagging is not None and pp.use_phase_prior
             and getattr(smart_tagging, "phase_cover", None) is not None):
         phase_alive = live_phase_mask(smart_tagging, anchors, n)
+        if pp.alive_exclude_dead_evidence:
+            phase_alive &= ~dead_evidence_mask(dead_score, sig.ball_out if sig is not None else None,
+                                               pp.alive_dead_threshold, pp.alive_dead_after_s, fps)
         transitions = list(getattr(smart_tagging, "transitions", []) or [])
     touches = None
     if bk is not None:

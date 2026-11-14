@@ -203,6 +203,9 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+  alive_exclude_dead_evidence: false   # Issue #43: live-phase mask also drops frames with dead-ball evidence
+  alive_dead_threshold: 0.6
+  alive_dead_after_s: 3.0
   use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
   use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
 

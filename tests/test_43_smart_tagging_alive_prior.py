@@ -156,3 +156,16 @@ def test_simulator_noise_levels_are_ordered_and_reach_the_target_coverage():
     s = simulate_smart_tagging(codes, periods, FPS, noise="medium", seed=0, n_frames=n)
     dead_cov = float(s.phase_cover[graded & (codes == 2)].mean())
     assert 0.15 < dead_cov < 0.7                                         # realistic dead-time contamination
+
+
+def test_dead_evidence_mask_extends_after_the_evidence():
+    from mtah2027.pipeline import dead_evidence_mask
+
+    ds = np.zeros(200)
+    ds[50:60] = 0.9
+    out = np.zeros(200)
+    out[120] = 1.0
+    m = dead_evidence_mask(ds, out, 0.6, 2.0, fps=25.0)
+    assert m[50:60].all() and m[60:110].all() and not m[110] and not m[:50].any()   # 2 s = 50 frames after
+    assert m[120] and m[170] and not m[171]
+    assert not dead_evidence_mask(ds, None, 0.95, 2.0, fps=25.0).any()

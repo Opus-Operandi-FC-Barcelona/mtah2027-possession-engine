@@ -57,6 +57,7 @@ class SimParams:
     setpiece_min_dead_s: float = 5.0
     set_piece_window_s: float = 35.0
     max_tail_s: float = 60.0
+    na_rate: float = 0.02            # phases with Team = N/A (BAR-ATH: 10 of 575 phases; every throw-in is N/A too)
 
 
 NOISE_LEVELS: dict[str, SimParams] = {
@@ -180,7 +181,8 @@ def simulate_smart_tagging(codes: np.ndarray, periods, fps: float, *, noise: str
             else:
                 s, t = e.start_frame + jit(), e.end_frame + jit()
                 t = max(t, s + int(3 * fps))
-            out.append(_event(e.code, s, t, e.team, fps, e.half, e.type))
+            team = -1 if (not whole_window and rng.random() < p.na_rate) else e.team
+            out.append(_event(e.code, s, t, team, fps, e.half, e.type))
         return out
 
     ph = noisy(phases, False)

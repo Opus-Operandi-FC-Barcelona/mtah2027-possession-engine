@@ -94,6 +94,7 @@ def main(argv=None) -> int:
     ap.add_argument("--training-pickle", default=None)
     ap.add_argument("--sources", nargs="*", default=None, help="training sources (default: all in the pickle)")
     ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W")
+    ap.add_argument("--model-dir", default=None, help="cache of the trained held-out models (json per group)")
     ap.add_argument("--max-matches", type=int, default=20)
     ap.add_argument("--folds", type=int, default=4)
     ap.add_argument("--matches", nargs="*", default=None)
@@ -107,8 +108,9 @@ def main(argv=None) -> int:
     variants = [parse_variant(v, base) for v in args.variants]
     bench = Path(args.bench_dir)
     pkl = Path(args.training_pickle) if args.training_pickle else None
+    ts = None
     if pkl is not None and pkl.is_file():
-        ts = pickle.loads(pkl.read_bytes())
+        pass      # loaded lazily, only when a model has to be trained
     else:
         ts = build_training_set(args.bench_dir, params=TrainingDataParams.from_config(None), config_path=None,
                                 log=lambda m: None)
@@ -128,12 +130,21 @@ def main(argv=None) -> int:
     for gi, (fs, names) in enumerate(groups):
         if not fs:
             continue
-        weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
-        sources = args.sources if args.sources is not None else sorted({p.source for p in ts.parts})
-        sub = ts.select(sources, weights or ts.weights, ts.drop_dead, exclude_matches=names)
+        mpath = Path(args.model_dir) / f"{args.protocol}_{'_'.join(names)}.json" if args.model_dir else None
         t0 = time.perf_counter()
-        spec = dataclasses.replace(sf.train_specialists(args.bench_dir, config_path=None, training=sub),
-                                   fusion=fusion)
+        if mpath is not None and mpath.is_file():
+            spec = dataclasses.replace(sf.load_specialists(mpath), fusion=fusion)
+        else:
+            if ts is None:
+                ts = pickle.loads(pkl.read_bytes())
+            weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+            sources = args.sources if args.sources is not None else sorted({p.source for p in ts.parts})
+            sub = ts.select(sources, weights or ts.weights, ts.drop_dead, exclude_matches=names)
+            spec = dataclasses.replace(sf.train_specialists(args.bench_dir, config_path=None, training=sub),
+                                       fusion=fusion)
+            if mpath is not None:
+                mpath.parent.mkdir(parents=True, exist_ok=True)
+                sf.save_specialists(spec, mpath)
         print(f"group {gi}: trained without {names} ({time.perf_counter() - t0:.0f} s)", flush=True)
         for f in fs:
             z = np.load(f, allow_pickle=True)
