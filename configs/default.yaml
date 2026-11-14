@@ -591,3 +591,28 @@ restart_rules:
   auto_long_ball_weight: false  # heuristic_emissions.w_long_ball from Specialist A's confident visible frames
   long_ball_cap: 1.5
   long_ball_min_frames: 250
+
+# Issue #44 -- best decoder / fusion block found by the bounded sweep under the calibrated degrader (B' = 7 IDSSE
+# leave-one-match-out at dead_affinity 33, selection seeds 0-1, blind seed 2) together with the ensemble
+# `--model-variant ensemble` (models/specialists_ensemble.json = linear mix 0.75 gap + 0.25 mixed).  It gained +0.0091 on
+# B'(33) (needed +0.010), so it is NOT applied: copy these sections into route_overrides.specialists to use it.
+# Read by nothing; tests/test_44_decoder_ensemble.py checks that every key is a valid parameter.
+decoder_candidates:
+  issue_44:
+    specialist_fusion:
+      scale_visible: 0.7
+      scale_hidden: 1.0
+      blend_visible: 0.1
+      blend_hidden: 0.0229
+    transition_matrix:
+      ha_occluded: -6.0
+      ha_closed: -22.0
+      ha_open: -2.0
+      dead_open: -1.208
+      dead_closed: -9.0
+      d_exit_open: -3.0
+      touch_min_score: 0.7778
+    spell_optimizer:
+      micro_poss_s: 0.4
+      min_dead_s: 2.5
+      min_isolated_poss_s: 1.2596

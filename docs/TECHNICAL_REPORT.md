@@ -554,6 +554,42 @@ every seed above -0.003, A guard passed with +0.005).  `models/specialists.json`
 `--model-variant mixed` (`models/specialists_mixed.json`, legacy degrader).  Cost accepted knowingly: -0.008 spellF1
 in the blind world (B'(1) 0.6084 -> 0.6004).  The gain is evidence about the *estimated* world, not about BAR-ATH
 labels, which we do not have.
+**Item 8 (Issue #44): bounded re-optimisation of the decoder and ensembles under the calibrated degrader (not adopted; code, model variant and block kept OFF).**
+Sweep in `mtah2027-external-benchmarks` (issue #5, `reports/issue44/`), harness `scripts/decoder_sweep.py` (front end, model
+probabilities and heuristic emissions of a held-out cell are computed once; each candidate re-runs fusion priors / scaling,
+transitions, Viterbi and the spell optimiser; checked equal to an uncached `run_core`) with LOMO / 4-fold models from
+`scripts/train_cv_models.py`.  Protocol: selection on B'(33) (7 IDSSE LOMO, `dead_affinity` 33) seeds 0-1, seed 2 blind;
+guards B'(1) (reject > 0.01 drop) and A (20 PFF 4-fold + 8 unseen PFF, reject > 0.03 drop); baseline = current default
+(B'(33) 0.6693, B'(1) 0.6017, A 0.5263 / 0.5263).  Swept: `route_overrides.specialists` (`specialist_fusion` scales and blends;
+`transition_matrix` ha_closed / ha_open / ha_occluded / dead_open / dead_closed / d_exit / dead_ramp / alive_ramp / touch;
+`spell_optimizer` micro_poss / min_dead / min_isolated / bridge) in four stages (60 one-at-a-time, 234 random, 81 grid, 320 joint random) plus
+47 ensemble candidates.  Ensemble: `--model-variant ensemble` loads the manifest `models/specialists_ensemble.json`
+(committed model files only, linear or log-linear mix of the per-frame class probabilities before the soft priors, then the
+usual floor / scaling / `1e-6` quantisation; nothing is trained at submission time; synthetic SHA identical across runs).
+
+| candidate | B'(33) mean (seeds 0 / 1 / 2 blind) | B'(1) | A 4-fold (20) | A unseen (8) |
+|---|---|---|---|---|
+| default | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6017 | 0.5263 | 0.5263 |
+| decoder block D1 (gap) | 0.6759 (+0.0066; +0.0071 / +0.0095 / +0.0033) | +0.0029 | +0.0059 | +0.0063 |
+| decoder block `gap_r11` (gap) | 0.6757 (+0.0064) | +0.0024 | +0.0070 | +0.0083 |
+| **lin 0.75 gap + 0.25 mixed, block `lin75_r06`** | **0.6784 (+0.0091; +0.0113 / +0.0068 / +0.0091)** | +0.0068 | +0.0097 | +0.0087 |
+| lin 0.75 gap + 0.25 mixed + D1 | 0.6764 (+0.0071) | +0.0071 | +0.0071 | +0.0075 |
+| lin 0.5 gap + 0.5 mixed + D1 | 0.6746 (+0.0052) | +0.0078 | +0.0062 | +0.0086 |
+| lin 0.75 gap + 0.25 calib + D1 | 0.6748 (+0.0054) | +0.0061 | +0.0088 | +0.0046 |
+| `mixed` alone | 0.6512 (-0.0181) | +0.0030 | -0.0032 | -0.0006 |
+| `calib` alone | 0.6510 (-0.0184) | +0.0056 | +0.0037 | +0.0040 |
+
+Findings.  (i) The decoder is on a plateau: single parameters move B'(33) by < 0.002; the gain comes from a joint move (lower
+`scale_visible`, much more expensive H<->A switches `ha_closed`, shorter `micro_poss_s`, `blend_hidden` 0) and saturates at +0.008.
+(ii) The ensemble is worth about +0.001 to +0.002 on B'(33) on top of the decoder block: `mixed` / `calib` alone lose 0.018 on B'(33) (trained
+for another world), so mixing them in only helps in the blind world B'(1) and slightly on PFF.  Best on B'(33) is a 0.75 / 0.25 linear mix.
+(iii) Best candidate +0.0091 (selection seeds +0.0090, blind +0.0091, no seed negative, A +0.0097 / +0.0087, B'(1) +0.0068, all guards
+pass) but **below the +0.01 bar**, and the gain is of the size of the selection effect (max over ~700 candidates), so nothing is applied:
+the block is stored as `decoder_candidates.issue_44` in `configs/default.yaml` (copy into `route_overrides.specialists` to use it).
+(iv) Strata (B'(33), pooled): predicted D equals the true D in every stratum (< 16 players 50.1 / 48.1 %, < 20 46.1 / 45.1 %, >= 20 44.7 / 44.4 %),
+so the second adoption path (correcting D over-prediction under dropout) does not apply.  Spell-utility MBR over the ensemble members was not run
+(the existing MBR of Issue #32 stays off).
+
 ### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
 
 *Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players

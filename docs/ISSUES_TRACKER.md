@@ -72,7 +72,7 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 
 - [x] COMPLETADA · #42 · wave-6 · Invarianza a caída de jugadores: diagnóstico por estratos, canal `s` nativo (m/s verificado), forma robusta al tamaño muestral (medido, no adoptado: desactivado por config) · `feat/issue-42-player-dropout-invariance`
 - [x] COMPLETADA · #43 · wave-6 · Prior de balón vivo y transiciones desde Smart Tagging con balón oculto (simulador de tags; medido, no adoptado: desactivado por config) · `feat/issue-43-smart-tagging-alive-prior`
-- [ ] PENDIENTE · #44 · wave-6 · Re-optimización acotada del decodificador bajo el degradador calibrado (barrido en external-benchmarks #5) · rama por definir
+- [x] COMPLETADA · #44 · wave-6 · Re-optimización acotada del decodificador bajo el degradador calibrado y ensemble de modelos (barrido en external-benchmarks #5; mejor +0.0091 en B'(33) < +0.01, no adoptado: variante `--model-variant ensemble` y bloque `decoder_candidates.issue_44` desactivados) · `feat/issue-44-decoder-reopt`
 - [~] EN CURSO · #45 · wave-6 · Documentación y sincronización de todos los repos de la organización · `feat/issue-45-docs-and-org-repos-sync`
 - [ ] PENDIENTE · #46 · wave-6 · Cierre e integración del Milestone 9 · rama por definir
 | #47 | Auditoría completa contra el repositorio oficial del reto | [x] COMPLETADA | `docs/OFFICIAL_AUDIT.md` |

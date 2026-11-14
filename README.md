@@ -54,6 +54,7 @@ only if its leave-one-match-out spellF1 on degraded external matches beats the h
 | `idsse` | `models/specialists_idsse.json` | IDSSE only |
 | `pff` | `models/specialists_pff.json` | PFF only |
 | `calib` | `models/specialists_calib.json` | IDSSE degraded with the calibrated degrader (#38, affinity 1) + PFF 0.5 |
+| `ensemble` | `models/specialists_ensemble.json` | Issue #44 manifest: linear per-frame mix, 0.75 `gap` + 0.25 `mixed` (committed files only; measured +0.002 over the default on B'(33) without the decoder block, not adopted) |
 
 Choose between them with label-free input statistics (`scripts/compare_input_stats.py --data-dir data`), never with
 labels of the provided game.
@@ -225,6 +226,7 @@ puts the D share of the BAR-ATH ball gaps at >= ~80 % (point estimate 94 %, aggr
 with the calibrated degrader at affinity 33 gains +0.0174 on B' in that world (every seed >= +0.013) and passes the PFF guard
 (A +0.005): **adopted as the default** (`models/specialists.json` = `--model-variant gap`); the previous default stays as
 `--model-variant mixed`.  Details and the per-specialist PFF ablation: `docs/TECHNICAL_REPORT.md`, Item 7.
+Issue #44: bounded decoder / fusion / ensemble sweep under the calibrated degrader (B'(33) seeds 0-1 selection, seed 2 blind, guards B'(1) and PFF): best +0.0091 on B'(33) (needed +0.01), not adopted.  `--model-variant ensemble` (`models/specialists_ensemble.json`, linear 0.75 `gap` + 0.25 `mixed`, committed files only) and the block `decoder_candidates.issue_44` of `configs/default.yaml` stay available, OFF; tools `scripts/decoder_sweep.py`, `scripts/train_cv_models.py`; Item 8 of the report.
 Issue #42 (player-dropout invariance): `eval_external.py --strata` / `diagnose_possessions.py` break the results down by tracked
 players (< 16, < 20, >= 20); on the calibrated degrader the model does not over-predict `D` under dropout.  Sample-size-robust
 shape features (`specialist_features.normalise_shape`, `shape_min_field`) gain +0.002/+0.003 on B' and the native speed channel

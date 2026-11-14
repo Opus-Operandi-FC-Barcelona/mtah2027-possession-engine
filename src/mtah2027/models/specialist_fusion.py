@@ -52,6 +52,7 @@ from mtah2027.models.specialist_data import TrainingSet, build_training_set
 from mtah2027.models.specialist_features import build_feature_matrix
 
 DEFAULT_MODEL_PATH = REPO_ROOT / "models" / "specialists.json"
+ENSEMBLE_FORMAT = "ensemble"
 BENCH_ENV = "MTAH_BENCH_DIR"
 MODEL_FORMAT = 1
 
@@ -89,6 +90,15 @@ class SpecialistSet:
     training: dict = field(default_factory=dict)
     source: str = "memory"
     durations: object = None          # DurationModel of the training labels (Issue #34), optional
+    ensemble: tuple = ()              # Issue #44: ((SpecialistSet, weight), ...); empty = this set alone
+    mix_mode: str = "loglinear"       # Issue #44: how the member probabilities are combined
+
+    def members(self) -> tuple:
+        """``((set, normalised weight), ...)``: the ensemble members, or this set alone."""
+        if not self.ensemble:
+            return ((self, 1.0),)
+        total = float(sum(w for _, w in self.ensemble))
+        return tuple((m, float(w) / total) for m, w in self.ensemble)
 
     def to_dict(self) -> dict:
         out = {"format": MODEL_FORMAT, "a": self.a.to_dict(), "b": self.b.to_dict(),
@@ -153,24 +163,18 @@ def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarra
     return np.stack([alive * sigmoid(z), alive * sigmoid(-z), p_dead], axis=1), z
 
 
-def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *, play_blocks,
-                   fps: float = FPS, rebuild: Callable[[np.ndarray], object], raw_ball: np.ndarray,
-                   config_path=None) -> FusionResult:
-    """Learned emissions of the target match (see the module docstring)."""
+def member_probabilities(member: "SpecialistSet", fm, fe, heuristic, *, vis: np.ndarray, fps: float, rebuild,
+                         raw_ball: np.ndarray, play_blocks, config_path=None, use_pseudo: bool = False):
+    """Class probabilities ``[N, 3]`` of one specialists set before the soft priors (A where the ball is
+    visible, B elsewhere), Specialist A's result and the pseudo-label report."""
     from mtah2027.pipeline import heuristic_emissions  # local import: pipeline imports this module lazily
 
-    fp = specialists.fusion
-    n = len(fe.visible)
-    t0 = time.perf_counter()
-    fm = build_feature_matrix(fe, heuristic, play_blocks=play_blocks, config_path=config_path)
-    if fm.names != specialists.a.feature_names or fm.names != specialists.b.feature_names:
+    if fm.names != member.a.feature_names or fm.names != member.b.feature_names:
         raise ValueError("feature layout of the match does not match the stored specialists")
-    vis = np.asarray(fe.visible, dtype=bool)
-    res_a = specialists.a.predict(fm.x, vis, fps)
-
-    spec_b = specialists.b
+    res_a = member.a.predict(fm.x, vis, fps)
+    spec_b = member.b
     pseudo_report: dict = {}
-    if fp.use_pseudo_labels and spec_b.params.adapt:
+    if use_pseudo and spec_b.params.adapt:
         pp = PseudoLabelParams.from_config(config_path)
         pseudo = build_pseudo_dataset(
             res_a.anchor_mask, res_a.anchor_label, vis, raw_ball, rebuild, play_blocks=play_blocks,
@@ -178,12 +182,33 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
             names=fm.names)
         pseudo_report = dict(pseudo.report)
         spec_b = spec_b.adapt(pseudo, min_rows=pp.min_rows)
-        pseudo_report["adapted"] = spec_b is not specialists.b
-
-    prob = np.full((n, 3), np.nan)
+        pseudo_report["adapted"] = spec_b is not member.b
+    prob = np.full((len(vis), 3), np.nan)
     prob[vis] = res_a.prob[vis]
     if (~vis).any():
         prob[~vis] = spec_b.predict_proba(fm.x[~vis])
+    return prob, res_a, pseudo_report
+
+
+def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *, play_blocks,
+                   fps: float = FPS, rebuild: Callable[[np.ndarray], object], raw_ball: np.ndarray,
+                   config_path=None) -> FusionResult:
+    """Learned emissions of the target match (see the module docstring)."""
+    fp = specialists.fusion
+    n = len(fe.visible)
+    t0 = time.perf_counter()
+    fm = build_feature_matrix(fe, heuristic, play_blocks=play_blocks, config_path=config_path)
+    vis = np.asarray(fe.visible, dtype=bool)
+    members = specialists.members()
+    probs, res_a, pseudo_report = [], None, {}
+    for member, _ in members:
+        prob_m, res_m, rep_m = member_probabilities(
+            member, fm, fe, heuristic, vis=vis, fps=fps, rebuild=rebuild, raw_ball=raw_ball,
+            play_blocks=play_blocks, config_path=config_path, use_pseudo=fp.use_pseudo_labels)
+        probs.append(prob_m)
+        if res_a is None:        # anchors (restart-rule calibration) come from the first member
+            res_a, pseudo_report = res_m, rep_m
+    prob = mix_probabilities(probs, [w for _, w in members], specialists.mix_mode)
     ep = EmissionParams.from_config(config_path)
     sig = fe.sig
     status = sig.status_dead if (sig is not None and sig.has_status) else None
@@ -270,8 +295,54 @@ def save_specialists(specialists: SpecialistSet, path: str | Path) -> Path:
     return out
 
 
+MIX_MODES = ("loglinear", "linear")
+
+
+def mix_probabilities(probs: list, weights: list, mode: str = "loglinear") -> np.ndarray:
+    """Per-frame combination of ``K`` class-probability matrices ``[N, 3]`` (rows sum to one).
+
+    ``linear``: weighted mean of the probabilities; ``loglinear``: weighted geometric mean, renormalised.
+    ``weights`` are normalised here; the result is deterministic (fixed accumulation order)."""
+    if mode not in MIX_MODES:
+        raise ValueError(f"unknown mix mode '{mode}' (choose from {MIX_MODES})")
+    w = np.asarray(weights, dtype=np.float64)
+    if len(probs) != len(w) or len(w) == 0 or (w < 0).any() or w.sum() <= 0:
+        raise ValueError("ensemble needs one non-negative weight per member, not all zero")
+    w = w / w.sum()
+    if len(probs) == 1:
+        return np.asarray(probs[0], dtype=np.float64)
+    if mode == "linear":
+        out = np.zeros_like(np.asarray(probs[0], dtype=np.float64))
+        for p, wi in zip(probs, w):
+            out = out + wi * np.asarray(p, dtype=np.float64)
+        return out
+    acc = np.zeros_like(np.asarray(probs[0], dtype=np.float64))
+    for p, wi in zip(probs, w):
+        acc = acc + wi * np.log(np.clip(np.asarray(p, dtype=np.float64), 1e-6, 1.0))
+    acc = acc - acc.max(axis=1, keepdims=True)
+    e = np.exp(acc)
+    return e / e.sum(axis=1, keepdims=True)
+
+
 def load_specialists(path: str | Path = DEFAULT_MODEL_PATH, config_path=None) -> SpecialistSet:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    """Load a specialists file, or an ensemble manifest (``"format": "ensemble"``, Issue #44).
+
+    The manifest lists committed model files next to it (``members: [{file, weight}]``) and the mix
+    ``mode``; nothing is trained at load time."""
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("format") == ENSEMBLE_FORMAT:
+        members = [(load_specialists(path.parent / m["file"], config_path), float(m["weight"]))
+                   for m in data["members"]]
+        if not members:
+            raise ValueError("ensemble manifest without members")
+        first = members[0][0]
+        mode = str(data.get("mode", "loglinear"))
+        mix_probabilities([np.full((1, 3), 1 / 3)] * len(members), [w for _, w in members], mode)   # validates
+        return SpecialistSet(a=first.a, b=first.b, fusion=first.fusion, source="file",
+                             training={"ensemble": [{"file": m["file"], "weight": float(m["weight"])}
+                                                    for m in data["members"]], "mode": mode},
+                             durations=first.durations, ensemble=tuple(members), mix_mode=mode)
     return SpecialistSet.from_dict(data, config_path)
 
 

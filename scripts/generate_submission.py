@@ -60,11 +60,13 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
                          "mtah2027-external-benchmarks/cache)")
     ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
-    ap.add_argument("--model-variant", choices=("default", "idsse", "mixed", "pff", "calib", "gap"),
+    ap.add_argument("--model-variant",
+                    choices=("default", "idsse", "mixed", "pff", "calib", "gap", "ensemble"),
                     default="default",
                     help="Issue #35: specialists trained on IDSSE (degraded), IDSSE + PFF (mixed) or "
                          "PFF only; Issue #38: calib = IDSSE degraded with the calibrated degrader + PFF; "
-                         "Issue #48: gap = same with hidden<->dead affinity 33 (= the default) "
+                         "Issue #48: gap = same with hidden<->dead affinity 33 (= the default); "
+                         "Issue #44: ensemble = per-frame mix of committed models (manifest) "
                          "(models/specialists_<variant>.json); implies --specialists load; pick it "
                          "with scripts/compare_input_stats.py")
     ap.add_argument("--kpi", action="store_true",
