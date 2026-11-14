@@ -839,7 +839,58 @@ Run (aggregates only, same guard as Issue #58):
 <venv>/Scripts/python scripts/real_video_ball_check.py --data-dir data --detectors sv_ball640,sv_ball     --sv-weights <path>/football-ball-detection.pt --sample 1000 --json <outside the repo>/sv_ball.json
 ```
 
-Result on the real tactical video: pending (run locally by the lead).
+**Result on the real tactical video** (run locally by the lead; aggregates only; seed 0, 300 frames with the ATD ball
+visible, ball ~4.5 px, crop centred on the ATD ball = ceiling):
+
+| detector | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | FP per frame | s per frame (CPU) |
+|---|---|---|---|---|---|
+| motion (#58, 1000 frames) | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 0.2 |
+| `sv_ball640` (YOLO roboflow, 640 crop) | 43.3 / 63.0 / 78.7 % | 41.0 / 59.7 / 75.7 % | 1.12 / 8.5 m | 1.18 | 1.27 |
+| `sv_ball` (InferenceSlicer 320) | 46.3 / 67.0 / 83.0 % | 42.7 / 61.7 / 78.0 % | 1.07 / 6.8 m | 1.47 | 5.19 |
+
+`sv_ball640`: frames with any detection 95 %, 2.1 detections per frame; crop shifted 3 m: top-confidence within 1 / 2 / 5
+m 42.7 / 61.0 / 77.0 % (robust to the search offset); 5-frame temporal filter: no change.  These frames are ones where
+the tracking *sees* the ball; in tracking gaps the rate is probably lower (occlusion).
+
+**Value in the hidden-ball gaps (simulation, `scripts/simulate_sv_ball_value.py`).**  A simulated detector
+(`vision/sim_detector.py`) reproduces the measured top-confidence CDF: per planned crop (one every `vision.every_k` = 5
+frames of each hidden gap, as #36) it returns the true ball plus an error drawn from the mixture <= 1 m 41.0 % /
+1-2 m 18.7 % / 2-5 m 16.0 % / far 19.3 % (a false positive, uniform 5-30 m from the ball) / no detection 5 %
+(uniform radius inside a bin, uniform angle).  Scenarios fixed a priori: gap detection rate 100 / 50 / 25 % of the
+measured rate (frames removed, nested per seed), and the measured `motion` profile as a control.  The points go
+through the same `inject_points` as the real chain (no speed gate, no pitch filter: pessimistic about the real
+`select_detections`, which would drop some far false positives), then the production specialist route (`lomo_gap`
+models, default config, vision off elsewhere), scored with the official metric on the degraded matches: B'(33) = 7 IDSSE
+leave-one-match-out, B'(1), seeds 0-2.  The `none` rows reproduce the references (B'(33) 0.6693 / 0.6709 / 0.6675 /
+0.6695, B'(1) 0.6017).
+
+B'(33) (hidden-ball frames filled by detections or interpolation: 76 % at 100 / 50 %, 42 % at 25 %, 34 % motion):
+
+| scenario | spellF1 | d | macroF1 | d per seed (0 / 1 / 2) |
+|---|---|---|---|---|
+| none | 0.6693 | | 0.9206 | |
+| sv_ball640 100 % | 0.5756 | -0.0938 | 0.8395 | -0.0900 / -0.0984 / -0.0928 |
+| sv_ball640 50 % | 0.5950 | -0.0744 | 0.8625 | -0.0694 / -0.0762 / -0.0775 |
+| sv_ball640 25 % | 0.6279 | -0.0415 | 0.9015 | -0.0421 / -0.0419 / -0.0404 |
+| motion (measured) | 0.5242 | -0.1451 | 0.8218 | -0.1450 / -0.1480 / -0.1422 |
+
+B'(1) guard: none 0.6017; 100 % 0.5678 (-0.0339); 50 % 0.5800 (-0.0217); 25 % 0.5943 (-0.0073); motion 0.5026 (-0.0991).
+The PFF guard was not run (B'(33) failed the rule).
+
+**Decision: not adopted.**  The rule (B'(33) mean >= +0.010, no seed < -0.003 at 50 %) is missed by a wide margin:
+at every rate the simulated sv_ball640 *lowers* spellF1 (-0.074 at 50 %), and the loss is monotone in the rate.  With
+41 % of the points within 1 m but 24 % off by more than 5 m (or missing) and another 35 % off by 1-5 m, the injected
+track misleads the possession model more than the empty gap does, which the tracking-free specialists already handle
+well.  The 1.27 s per crop on CPU would also cost about 11.7k planned crops per simulated match; on the real match,
+with the label-free 40.7 % of the graded frames hidden (~63.5k frames, one crop every 5) that is ~12.7k crops, about
+4.5 h of CPU for `sv_ball640` (about 18 h for `sv_ball`), plus the AGPL-3.0 (ultralytics) and weights /
+dataset-terms caveat above.  `vision.enabled` stays `false` and `sv_ball` is not wired into the submission route.
+It would only be worth revisiting with a detector whose top-confidence candidate is within ~0.3 m in most
+frames, or with a confidence-gated variant (use only candidates that agree over several frames), which the
+measured aggregates do not support.
+
+Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
+(and `--world b1`), then `agg --out-dir D`.
 
 ## Milestone 9
 
