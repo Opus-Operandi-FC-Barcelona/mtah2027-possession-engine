@@ -145,8 +145,14 @@ opening H<->A / H/A->D inside occlusions at the specialists' logit sign changes 
 Issue #31: `route_overrides.specialists` from the refreshed Optuna sweep (benchmarks repo), applied by `run_core` to the
 learned route only: **adopted**, 0.6307 -> 0.6415 spellF1 through the real LOMO pipeline, better on every seed (the
 search used seeds 0-1; the unused seed 2 gains +0.006).  Issue #32: MBR (median-boundary consensus, `mbr.enabled`) over tempering / `ha_occluded` variants of the
-learned route only: no gain (+-0.0004), **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
+learned route only: no gain (+-0.0004), **off**.  Issue #34: explicit-duration (semi-Markov) decoder with per-state
+duration tables learned from the external labels (`duration.enabled`): possessions 2409 -> 2503 of 3061 but spellF1
+0.6415 -> 0.6390-0.6409, **off**.  Details and negative results in `docs/TECHNICAL_REPORT.md`
 section 5.x.
+Issue #35: extra training matches.  Validation A = held-out PFF matches with real occlusions (4 folds), validation B =
+the 7 degraded IDSSE leave-one-match-out: IDSSE + 20 PFF matches at weight 0.5 is **adopted** (A 0.4659 -> 0.5231, B
+0.6415 -> 0.6321); SkillCorner (-0.03 on B) is off.  The IDSSE-only and PFF-only models stay selectable
+(`generate_submission.py --model-variant idsse|mixed|pff`, choose with `scripts/compare_input_stats.py`).
 
 ### Possession count and the KPI 7 evidence
 
@@ -204,6 +210,29 @@ Only aggregates are printed (crops scanned, detections kept, share of hidden fra
 **AGPL-3.0**: it is imported only by `--detector yolo`, is a separate optional extra, and nothing in the
 submission path needs it.  It stays off until validated locally on the real video.
 
+**Multi-frame motion detector (Issue #36, `--detector motion`).**  A TrackNet-style temporal cue with OpenCV only:
+the reader supplies the frame triplet (t-1, t, t+1) of each 640x640 crop, the camera pan is compensated
+(phase correlation + sub-pixel warp), `min(|I_t - W(I_t-1)|, |I_t - W(I_t+1)|)` keeps what moves in both,
+a morphological filter keeps blobs of the apparent ball size (taken from the homography scale, `vision.ball_diameter_m`),
+the positions at t-1 / t+1 are checked in metres with `H^-1` against `vision.max_speed_mps`, and the centroid is
+refined to sub-pixel.  Static lines and boots cancel out; a ball that does not move is not detectable.  Selectable
+with `vision.detector: motion`; `vision.enabled` stays `false`.
+
+## Audit video (local debugging only)
+
+```bash
+python scripts/render_audit_video.py --synthetic                                   # no data needed
+python scripts/render_audit_video.py --data-dir data --start-frame 11185 --end-frame 11500
+python scripts/render_audit_video.py --data-dir data --from-audit-csv outputs/audit_transitions.csv   # KPI 5 export
+```
+
+`vision/overlay_renderer.py` + `scripts/render_audit_video.py` (Issue #36) draw, over the tactical mp4 (or a plain
+pitch when there is none): the pitch lines projected with `H_t`, a minimap (22 players, ball, possessor, collective-coherence
+arrows), a 25-frame ball trail, a halo on the possessor and a HUD with the predicted H/A/D, P(H)/P(A)/P(D) and ball
+visible/hidden.  Output: `outputs/audit_video.mp4` (`*.mp4` and `outputs/` are git-ignored).  **The audit video of
+BAR-ATH is for local pipeline debugging only (alignment, format, bugs): never to label frames by hand or tune
+parameters, and never uploaded.**  The script prints only aggregates and paths.
+
 ## Broadcast sync (optional, off by default)
 
 `preprocessing/broadcast_sync.py` (Issue #10) places the TV tracking (`data/broadcast/*_broadcast_atd.*` +
@@ -233,13 +262,14 @@ src/mtah2027/
   config.py                          typed config, match constants, bridge to games.py, seeds
   io/                                atd_loader (#5), smart_tagging_loader (#6), homography_loader (#7)
   preprocessing/                     clean_tracks (#8), kinematics_and_orientation (#9), broadcast_sync (#10, off)
-  vision/                            attention_crops, detectors, recovery (#11, off); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
+  vision/                            attention_crops, detectors (+ motion, #36), recovery (#11, off), overlay_renderer (#36); aerial_filter (#12, off by default: -0.006..-0.016 spellF1 on degraded external)
   features/                          dead_ball_signals (#13), setpiece_anchor (#14), ball_kinematics (#16),
                                      throwin_resolver (#15), collective_physics (#17), ball_memory (#18)
   models/                            heuristic_emissions (#28 wave 1), baseline_labels, external_degrader (#19),
                                      frame_classifier + specialist_features / _data (shared), specialist_ball_present
                                      (#20), pseudo_labeling (#21), specialist_ball_absent + specialist_fusion (#22)
-  decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26)
+  decoding/                          transition_matrix (#23), dynamic_viterbi (#24), mbr_consensus (#26),
+                                     duration_model + semi_markov (#34, off)
   postprocessing/                    spell_optimizer (#25), submission_contract (#26)
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
   validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py

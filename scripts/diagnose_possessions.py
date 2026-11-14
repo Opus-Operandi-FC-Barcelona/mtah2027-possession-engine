@@ -94,6 +94,24 @@ def diagnose(gt: np.ndarray, pred: np.ndarray, fps: float, tol: int,
     return out
 
 
+def load_training(args):
+    """Training rows (optionally cached in a pickle) restricted / weighted as the command line says."""
+    import pickle
+
+    from mtah2027.models.specialist_data import build_training_set
+
+    pkl = Path(args.training_pickle) if args.training_pickle else None
+    if pkl is not None and pkl.is_file():
+        ts = pickle.loads(pkl.read_bytes())
+    else:
+        ts = build_training_set(args.bench_dir, config_path=args.config, log=lambda m: None)
+        if pkl is not None:
+            pkl.write_bytes(pickle.dumps(ts))
+    sources = args.sources if args.sources else sorted({p.source for p in ts.parts})
+    weights = {k: float(v) for k, _, v in (item.partition("=") for item in args.source_weight)}
+    return ts.select(sources, weights, args.drop_dead)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bench-dir", default=str(ee.DEFAULT_BENCH_DIR))
@@ -103,6 +121,13 @@ def main(argv=None) -> int:
     ap.add_argument("--routes", nargs="*", default=["engine", "specialists"])
     ap.add_argument("--no-degrade", action="store_true")
     ap.add_argument("--cache", default=None, help="directory caching the leave-one-match-out specialists")
+    ap.add_argument("--training-pickle", default=None,
+                    help="load / save the training rows (Issue #35: avoids rebuilding the extra sources)")
+    ap.add_argument("--sources", nargs="*", default=None,
+                    help="training sources kept (idsse skillcorner pff); default all in the training set")
+    ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W",
+                    help="sample weight per source")
+    ap.add_argument("--drop-dead", nargs="*", default=[], help="sources whose D rows are left out")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -113,8 +138,8 @@ def main(argv=None) -> int:
     if "specialists" in args.routes:
         import dataclasses
 
+        from mtah2027.decoding.duration_model import DurationParams
         from mtah2027.models import specialist_fusion as sf
-        from mtah2027.models.specialist_data import build_training_set
 
         fusion = sf.FusionParams.from_config(args.config)
         cache = Path(args.cache) if args.cache else None
@@ -127,14 +152,18 @@ def main(argv=None) -> int:
                     models[stem] = sf.load_specialists(path, args.config)
                 else:
                     if not training:
-                        training.append(build_training_set(args.bench_dir, config_path=args.config,
-                                                           log=lambda m: None))
+                        training.append(load_training(args))
                     spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training[0],
                                                 exclude_match=stem)
                     models[stem] = dataclasses.replace(spec, fusion=fusion)
                     if path is not None:
                         cache.mkdir(parents=True, exist_ok=True)
                         sf.save_specialists(models[stem], path)
+            if models[stem].durations is None:     # Issue #34: duration table without the held-out match
+                from mtah2027.decoding.duration_model import fit_from_bench
+
+                models[stem] = dataclasses.replace(models[stem], durations=fit_from_bench(
+                    args.bench_dir, exclude=stem, params=DurationParams.from_config(args.config)))
             return models[stem]
     total = {r: collections.defaultdict(float) for r in args.routes}
     rows = []

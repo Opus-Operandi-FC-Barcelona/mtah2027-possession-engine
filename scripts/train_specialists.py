@@ -37,6 +37,14 @@ def main(argv=None) -> int:
     ap.add_argument("--bench-dir", default=None, help="directory with the benchmark .npz files")
     ap.add_argument("--out", default=str(REPO_ROOT / "models" / "specialists.json"))
     ap.add_argument("--config", default=None)
+    ap.add_argument("--extra-sources", nargs="*", default=None, metavar="PREFIX",
+                    help="Issue #35: extra training matches, e.g. skillcorner_ pff_ (default: config)")
+    ap.add_argument("--pff-max-matches", type=int, default=None, help="first N PFF matches by name (0 = all)")
+    ap.add_argument("--sources", nargs="*", default=None,
+                    help="train only on these sources (idsse skillcorner pff), e.g. pff for a PFF-only model")
+    ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W",
+                    help="sample weight per source")
+    ap.add_argument("--drop-dead", nargs="*", default=[], help="sources whose D rows are left out")
     args = ap.parse_args(argv)
     if os.environ.get("PYTHONHASHSEED") != "0" and not os.environ.get("MTAH_NO_REEXEC"):
         env = dict(os.environ, PYTHONHASHSEED="0", MTAH_NO_REEXEC="1")
@@ -51,7 +59,22 @@ def main(argv=None) -> int:
         print("no external benchmark matches found (--bench-dir / $MTAH_BENCH_DIR)")
         return 1
     t0 = time.perf_counter()
-    spec = sf.train_specialists(bench, config_path=args.config, log=lambda m: print(m, flush=True))
+    import dataclasses
+
+    from mtah2027.models.specialist_data import TrainingDataParams, build_training_set
+
+    dp = TrainingDataParams.from_config(args.config)
+    if args.extra_sources is not None:
+        dp = dataclasses.replace(dp, extra_sources=tuple(args.extra_sources))
+    if args.pff_max_matches is not None:
+        dp = dataclasses.replace(dp, pff_max_matches=args.pff_max_matches)
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    ts = build_training_set(bench, params=dp, config_path=args.config, log=log)
+    if args.sources is not None or args.source_weight or args.drop_dead:
+        weights = {k: float(v) for k, _, v in (i.partition("=") for i in args.source_weight)}
+        ts = ts.select(args.sources if args.sources is not None else sorted({p.source for p in ts.parts}),
+                       weights or ts.weights, args.drop_dead or ts.drop_dead)
+    spec = sf.train_specialists(bench, config_path=args.config, training=ts, log=log)
     out = sf.save_specialists(spec, args.out)
     digest = hashlib.sha256(out.read_bytes()).hexdigest()
     t = spec.training

@@ -43,6 +43,7 @@ from mtah2027.config import (
     params_from_mapping,
     route_config,
 )
+from mtah2027.decoding.duration_model import DurationParams
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
 from mtah2027.decoding.mbr_consensus import MbrParams, consensus_labels
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
@@ -106,6 +107,7 @@ class PipelineResult:
 
     labels: np.ndarray
     diagnostics: dict
+    features: dict = field(default_factory=dict)   # only with keep_features (audit video: log_probs ...)
 
 
 def _log_default(message: str) -> None:
@@ -333,7 +335,7 @@ def run_core(
         team_ids: tuple = (), team_names: tuple = (), smart_tagging: Any = None,
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
-        homography: np.ndarray | None = None) -> CoreResult:
+        homography: np.ndarray | None = None, durations: Any = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -414,10 +416,20 @@ def run_core(
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive
         log_trans = build_log_transitions(n, params=TransitionParams.from_config(cfg))
 
-    # 9. Viterbi ------------------------------------------------------------------------------------
+    # 9. Viterbi (or the explicit-duration decoder of Issue #34) -------------------------------------
+    dur_arg = None
+    dp = DurationParams.from_config(cfg)
+    if dp.enabled:
+        dmodel = durations if durations is not None else getattr(specialists, "durations", None)
+        if learned is None and not dp.apply_to_heuristic:
+            dmodel = None
+        if dmodel is not None:
+            dur_arg = (dmodel.tables(fps, dp), dp.weight)
+        else:
+            st.skip("duration", "no duration table / route not selected")
     codes = st.run("viterbi", lambda: decode_match_halves(
         em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
-        log_init=default_log_init(cfg)), required=True)
+        log_init=default_log_init(cfg), duration=dur_arg), required=True)
     mbr_info: dict = {}
     mp = MbrParams.from_config(cfg)
     if mp.enabled and learned is not None:     # variants of the learned route only
@@ -429,7 +441,7 @@ def run_core(
                 lt = (log_trans if shift == 0.0 else
                       _transitions(dataclasses.replace(tp0, ha_occluded=tp0.ha_occluded + shift)))
                 runs.append(decode_match_halves(lp, lt, play_blocks=play_blocks, dead_blocks=dead_blocks,
-                                                log_init=default_log_init(cfg)))
+                                                log_init=default_log_init(cfg), duration=dur_arg))
             merged = consensus_labels(runs, play_blocks, min_iou=mp.min_iou, min_support=mp.min_support)
             return merged, len(runs)
 
@@ -504,14 +516,17 @@ def resolve_config(config: str | Path | Config | None) -> tuple[Path, Config | N
 
 def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config | None = None,
                  blocks: MatchConfig | None = None, *, cache_dir: str | Path | None = None,
-                 log: Callable[[str], None] | None = None, specialists: Any = None) -> PipelineResult:
+                 log: Callable[[str], None] | None = None, specialists: Any = None,
+                 keep_features: bool = False) -> PipelineResult:
     """Tracking bundle in ``data_dir`` -> contract-compliant labels (see the module docstring).
 
     ``config`` is a YAML path or a typed :class:`Config` (default ``configs/default.yaml``); ``blocks`` the
     match layout (default: the official BAR-ATH one, or ``config.match``).  ``cache_dir`` enables the
     ``.npz`` cache of the parsed ATD (``None`` = no cache).  ``specialists`` (optional
     :class:`~mtah2027.models.specialist_fusion.SpecialistSet`) switches the emissions from the heuristic
-    to the learned ones (Issues #20-#22); the heuristic emissions remain the fallback.
+    to the learned ones (Issues #20-#22); the heuristic emissions remain the fallback.  ``keep_features``
+    only keeps the per-frame arrays of the core (emission ``log_probs``, ...) in ``PipelineResult.features``
+    for the audit video (Issue #36); it never changes the labels.
     """
     from mtah2027.io.atd_loader import load_atd
     from mtah2027.io.smart_tagging_loader import load_smart_tagging
@@ -541,7 +556,8 @@ def run_pipeline(data_dir: str | Path | None = None, config: str | Path | Config
                    f"({100 * vision.stats['fill_rate']:.1f}%)")
     elif not vp.enabled:
         st.skip("vision_recovery", "disabled by configuration")
-    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision, broadcast)
+    return _decode_loaded(td, smart, match, cfg_path, st, specialists, homography, vision, broadcast,
+                          keep_features=keep_features)
 
 
 def _apply_broadcast_sync(td, data_dir, match: MatchConfig, cfg_path, st: _Stages, cache_dir):
@@ -621,7 +637,7 @@ def run_pipeline_files(meta_path: str | Path, raw_path: str | Path, *,
 
 def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, specialists: Any,
                    homography: np.ndarray | None = None, vision: Any = None,
-                   broadcast: dict | None = None) -> PipelineResult:
+                   broadcast: dict | None = None, keep_features: bool = False) -> PipelineResult:
     """Loaded tracking (+ optional Smart Tagging) -> contract-compliant labels."""
     n = match.n_video_frames
     t_total = time.perf_counter()
@@ -632,14 +648,16 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
         ball = vision.ball_xy       # tracking where seen, recovered video points where it was missing
 
     core_diag: dict = {}
+    features: dict = {}
     try:
         core = run_core(
             players, td.team_of_slot, ball, play_blocks=play_blocks, dead_blocks=dead_blocks, fps=td.fps,
             pitch=tuple(td.pitch), ball_channels={k: _fit_length(v, n) for k, v in td.ball_channels.items()},
             ball_channel_codes=td.ball_channel_codes, team_ids=td.team_ids, team_names=td.team_names,
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
-            homography=homography)
+            homography=homography, keep_features=keep_features)
         codes, core_diag = core.codes, core.diagnostics
+        features = core.features
         route = "heuristic"
     except Exception as exc:  # noqa: BLE001 - last resort: still deliver a valid file
         st.log(f"heuristic route failed ({type(exc).__name__}: {exc}); "
@@ -659,4 +677,4 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
         "final": summarize_labels(labels, play_blocks, td.fps),
         "seconds_total": round(time.perf_counter() - t_total, 3),
     }
-    return PipelineResult(labels=labels, diagnostics=diagnostics)
+    return PipelineResult(labels=labels, diagnostics=diagnostics, features=features)

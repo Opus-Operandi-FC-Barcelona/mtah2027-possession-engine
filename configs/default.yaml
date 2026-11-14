@@ -139,6 +139,20 @@ viterbi:
   log_init: [-0.6931, -0.6931, -3.0]   # log-prior of the first frame of a block: H, A, D
   round_decimals: 6                    # log_probs are rounded to this many decimals before decoding
 
+# Issue #34 -- explicit-duration (semi-Markov) decoder.  Per-state duration histograms (H / A possessions, D
+# stoppages) are fitted on the ground-truth labels of the external training matches only and stored with the
+# specialists (models/specialists.json); the decoder combines them with the transition matrix A_t and the
+# emissions.  Measured on the 7 degraded IDSSE matches (leave-one-match-out) and kept OFF unless it passes the
+# adoption rule (see docs/TECHNICAL_REPORT.md 5.x).
+duration:
+  enabled: false
+  weight: 1.0                   # multiplier of the duration log-probabilities
+  center: true                  # subtract the mean log-pmf: an average segment costs nothing extra
+  apply_to_heuristic: false     # the heuristic route as well (needs a table)
+  alpha: 0.5                    # additive smoothing of the histogram bins
+  min_tail_runs: 5
+  default_tail_excess_s: 30.0
+
 # Issue #25 -- spellF1-oriented post-processing of the decoded labels (never crosses a graded block).
 spell_optimizer:
   micro_poss_s: 1.2             # H->A->H / A->H->A middle runs shorter than this are absorbed ...
@@ -251,6 +265,15 @@ specialist_data:
   swap_teams: true              # also train with home / away swapped (team symmetry)
   only_complete_ball: true      # Metrica samples drop the ball while it is dead (leaks D) -> excluded
   min_period_frames: 250
+  # Issue #35 -- extra training matches (training rows only; evaluation stays on the degraded IDSSE matches).
+  # Prefixes of benchmark files: skillcorner_ (broadcast tracking, already degraded), pff_ (World Cup 2022, ball only
+  # where truly visible).  Neither is degraded again.  Measured, see docs/TECHNICAL_REPORT.md 5.x.
+  extra_sources: [pff_]         # adopted (Issue #35): IDSSE + the first 20 PFF matches at weight 0.5
+  skillcorner_weight: 1.0
+  skillcorner_drop_dead: false  # its D is the gap between phases_of_play, not the ball status
+  skillcorner_max_matches: 0    # 0 = all, else the first N by name
+  pff_weight: 0.5
+  pff_max_matches: 20           # 0 = all; the first N by name (deterministic)
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
 specialist_a:
@@ -351,7 +374,7 @@ vision:
   closing_gain_mps: 3.0
   pressure_weight: 0.5          # 0 = pure interpolation, 1 = pressure centroid
   vel_half_span: 2
-  detector: hough               # yolo | hough | dryrun
+  detector: hough               # yolo | hough | motion | dryrun
   weights: yolov8n.pt           # public COCO weights downloaded by ultralytics (AGPL-3.0, optional extra yolo)
   confidence: 0.25
   batch_size: 16
@@ -363,6 +386,13 @@ vision:
   hough_param2: 10.0
   hough_min_brightness: 170.0
   hough_max_candidates: 5
+  motion_threshold: 22.0        # Issue #36 detector "motion" (frame triplet t-1,t,t+1; off unless selected)
+  ball_diameter_m: 0.22
+  motion_size_tolerance: 3.0
+  motion_max_candidates: 5
+  motion_min_response: 0.1
+  motion_blur_sigma: 1.0
+  motion_neighbor_penalty: 0.6
   pitch_margin_m: 1.0
   max_search_dist_m: 30.0
   max_speed_mps: 40.0

@@ -67,7 +67,7 @@ def main(argv=None) -> int:
         print(f"no complete-ball benchmark files in {args.bench_dir}")
         return 1
     fusion = sf.FusionParams.from_config(args.config)
-    training = build_training_set(args.bench_dir, config_path=args.config, log=lambda m: None)
+    training = []                      # rows are only built when a leave-one-match-out model is not cached
     cache = Path(args.cache) if args.cache else None
     models: dict = {}
 
@@ -76,8 +76,16 @@ def main(argv=None) -> int:
             path = cache / f"{stem}.json" if cache else None
             if path is not None and path.is_file():
                 models[stem] = dataclasses.replace(sf.load_specialists(path, args.config), fusion=fusion)
+                if models[stem].durations is None:
+                    from mtah2027.decoding.duration_model import fit_from_bench
+
+                    models[stem] = dataclasses.replace(models[stem], durations=fit_from_bench(
+                        args.bench_dir, exclude=stem))
             else:
-                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training,
+                if not training:
+                    training.append(build_training_set(args.bench_dir, config_path=args.config,
+                                                       log=lambda m: None))
+                spec = sf.train_specialists(args.bench_dir, config_path=args.config, training=training[0],
                                             exclude_match=stem)
                 models[stem] = dataclasses.replace(spec, fusion=fusion)
                 if path is not None:
