@@ -97,6 +97,10 @@ setpiece_anchor:
   fallback_dead_s: 0.5          # Issue #50: no dead-score evidence -> force D only this long right before t* (0 = never force)
   fallback_tag_window: false    # Issue #50: true = legacy, force D back to the tag-window start (the 35 s windows open in live play)
   clamp_period_starts: true     # Issue #50: Kick Off (Start) t* -> first frame of its play block (config / games.py constants)
+  offset_prior: false           # Issue #49: collective-cue search restricted to the t* - tag_start band learned from the ball-method anchors
+  offset_prior_min_n: 3
+  offset_prior_quantiles: [0.05, 0.95]
+  offset_prior_margin_s: 1.0
 
 # Issue #16 -- ball-to-player distances, control weights, touches and the possession evidence.
 ball_kinematics:
@@ -138,6 +142,8 @@ transition_matrix:
   restart_open: -1.0            # D -> restart team around a restart frame t*
   restart_halfwidth: 3          # window = t* +- this many frames
   restart_other_team: -3.0      # extra log-penalty for the other team when the restart team is known
+  restart_team_before_s: 0.0    # Issue #49: the penalty also holds from t* - before ... (0 = only t* +- restart_halfwidth)
+  restart_team_after_s: 0.0     # ... to t* + after
   phase_cue: false              # Issue #43: open H<->A around Smart Tagging Attacking / Defensive Transition starts
   phase_cue_open: -4.0          # ... to this log-value (towards the team that gains the ball)
   phase_cue_before_s: 4.0
@@ -183,6 +189,7 @@ spell_optimizer:
 heuristic_emissions:
   w_evidence: 0.5               # logit of H vs A per unit of possession_evidence (in [-1, 1]); weak term
   w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
+  w_long_ball: 0.0              # Issue #49: D logit lowered on hidden-ball frames of Long Ball / Ball in the Box phases
   w_phase_alive: 0.0            # Issue #43: D logit lowered by this where the ball is hidden in a live phase (0 = off)
   w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
   owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
@@ -560,3 +567,24 @@ route_overrides:
       scale_hidden: 0.8652
       blend_visible: 0.1515
       blend_hidden: 0.0229
+
+# Issue #49 -- restart-team rules of Smart Tagging (goal / half-time rules + tracking vote) and Long Ball occlusion flags.
+# Measured on simulated tags (B' IDSSE, A PFF) and left OFF unless the adoption rule is met (docs/TECHNICAL_REPORT.md).
+restart_rules:
+  enabled: false
+  kickoff_after_goal: true      # Kick Off (After Goal) = team that conceded the preceding GOALS tag
+  second_half_opposite: true    # second-half Kick Off (Start) = opposite of the first-half one
+  tracking_vote: true           # first clear controller after t* votes with the tag
+  ctrl_window_s: 1.4
+  ctrl_radius_m: 3.0
+  ctrl_margin_m: 1.0
+  goal_link_s: 150.0
+  unreliable_conf: 0.5          # team_conf of a restart whose sources disagree
+  fill_unnamed: true
+  calibrate_weight: false       # team penalty scaled by the agreement of the tags with Specialist A's confident states
+  calib_window_s: 3.0
+  calib_prior: 1.0
+  long_ball_codes: [long ball, ball in the box]
+  auto_long_ball_weight: false  # heuristic_emissions.w_long_ball from Specialist A's confident visible frames
+  long_ball_cap: 1.5
+  long_ball_min_frames: 250

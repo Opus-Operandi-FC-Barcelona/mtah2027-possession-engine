@@ -58,6 +58,8 @@ class SimParams:
     set_piece_window_s: float = 35.0
     max_tail_s: float = 60.0
     na_rate: float = 0.02            # phases with Team = N/A (BAR-ATH: 10 of 575 phases; every throw-in is N/A too)
+    kickoff_teams: bool = False      # Issue #49: Kick Off (Start) tags name the team of the first possession
+    wrong_team_rate: float = 0.0     # Issue #49: named restart teams (set pieces) replaced by the other team
 
 
 NOISE_LEVELS: dict[str, SimParams] = {
@@ -121,8 +123,8 @@ def clean_events(codes: np.ndarray, periods, fps: float, p: SimParams, rng: np.r
         first = next((r for r in runs if r[0] in (H, A)), None)
         if first is not None:
             t0 = first[1]
-            sets.append(_event(SET_PIECE_CODE, t0 - int(3.5 * fps), t0 + int(1.5 * fps), -1, fps, half,
-                               "kick off (start)"))
+            sets.append(_event(SET_PIECE_CODE, t0 - int(3.5 * fps), t0 + int(1.5 * fps),
+                               first[0] if p.kickoff_teams else -1, fps, half, "kick off (start)"))
     n_graded = sum(int(b) - int(a) + 1 for a, b in periods)
     want = p.setpiece_per_10min * n_graded / fps / 600.0
     prob = min(1.0, want / max(len(cand), 1))
@@ -160,6 +162,7 @@ def simulate_smart_tagging(codes: np.ndarray, periods, fps: float, *, noise: str
     n = int(n_frames if n_frames is not None else len(codes))
     periods = [(int(a), int(b)) for a, b in periods]
     rng = np.random.default_rng(int(seed) * 7919 + 17)
+    rng_team = np.random.default_rng(int(seed) * 104729 + 3)     # separate stream: other draws are unchanged
     graded = np.zeros(n, bool)
     for a, b in periods:
         graded[a:b + 1] = True
@@ -182,6 +185,8 @@ def simulate_smart_tagging(codes: np.ndarray, periods, fps: float, *, noise: str
                 s, t = e.start_frame + jit(), e.end_frame + jit()
                 t = max(t, s + int(3 * fps))
             team = -1 if (not whole_window and rng.random() < p.na_rate) else e.team
+            if whole_window and team in (0, 1) and p.wrong_team_rate > 0 and rng_team.random() < p.wrong_team_rate:
+                team = 1 - team
             out.append(_event(e.code, s, t, team, fps, e.half, e.type))
         return out
 

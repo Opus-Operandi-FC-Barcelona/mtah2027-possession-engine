@@ -636,7 +636,7 @@ calibrated degrader, run in `mtah2027-external-benchmarks` issue #5) and #46 (re
 (< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF matches; adopt if B' gains >= +0.01 spellF1 (no seed
 worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D` in the < 20-player stratum is corrected
 on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
-Results of #43: see the item "Smart Tagging alive-ball prior and transition cue" below (not adopted); #42, #44, #46: pending.
+Results of #43 and #49: see the items "Smart Tagging alive-ball prior and transition cue" and "Restart-team rules ..." below (neither adopted); #42, #44, #46: pending.
 
 ### Smart Tagging alive-ball prior and transition cue (Issue #43; B' / A on simulated tags, not adopted)
 
@@ -760,6 +760,69 @@ spellF1 0.5997 -> 0.6001 (+0.0004), macroF1 0.8999 -> 0.9000, possessions 2,217 
 were trained with the old front end and still load; `#48` regenerates them.  Invariance test:
 `tests/test_51_play_block_isolation.py` fills every frame outside the play blocks with random players/balls/channels and
 asserts identical feature matrix, emissions and final labels (heuristic and specialist routes) in `HALF1` and `HALF2_PLAY`.
+### Restart-team rules, wider restart window, t* offset prior and Long Ball flags (Issue #49; B' / A on simulated tags, not adopted)
+
+**What was built** (everything behind config flags, default off, `restart_rules` section and three keys elsewhere).
+(1) `features/restart_rules.apply_team_rules`: the team of every resolved restart is voted among the tag, the rules of the
+game (`Kick Off (After Goal)` = team that conceded the preceding `GOALS` tag, second-half `Kick Off (Start)` = opposite of
+the first-half one, taken from the order of the two tags, never from a frame number) and the tracking (first clear
+controller within 1.4 s after `t*`); any dissent lowers the reliability `team_conf` (0.5) that scales
+`transition_matrix.restart_other_team`; an N/A team is filled by the vote.  (2) `transition_matrix.restart_team_before_s /
+restart_team_after_s`: the other-team penalty also holds in `[t* - before, t* + after]` and not only in `t* +- 3` frames.
+(3) `setpiece_anchor.offset_prior`: the collective-cue search is restricted to the band (5-95 % quantiles +- 1 s) of
+`t* - tag_start` learned, per type or pooled, from the ball-method anchors of the same match (a tracking measurement, no
+label); nothing is invented when the band excludes the jump.  (4) `heuristic_emissions.w_long_ball` /
+`restart_rules.auto_long_ball_weight`: `Long Ball` / `Ball in the Box` phases lower the `D` logit on hidden-ball frames,
+the weight being `clip(logit(alive | in phase) - logit(alive | outside), 0, 1.5)` measured on the visible frames where
+Specialist A is ultra-confident (0 with fewer than 250 such frames); `restart_rules.calibrate_weight` likewise scales the
+team penalty by the agreement of the tagged teams with Specialist A's first confident state after each `t*`.  No ground
+truth enters any weight.  The simulator (`io/smart_tagging_sim`) gained `kickoff_teams` (the `Kick Off (Start)` tags name the
+first-possession team) and `wrong_team_rate` (set-piece teams flipped; own random stream, so the earlier draws are
+unchanged); `scripts/eval_phase_alive.py --sim-restart` switches them on (wrong teams 10 % medium, 20 % high).  The
+simulator has no `GOALS` / `Kick Off (After Goal)` tags (the external labels do not mark goals), so the post-goal rule is
+covered by unit tests only.
+
+**Protocol.**  As #43: B' = 7 IDSSE leave-one-match-out, calibrated degrader, seeds 0-2 (21 runs per cell), specialists
+of the production recipe (IDSSE + PFF 0.5, legacy training degrader); A = PFF held-out, 4 folds, 20 matches, seed 0,
+medium tags.  `off` = the same simulated tags with the feature disabled; d = difference to `off`; worst seed = lowest of
+the three seed-mean differences.  Variants: `rules` (`restart_rules.enabled`), `wide` (4 s before, 2 s after), `rules_wide`,
+`offset`, `lb` (rules on + `auto_long_ball_weight`).
+
+| set | tags | off spellF1 | variant | spellF1 | d | worst seed |
+|---|---|---|---|---|---|---|
+| B' | medium | 0.5993 | rules | 0.5993 | +0.0000 | +0.0000 |
+| B' | medium | | wide | 0.5995 | +0.0001 | +0.0000 |
+| B' | medium | | rules_wide | 0.5995 | +0.0001 | +0.0000 |
+| B' | medium | | offset | 0.5996 | +0.0002 | +0.0001 |
+| B' | medium | | lb | 0.5996 | +0.0003 | -0.0004 |
+| B' | high | 0.5960 | rules | 0.5960 | +0.0000 | +0.0000 |
+| B' | high | | wide | 0.5959 | -0.0001 | -0.0003 |
+| B' | high | | rules_wide | 0.5960 | -0.0000 | -0.0000 |
+| B' | high | | offset | 0.5961 | +0.0001 | -0.0000 |
+| B' | high | | lb | 0.5952 | -0.0008 | -0.0021 |
+| A | medium | 0.5154 | rules | 0.5154 | +0.0000 | |
+| A | medium | | wide | 0.5154 | +0.0000 | |
+| A | medium | | rules_wide | 0.5154 | -0.0000 | |
+| A | medium | | offset | 0.5153 | -0.0001 | |
+| A | medium | | lb | 0.5147 | -0.0007 | |
+
+**Why nothing moves.**  On a single match with the sampled tags (diagnostic, aggregates) 43 of 50 anchors resolve; the
+tracking vote agrees with the tagged team in 26 of 34 comparable restarts (76 %, against 90 % correct simulated tags), so
+the vote mostly ends in a tie and only lowers the confidence.  The decoder decides the exit of `D` with the
+emissions: with the penalty `restart_other_team` raised from -3 to -12 only 7 of the graded frames change; the restart
+team, however well known, is therefore worth far less than 0.001 spellF1 here, and the exact `t*` of the ball-method
+anchors (85 % within 3 frames on external windows, #40) leaves the widening nothing to repair.  The `offset` band
+only acts on collective-cue anchors (a third of the throw-ins / corners of #40), and the `Long Ball` flag is the
+#43 alive prior restricted to two codes (same sign, same size).
+
+**Decision.**  The adoption rule (B' mean >= +0.01 with no seed below -0.003 on both noise levels; A not below -0.03) is
+**not met**: the best cell is +0.0003, A changes by at most -0.0007 (guard satisfied), so everything stays **off**.  No
+correctness fix is applied either: none of the variants is a fix of a measured defect (unlike #50), they are optional
+priors.  Code, tests and the simulator options remain available; for the real match they could only be judged on the
+label-free aggregates of `apply_team_rules` (`diagnostics["restart_rules"]`: restarts, changed teams, unreliable ones,
+tracking agreement) and of the calibration (`calibrated_weight`, `long_ball.weight`), which are printed with the other
+diagnostics and contain no per-frame data.
+
 ### Reproducibility of the learned route (Issue #52)
 
 RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
