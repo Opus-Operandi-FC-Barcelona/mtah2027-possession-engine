@@ -11,13 +11,68 @@ so the engine optimises the *number* of possessions and the precision of their b
 description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of every issue:
 [`docs/ISSUES_TRACKER.md`](docs/ISSUES_TRACKER.md).
 
-> **Wave 2 (this version)** adds the learned specialists: Specialist A (ball visible, #20) and Specialist B
-> (ball absent, #22) -- calibrated gradient-boosting models trained on degraded **external** open matches
-> (home/away-swap augmentation) -- fused into the decoder emissions, plus the block-masking pseudo-labelling of
-> the target match (#21).  The wave-1 heuristic emissions remain the fallback when no model is available.
-> Still planned: throw-in resolver (#15), KPI dashboard (#27) and wave 3 (broadcast sync, YOLO crops, aerial
-> ball, MBR over several models); see the tracker.
+## Status
 
+Milestones 1-8 (issues #1-#40) are complete and merged in `develop`/`main`; **Milestone 9** ("intelligent analysis
+over the provided data and invariance to player dropout", issues #42-#46) is **in progress**: #42 (player-dropout
+invariance) and #43 (Smart Tagging alive prior) are being implemented, #44 (bounded decoder re-optimisation under the
+calibrated degrader) and #46 (release) come later.  Nothing about their results is claimed here; they are recorded in
+`docs/OpusOperandi.md` ("Milestone 9 results") and `docs/TECHNICAL_REPORT.md` once measured.  The submission document
+for the competition form is [`docs/OpusOperandi.md`](docs/OpusOperandi.md).
+
+### Architecture
+
+```
+ATD (x, y, s) + Smart Tagging + homography
+  -> ingest (io/)  -> clean + kinematics + orientation (preprocessing/)
+  -> features: dead-ball signals, set-piece anchors t*, throw-in resolver, ball kinematics / touches,
+               collective physics, ball memory (features/)
+  -> emissions log_probs[N,3]: Specialist A (ball visible) + Specialist B (ball absent) fused by ball visibility
+               (models/); heuristic emissions as fallback route
+  -> time-dependent transitions log A_t[N,3,3] (decoding/transition_matrix.py)
+  -> Viterbi per graded half (numba kernel, bit-identical NumPy fallback; decoding/dynamic_viterbi.py)
+  -> spell optimiser (micro-possession pruning, D bridge; postprocessing/spell_optimizer.py)
+  -> submission contract (X / D forced outside the graded blocks, no internal X; postprocessing/submission_contract.py)
+  -> outputs/<team>.csv  (+ KPI dashboard, validation, SHA256)
+```
+
+Optional stages that were built, measured on other matches and left **off** by configuration: broadcast (TV) sync
+(#10, #39), attention crops / YOLO / multi-frame detector (#11, #36), aerial filter (#12), pseudo-labelling of the
+target match (#21), MBR consensus (#26, #32), semi-Markov decoder (#34), specialist-opened transitions (#30 A2).
+
+**Route decision (KPI 7).**  The learned route (Specialists A/B) is preferred over the training-free heuristic route
+only if its leave-one-match-out spellF1 on degraded external matches beats the heuristic one by >= 0.04
+(`reports/external_evidence.json`, or `--external-lomo`); the public 5 minutes are never used to choose.
+
+**Selectable models** (`generate_submission.py --model-variant`, implies `--specialists load`):
+
+| variant | file | training data |
+|---|---|---|
+| `default` (same as `mixed`) | `models/specialists.json` | IDSSE (degraded, legacy degrader) + 20 PFF matches at weight 0.5 |
+| `mixed` | `models/specialists_mixed.json` | = default |
+| `idsse` | `models/specialists_idsse.json` | IDSSE only |
+| `pff` | `models/specialists_pff.json` | PFF only |
+| `calib` | `models/specialists_calib.json` | IDSSE degraded with the calibrated degrader (#38) + PFF 0.5 |
+
+Choose between them with label-free input statistics (`scripts/compare_input_stats.py --data-dir data`), never with
+labels of the provided game.
+
+**Tests.**  446 tests are collected on `develop` at the time of writing (`pytest --collect-only -q`); the count grows
+with Milestone 9.
+
+### Issues by milestone
+
+| Milestone | Issues | Topic |
+|---|---|---|
+| 1 Infrastructure, CI/CD, fixtures, evaluation bridge | #1-#4 | scaffold, CI + security gate, synthetic match, official-scorer bridge |
+| 2 Streaming ingest, slot cleaning, TV sync | #5-#10 | ATD / Smart Tagging / homography loaders, cleaning, kinematics, broadcast sync (off) |
+| 3 Vision and aerial ball | #11-#12 | attention crops + detectors (off), aerial filter (off) |
+| 4 Dead ball, set-piece anchors, collective physics | #13-#18 | dead-ball signals, `t*` anchors, throw-in resolver, ball kinematics, collective physics, ball memory |
+| 5 Degrader, self-supervision, specialists | #19-#22 | realistic degrader, Specialist A, block-masking pseudo-labels, Specialist B + fusion |
+| 6 Dynamic Viterbi, spellF1 post-processing, KPIs, delivery | #23-#28 | `A_t`, numba Viterbi, spell optimiser, MBR + contract, KPI dashboard, CLI + report |
+| 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
+| 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
+| 9 Intelligent analysis and dropout invariance (**in progress**) | #42-#46 | #42 player-dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation, #45 docs + repo sync, #46 release (there is no #41) |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
@@ -43,9 +98,13 @@ ever processed locally; tests and CI use a deterministic **synthetic match** gen
 ## Reproduce the submission
 
 ```bash
+python -m venv .venv && source .venv/bin/activate           # Windows: .venv\Scripts\activate
+pip install -r requirements.txt && pip install -e . --no-deps
 python scripts/generate_submission.py --data-dir data --team OpusOperandi
 # -> outputs/OpusOperandi.csv   (199,319 rows + header, validated with the official format check)
 python evaluation/validate_submission.py outputs/OpusOperandi.csv
+python scripts/generate_submission.py --data-dir data --team OpusOperandi --kpi      # + seven-KPI dashboard
+python scripts/generate_submission.py --data-dir data --model-variant idsse          # another specialists file
 ```
 
 * The script prints only aggregates (rows, label shares, number / mean duration of possessions, SHA256,
@@ -317,12 +376,12 @@ src/mtah2027/
   validation/eval_bridge.py          in-memory bridge to the official scorer (#4)
   validation/kpi_dashboard.py        the seven quality KPIs (#27); CLI scripts/run_kpi_dashboard.py
   pipeline.py                        run_core (arrays) and run_pipeline (files -> contract-compliant labels)
-models/specialists.json              Specialists A/B trained on external open data (reproduced by train_specialists.py)
+models/specialists*.json             Specialists A/B trained on external open data (default, idsse, mixed, pff, calib; reproduced by train_specialists.py)
 scripts/                             generate_submission.py, train_specialists.py, eval_external.py,
                                      generate_synthetic_fixtures.py, ...
 tests/                               one test module per issue + shared synthetic-match fixtures
 evaluation/  games.py  starter/      vendored official scorer, constants and starter kit (unmodified)
-docs/                                TECHNICAL_REPORT.md, ISSUES_TRACKER.md
+docs/                                OpusOperandi.md (submission document), TECHNICAL_REPORT.md, ISSUES_TRACKER.md, official/
 ```
 
 ## Tests and CI
