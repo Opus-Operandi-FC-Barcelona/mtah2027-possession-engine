@@ -423,6 +423,32 @@ visible) and the engine reproduces the true `D` share per cell within a few poin
 the specialists: 46.96 vs 46.62 % overall).  The heavy player dropouts of BAR-ATH (up to 14 % of the frames) have no
 external counterpart (<= 1.2 %), so that cell cannot be validated; no bug was found and nothing was tuned.
 
+### Smart Tagging on the real match (Issue #40, aggregates only)
+
+*Parsing.*  638 / 638 instances, codes and label groups as documented (`Team`: 314 Barcelona, 288 Atletic Club, 36 N/A;
+no phase code is unknown).  *Semantics bug fixed.*  `Team` is "the team performing the event", which for
+`Defending in Attacking / Middle / Defensive Third` (118 instances) and `Defensive Transition` (24) is the defender, so
+the possession of those phases belongs to the opponent.  The old loader credited the tagged team: every attacking phase
+has a paired defending phase of the other team over the same frames (the alive-frame counts of `Progression` and
+`Defending in Middle Third` are identical on BAR-ATH), so the two cancelled in `phase_prior_home`.  Evidence: the
+official definitions plus the pairing structure; the predicted possessor agrees with the *possession side* in 74-97 %
+of the alive frames of the defending codes (3-26 % with the raw tag).  Fix: `DEFENDING_CODES` in
+`io/smart_tagging_loader.py`; the raw `TagEvent.team` is untouched.  Effect on the labels is small by design (the prior
+weighs `w_phase = 0.3`): 0.4 % (specialists) / 1.1 % (heuristic) of the graded frames change, 245 -> 238 possessions.
+The weight itself cannot be tuned (no external match has Smart Tagging).
+
+*Anchors.*  59 set pieces, 57 anchored (96.6 %; before the gate below 58): 9 + 3 corners ball/collective, 17 + 9
+throw-ins, `t*` inside the tag window for 93 %, 12 % of the graded frames forced to `D`.  All set-piece windows are
+35 s long (5 s for the kick-offs).  The two `Kick Off (Start)` anchors fall 10 and 38 frames before the published
+kick-off (the second with the collective cue).  Throw-ins with Team = N/A: 20 / 26 resolved (14 taker + controller,
+3 + 3 one cue, 6 left unresolved on purpose).  *Anchor accuracy on external matches* (`scripts/eval_anchor_accuracy.py`:
+pseudo 35 s windows around the true restarts of IDSSE / PFF / Metrica, restart at a random offset 3-33 s): ball cue
+median error -2 frames, 85 % within 3 frames; collective cue (ball hidden) was poor (median +53 frames, 10 % within 12
+frames).  Gating the collective jump on dead-ball evidence in the previous second (`collective_dead_lag_s = 1.0`)
+reduces the mean |error| from 208 to 126 (IDSSE), 247 to 181 (PFF) and 259 to 143 (Metrica) frames at the cost of more
+unresolved anchors (nothing is invented); adopted, since it is better on all three sources.  It cannot be scored in
+spellF1 (the external matches carry no Smart Tagging).
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

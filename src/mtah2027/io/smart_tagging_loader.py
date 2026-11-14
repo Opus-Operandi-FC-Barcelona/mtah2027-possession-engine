@@ -19,6 +19,7 @@ usable times (skipped and counted, never fatal).  Team names map to match sides
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -31,6 +32,10 @@ from mtah2027.config import FPS, HALF1, HALF2_PLAY, N_VIDEO_FRAMES, load_games_m
 HOME, AWAY, NO_TEAM = 0, 1, -1
 SET_PIECE_CODE = "set pieces"
 GOAL_CODE = "goals"
+# Phases whose ``Team`` is the team *performing the event* (OVERVIEW.md) but whose event is a defensive
+# action: the possession of the phase belongs to the opponent, so their coverage counts for the other side.
+DEFENDING_CODES: tuple[str, ...] = ("defending in attacking third", "defending in middle third",
+                                    "defending in defensive third", "defensive transition")
 DEFAULT_TEAM_ALIASES: dict[str, int] = {
     "barcelona": HOME, "fc barcelona": HOME, "barca": HOME, "barça": HOME,
     "atletic club": AWAY, "athletic club": AWAY, "atletic": AWAY, "athletic": AWAY,
@@ -86,6 +91,7 @@ class SmartTagging:
     n_frames: int
     fps: int = FPS
     codes: dict[str, int] = field(default_factory=dict)
+    n_flipped: int = 0                 # defensive phases whose team was flipped to the possessing side
 
     def set_pieces_of(self, kind: str) -> list[SetPiece]:
         """Set pieces whose type equals ``kind`` (case-insensitive)."""
@@ -215,10 +221,24 @@ def _coverage(events: list[TagEvent], team: int, n: int) -> np.ndarray:
     return np.cumsum(diff[:n]).astype(np.int16)
 
 
+def possession_side(event: TagEvent, defending_codes: tuple[str, ...] = DEFENDING_CODES) -> int:
+    """Side in possession during a phase: the tagged team, or its opponent for the defensive phases."""
+    if event.team >= 0 and event.code in defending_codes:
+        return AWAY if event.team == HOME else HOME
+    return event.team
+
+
 def build_smart_tagging(events: list[TagEvent], n_frames: int = N_VIDEO_FRAMES,
-                        fps: int = FPS) -> SmartTagging:
-    """Per-frame tensors plus structured set-piece and goal lists from parsed events."""
+                        fps: int = FPS, defending_codes: tuple[str, ...] = DEFENDING_CODES) -> SmartTagging:
+    """Per-frame tensors plus structured set-piece and goal lists from parsed events.
+
+    The phase prior counts the side *in possession*: for the ``defending in ... third`` and ``defensive
+    transition`` phases (``defending_codes``; ``()`` disables) the tagged team is the defender, so the
+    opponent is credited.  ``Team`` is "the team performing the event" (``OVERVIEW.md``)."""
+    keys = tuple(_code_key(c) for c in defending_codes)
     phases = [e for e in events if e.code not in (SET_PIECE_CODE, GOAL_CODE)]
+    n_flipped = sum(1 for e in phases if possession_side(e, keys) != e.team)
+    phases = [dataclasses.replace(e, team=possession_side(e, keys)) for e in phases]
     home = _coverage(phases, HOME, n_frames)
     away = _coverage(phases, AWAY, n_frames)
     total = (home + away).astype(np.float32)
@@ -239,15 +259,17 @@ def build_smart_tagging(events: list[TagEvent], n_frames: int = N_VIDEO_FRAMES,
         codes[e.code] = codes.get(e.code, 0) + 1
     return SmartTagging(events=events, set_pieces=sets, goals=goals, phase_count_home=home,
                         phase_count_away=away, phase_prior_home=prior, phase_team=team,
-                        in_set_piece=np.cumsum(diff[:n_frames]) > 0, n_frames=n_frames, fps=fps, codes=codes)
+                        in_set_piece=np.cumsum(diff[:n_frames]) > 0, n_frames=n_frames, fps=fps, codes=codes,
+                        n_flipped=n_flipped)
 
 
 def load_smart_tagging(data_dir: str | os.PathLike | None = None, n_frames: int = N_VIDEO_FRAMES,
                        fps: int = FPS, team_aliases: dict[str, int] | None = None,
-                       path: str | os.PathLike | None = None) -> SmartTagging:
+                       path: str | os.PathLike | None = None,
+                       defending_codes: tuple[str, ...] = DEFENDING_CODES) -> SmartTagging:
     """Parse the tactical Smart Tagging XML (``path`` overrides the bundle lookup)."""
     path = path or smart_tagging_path(data_dir)
-    return build_smart_tagging(parse_events(path, fps, team_aliases), n_frames, fps)
+    return build_smart_tagging(parse_events(path, fps, team_aliases), n_frames, fps, defending_codes)
 
 
 def check_time_base(st: SmartTagging, half1_start: int = HALF1[0], half2_start: int = HALF2_PLAY[0]) -> dict:

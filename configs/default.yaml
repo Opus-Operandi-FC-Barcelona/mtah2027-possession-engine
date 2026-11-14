@@ -84,6 +84,8 @@ setpiece_anchor:
   collective_window_s: 1.0      # windows before/after for the collective speed jump
   collective_jump_min_mps: 0.4  # minimum rise of the mean player speed
   collective_conf_max: 0.5      # confidence ceiling of the collective method
+  collective_dead_lag_s: 1.0     # Issue #40: the speed jump must follow dead evidence within this lag (0 = off); external
+                                # pseudo-window check: mean |t* error| 208->126 (IDSSE), 247->181 (PFF), 259->143 (Metrica) frames
   dead_threshold: 0.5           # dead_score above this counts as dead-ball evidence
   dead_gap_close_s: 1.0         # evidence gaps shorter than this are bridged
   dead_tail_s: 1.0              # evidence may end this long before t*
