@@ -447,6 +447,72 @@ with `route_overrides.specialists` 0.5997 / 0.8999, without 0.5954 / 0.8999 (+0.
 Issue #31 parameters are not broken by the calibration (absolute values differ slightly from the table above because
 `diagnose_possessions.py` uses another match/seed offset).
 
+### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
+
+*Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players
+(6.3 % fewer than 16, episodes of median 2.4 s) and the model predicts `D` on 94 % of them, while external matches had
+at most 1.2 % such frames, so the behaviour was unvalidated.  The calibrated degrader (#38) reproduces the dropout
+(15.8 % of the graded frames below 20 players, 1.6 % below 16), so the strata can be measured.
+
+*Tools.*  `validation/dropout_strata.py` (additive counters: macroF1, true / predicted `D`, `D` with the ball hidden /
+visible, H/A accuracy on alive frames, missed `H<->A` turnovers) wired into `eval_external.py --strata`,
+`diagnose_possessions.py` (always) and `eval_pff_heldout.py` (`--unseen-model` scores a committed model on the last 8
+PFF matches).  `eval_external.py --lomo-cache DIR` caches the leave-one-match-out models.
+
+*Reference B'* (7 IDSSE LOMO, calibrated degrader, seeds 0-2, current default mixed model, pooled over 21 runs):
+
+| stratum | frames | macroF1 | true D % | predicted D % | pred. D %, ball hidden / visible | H/A acc. alive | turnovers missed |
+|---|---|---|---|---|---|---|---|
+| < 16 players | 1.6 % | 0.8688 | 41.7 | 44.4 | 43.2 / 45.1 | 81.2 % | 63.6 % (of 129) |
+| < 20 players | 15.8 % | 0.8858 | 43.6 | 45.7 | 45.1 / 46.1 | 83.6 % | 61.0 % (of 1145) |
+| >= 20 players | 84.2 % | 0.9077 | 44.7 | 45.1 | 42.7 / 46.8 | 87.6 % | 56.1 % (of 5908) |
+
+**Finding: on external matches degraded like BAR-ATH the model does *not* over-predict `D` under dropout** (+2.1 points
+in the < 20 stratum, +2.7 in < 16, vs +0.4 with all players; macroF1 is 0.02-0.04 lower because H/A accuracy falls
+81-84 % vs 88 %, not because of `D`).  The 94 % `D` seen on BAR-ATH is therefore not reproduced by dropout alone: either the
+real dropouts are different (slow players, stoppages: they walk at 0.8-1.2 m/s) or it is real dead ball.  Feature
+importance (gain, committed default): the count columns carry nothing (`n_field_*`, `diff:n_field`, `n_active`:
+A 0.1 %, B 0.03 %), so neutralising them (variant (a)) is a no-op and was stopped without a full run; the shape columns
+(width, hull, spectral area, their `diff:` and `ctx:` versions) carry 8 % (A) and 23 % (B).  These do depend on the
+sample size: the mean fraction of the complete outfield shape kept by n random players of 10 (clean IDSSE frames) is
+hull 0.28 / 0.40 / 0.54 / 0.67 / 0.79 / 0.90 for n = 4 ... 9, width 0.69 ... 0.97, so a team with 6 players looks 46 %
+less spread.
+
+*Variants* (`specialist_features`: `normalise_shape` divides area / extent by that table and re-derives the area
+derivatives; `shape_min_field` blanks a team's shape below that many players; training rows rebuilt for each variant,
+same IDSSE + PFF 0.5 mix, legacy training degrader unless stated):
+
+| variant | B' seed 0 / 1 / 2 | B' mean spellF1 / macroF1 | vs default | < 20 stratum: predicted D % / macroF1 / turnovers missed | < 16 stratum: predicted D % / macroF1 |
+|---|---|---|---|---|---|
+| default (reference) | 0.6008 / 0.6053 / 0.6069 | 0.6044 / 0.9016 | | 45.7 / 0.8858 / 61.0 % | 44.4 / 0.8688 |
+| (b) `normalise_shape` | 0.6038 / 0.6067 / 0.6085 | 0.6063 / 0.9019 | +0.0019 | 45.5 / 0.8861 / 60.5 % | 44.0 / 0.8700 |
+| (b) `normalise_shape` + `shape_min_field: 6` | 0.6080 / 0.6057 / 0.6074 | 0.6070 / 0.9021 | +0.0026 | 45.6 / 0.8852 / 61.1 % | 45.1 / 0.8540 |
+| (d) trained with the calibrated degrader (= `calib`) | 0.6084 / 0.6071 / 0.6099 | 0.6085 / 0.9035 | +0.0041 | 44.6 / 0.8911 / 61.2 % | 42.7 / 0.8823 |
+| (a) `neutralise_counts` | not run (columns carry < 0.1 % gain) | | | | |
+
+*Native speed channel (c).*  The competition XML declares `s` with unit `speed_kph`; the loader did not recognise `s`.
+`io/atd_loader.py` now maps channel `s` (or `spd`, ... or any non-coordinate channel with a km/h unit) to `speed`, and
+verifies the unit against the positions (`_check_speed_unit`, players and ball separately, only applied when the median
+ratio confirms a 3.6 factor).  `scripts/check_speed_unit.py` on BAR-ATH (aggregate): players, median native / derived
+ratio 0.993 after the correction (0.276 with the declared km/h division), i.e. **the player `s` values are already m/s
+(DATA.md is right, the XML unit label is wrong)** and the loader applies factor 3.6 to undo the division; the ball
+channel does not agree with its positions under either unit (median(s)/median(derived) 0.056, 8,717 usable pairs) so no ball
+correction is applied.  `fill_speed_from_native` (in `compute_kinematics_and_orientation`) uses the native speed where the
+Savitzky-Golay speed is missing or within 3 frames of a track edge, behind `pipeline.use_native_speed` (OFF): the external
+matches have no speed channel, so it cannot be evaluated on B'.  The ATD cache version was bumped (5).
+
+*Decision (rule: B' >= +0.01 mean with no seed below -0.003, or fix of the < 20 `D` over-prediction winning on 3 seeds with
+A within the guard of -0.03).*  Best gain +0.0041 (calibrated training, all three seeds better); the robust-shape
+variants give +0.0019 / +0.0026; there is no `D` over-prediction in the < 20 stratum to fix.  **Nothing is adopted**:
+`models/specialists.json` and `reports/external_evidence.json` are unchanged, the new options are OFF by config
+(`specialist_features.normalise_shape / shape_min_field / neutralise_counts`, `pipeline.use_native_speed`).  A
+(PFF held-out, 4 folds, default model): spellF1 0.5231 / macroF1 0.8626, 8 never-seen PFF matches 0.5257 / 0.8648; PFF
+has no frames below 20 players (all in the >= 20 stratum: predicted D 41.9 % vs true 41.1 %), and A was not rerun for the
+non-adopted variants.  The combination of (b) with calibrated training (one more 3.5 h LOMO run) was not run: the
+two gains are +0.004 and +0.002-0.003 and the criterion is +0.010.  Reading for the real match: the 94 % `D` in the
+< 20 stratum cannot be attributed to the sample-size sensitivity of the features; only an external dataset with long real
+dropouts would validate or refute it.
+
 ### Real-data ingestion check (Issue #37, aggregates only)
 
 `scripts/real_data_sanity.py` on the BAR-ATH bundle (nothing per-frame is printed).  Ingestion is correct: 199,319

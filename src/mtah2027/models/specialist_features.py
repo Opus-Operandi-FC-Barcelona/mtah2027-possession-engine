@@ -25,13 +25,15 @@ with the home / away roles swapped (see ``specialist_data``).
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Sequence
 
 import numpy as np
 
-from mtah2027.config import load_section, params_from_mapping
+from mtah2027.config import FPS, load_section, params_from_mapping
 from mtah2027.features._utils import window_mean
+from mtah2027.features.collective_physics import CollectivePhysicsParams, central_derivative
 
 PHYSICS_DIFFS = ["hull_area", "spectral_area", "d_hull", "d_spectral", "depth", "width", "centroid_vx",
                  "n_field"]
@@ -55,13 +57,63 @@ CONTEXT_SIGNALS = (
     "sig:dead_score")
 
 
+COUNT_COLUMNS = ("cp:n_field_home", "cp:n_field_away", "diff:n_field", "sig:n_active")
+
+
 @dataclass(frozen=True)
 class FeatureParams:
     context_windows: tuple = (50, 100)    # frames; empty = no context features
+    # Issue #42 -- invariance to player dropout (all off = the adopted feature set).
+    neutralise_counts: bool = False       # count-like columns (n_field_*, diff:n_field, n_active) set to 0
+    shape_min_field: int = 0              # team shape is NaN below this many outfield players
+    normalise_shape: bool = False         # divide hull / spectral area, width, depth by expected ratio
+    shape_ratio_n: tuple = (4, 5, 6, 7, 8, 9, 10)   # for n outfield players tracked (10 = complete)
+    shape_ratio_hull: tuple = (0.279, 0.401, 0.538, 0.668, 0.789, 0.899, 1.0)
+    shape_ratio_spectral: tuple = (0.542, 0.659, 0.767, 0.850, 0.914, 0.961, 1.0)
+    shape_ratio_width: tuple = (0.686, 0.798, 0.848, 0.892, 0.943, 0.969, 1.0)
+    shape_ratio_depth: tuple = (0.638, 0.667, 0.786, 0.844, 0.893, 0.938, 1.0)
 
     @classmethod
     def from_config(cls, path=None) -> "FeatureParams":
         return params_from_mapping(cls, load_section("specialist_features", path), "specialist_features")
+
+
+def _shape_ratio(n: np.ndarray, grid: Sequence[float], ratio: Sequence[float]) -> np.ndarray:
+    """Expected shape / complete-shape ratio for ``n`` tracked outfield players (1 at and above the last grid
+    point and where ``n`` is unknown)."""
+    nn = np.asarray(n, dtype=np.float64)
+    r = np.interp(nn, np.asarray(grid, dtype=np.float64), np.asarray(ratio, dtype=np.float64))
+    return np.where(np.isfinite(nn) & (nn < grid[-1]), r, 1.0)
+
+
+def robust_physics(phys, fp: FeatureParams, fps: float = FPS, config_path=None):
+    """Sample-size-robust copy of the collective physics (Issue #42; ``phys`` itself is not modified).
+
+    ``normalise_shape`` divides the area / extent of a team by the average fraction that a random subset of
+    its ``n`` tracked outfield players has of the complete shape (measured on clean external matches) and
+    re-derives the area derivatives; ``shape_min_field`` blanks (NaN) the shape of a team below that many
+    players.  Both are no-ops with the default parameters."""
+    if phys is None or not (fp.normalise_shape or fp.shape_min_field):
+        return phys
+    span = max(int(round(CollectivePhysicsParams.from_config(config_path).deriv_span_s * fps)), 2)
+    upd: dict[str, np.ndarray] = {}
+    for team in ("home", "away"):
+        n = np.asarray(getattr(phys, f"n_field_{team}"), dtype=np.float64)
+        low = n < fp.shape_min_field if fp.shape_min_field else np.zeros(len(n), bool)
+        for stat, table in (("hull_area", fp.shape_ratio_hull), ("spectral_area", fp.shape_ratio_spectral),
+                            ("width", fp.shape_ratio_width), ("depth", fp.shape_ratio_depth)):
+            arr = np.array(getattr(phys, f"{stat}_{team}"), dtype=np.float32, copy=True)
+            if fp.normalise_shape:
+                arr = (arr / _shape_ratio(n, fp.shape_ratio_n, table)).astype(np.float32)
+            arr[low] = np.nan
+            upd[f"{stat}_{team}"] = arr
+        for deriv, src in (("d_hull", "hull_area"), ("d_spectral", "spectral_area")):
+            d = np.array(getattr(phys, f"{deriv}_{team}"), dtype=np.float32, copy=True)
+            if fp.normalise_shape:
+                d = central_derivative(upd[f"{src}_{team}"], span, fps).astype(np.float32)
+            d[low] = np.nan
+            upd[f"{deriv}_{team}"] = d
+    return dataclasses.replace(phys, **upd)
 
 
 def context_features(x: np.ndarray, names: list[str], blocks: Sequence[tuple[int, int]] | None,
@@ -124,13 +176,15 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
     names: list[str] = []
     cols.append(fe.visible.astype(np.float32))
     names.append("visible")
-    for obj, prefix in ((fe.sig, "sig:"), (fe.bk, "bk:"), (fe.phys, "cp:"), (fe.mem, "bm:")):
+    fp = params or FeatureParams.from_config(config_path)
+    phys = robust_physics(fe.phys, fp, config_path=config_path)
+    for obj, prefix in ((fe.sig, "sig:"), (fe.bk, "bk:"), (phys, "cp:"), (fe.mem, "bm:")):
         if obj is None:
             continue
         matrix, keys = obj.matrix()
         _add(cols, names, matrix, keys, prefix)
     for base in PHYSICS_DIFFS + MEMORY_DIFFS:
-        src = fe.phys if base in PHYSICS_DIFFS else fe.mem
+        src = phys if base in PHYSICS_DIFFS else fe.mem
         if src is None:
             continue
         home, away = getattr(src, f"{base}_home", None), getattr(src, f"{base}_away", None)
@@ -144,7 +198,10 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
         cols.append(np.asarray(heuristic.p_dead, dtype=np.float32))
         names.append("heur:p_dead")
     x = np.stack(cols, axis=1) if cols else np.zeros((n, 0), np.float32)
-    fp = params or FeatureParams.from_config(config_path)
+    if fp.neutralise_counts:          # Issue #42: the layout is kept, the columns carry no information
+        for key in COUNT_COLUMNS:
+            if key in names:
+                x[:, names.index(key)] = 0.0
     if fp.context_windows:
         cx, cnames = context_features(x, names, play_blocks, fp.context_windows)
         x = np.concatenate([x, cx], axis=1)
