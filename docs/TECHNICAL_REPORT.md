@@ -570,7 +570,106 @@ calibrated degrader, run in `mtah2027-external-benchmarks` issue #5) and #46 (re
 (< 20, < 16, >= 20); A = PFF held-out 4-fold plus 8 unseen PFF matches; adopt if B' gains >= +0.01 spellF1 (no seed
 worse than -0.003) and A drops by at most 0.01, or if the over-prediction of `D` in the < 20-player stratum is corrected
 on all three seeds without losing more than 0.01 on A; otherwise code and tests stay and the change is off.
-Results: pending (filled at #46).
+Results of #43: see the item "Smart Tagging alive-ball prior and transition cue" below (not adopted); #42, #44, #46: pending.
+
+### Smart Tagging alive-ball prior and transition cue (Issue #43; B' / A on simulated tags, not adopted)
+
+**Idea.**  With the ball hidden the specialists predict `D` for 92 % of the hidden graded frames of BAR-ATH (Issue #37), while
+the hidden-ball frames are mostly live play (`FAQ.md` / `DATA.md`).  A frame covered by a live Smart Tagging phase
+(any phase code; `SmartTagging.phase_cover`) and outside the pre-`t*` windows of the set pieces, the unresolved set-piece
+windows, the forced-dead intervals and the post-goal windows (`pipeline.live_phase_mask`) is weak evidence of an alive
+ball.  `heuristic_emissions.w_phase_alive` (default 0 = off) subtracts that many logits from the `D` logit on hidden-ball
+frames of such a mask (`apply_priors` for the specialists, `compute_emissions` for the heuristic route).  Optional
+extras, all off: `transition_matrix.phase_cue` opens `H<->A` (`phase_cue_open`, -4) from 4 s before to 8 s after the start
+of an `Attacking` / `Defensive Transition` phase, towards the team that gains the ball and only inside occlusions; and
+`pipeline.alive_exclude_dead_evidence` additionally drops from the mask the frames with physical dead-ball evidence
+(ball out, `dead_score >= 0.6`) and the 3 s after them (the phases lag when the ball leaves the pitch).
+
+**BAR-ATH structure (aggregates, `scripts/smart_tagging_stats.py`).**  575 phase instances in 12 codes (`Players in the
+Box` 97, `Ball in Final Third` 93, `Ball in the Box` 72, `Progression` 66 = `Defending in Middle Third` 66, `Creating
+Chances` 30 = `Defending in Defensive Third` 30 with a fixed 30 s duration, `Build Up` 22 = `Defending in Attacking Third` 22,
+`Long Ball` 29, the two Transition codes 24 each), 55 per 10 graded minutes, durations p10-p90 9-62 s, every covered frame
+lies under 3.1 phases on average, **union coverage 69.4 % of the graded frames** (67.3 % with a non-zero H/A prior), uncovered
+gaps median 13 s (p10-p90 3-56 s), 59 set-piece windows of 29-35 s covering 28 % of the graded frames.  Phases are not
+possessions: they cover far more than the alive share (about 50-60 %), so a good part of the covered frames is dead.
+
+**Simulator** (`io/smart_tagging_sim.simulate_smart_tagging`, deterministic per seed): possession runs of the true labels
+become paired attacking / defending phases (defender tagged, as in the XML), extra unpaired phases, transitions at 10 % of
+the possession changes, `Kick Off (Start)` windows, and only 5.7 set pieces per 10 graded minutes (the BAR-ATH rate:
+most restarts are *untagged*; throw-ins are `Team = N/A`, plus 2 % N/A phases); then noise: Gaussian boundary jitter, missed
+tags (FN), spurious tags (FP, random team and place) and a *dead-time bleed* (phase ends lengthened until the union
+coverage reaches 69 %, which also reproduces the lag after the ball goes out).  Noise levels low / medium / high =
+jitter 1 / 3 / 6 s, FN 10 / 25 / 40 %, FP 5 / 15 / 30 %.  At medium noise 92-93 % of the alive and 32-37 % of the dead
+graded frames are covered.  **The clean tagging is derived from the truth, so every gain below is optimistic.**  SkillCorner
+phases were not available in the benchmark cache (no SkillCorner match); the PFF and IDSSE tags are simulated.
+
+**Protocol.**  B' = 7 IDSSE leave-one-match-out with the calibrated degrader, seeds 0-2 (21 runs per cell; specialists of
+the production recipe, IDSSE + PFF 0.5, legacy training degrader); A = PFF held-out, 4 folds, 20 matches, real occlusions.
+`scripts/eval_phase_alive.py`, same models in every cell (trained once per held-out group).  `off` = `w_phase_alive` 0
+**with the same simulated tags** (the tags alone move spellF1 through the set-piece anchors and the H/A phase prior:
+B' none 0.6044 -> medium 0.5941 / high 0.5891; A none 0.5231 -> 0.5109 / 0.5051).  The `none` rows reproduce the
+Issue #38 numbers (0.6044 and 0.5231).  The last two columns are the predicted / true `D` share of the hidden-ball frames
+with fewer than 16 / 20 tracked players (the #42 per-stratum spellF1 had not landed).  d = difference to `off` with the
+same tags; worst seed = lowest of the three seed-mean differences.
+
+B' (7 IDSSE, seeds 0-2):
+
+| noise | variant | spellF1 | d | worst seed | macroF1 | possessions | hidden D pred / true % | < 16 pl. | < 20 pl. |
+|---|---|---|---|---|---|---|---|---|---|
+| none | off (no tags) | 0.6044 | | | 0.9016 | 6798 | 43.1 / 41.3 | 43.2 / 36.9 | 45.1 / 40.3 |
+| low | off | 0.5955 | | | 0.8944 | 6514 | 45.6 / 41.3 | 45.2 / 36.9 | 47.4 / 40.3 |
+| low | alive 0.5 | 0.5964 | +0.0009 | -0.0006 | 0.8955 | 6526 | 44.1 / 41.3 | 42.2 / 36.9 | 45.3 / 40.3 |
+| low | alive 1.0 | 0.5958 | +0.0003 | +0.0002 | 0.8953 | 6551 | 42.9 / 41.3 | 40.4 / 36.9 | 43.5 / 40.3 |
+| low | alive 2.0 | 0.5921 | -0.0034 | -0.0039 | 0.8926 | 6573 | 40.7 / 41.3 | 37.9 / 36.9 | 40.7 / 40.3 |
+| low | cue | 0.5958 | +0.0003 | -0.0002 | 0.8944 | 6526 | 45.6 / 41.3 | 45.1 / 36.9 | 47.4 / 40.3 |
+| low | alive 1.0 + cue | 0.5960 | +0.0005 | -0.0001 | 0.8953 | 6559 | 42.9 / 41.3 | 40.4 / 36.9 | 43.5 / 40.3 |
+| low | alive 1.0 + dead-evidence mask | 0.5954 | -0.0001 | -0.0005 | 0.8951 | 6545 | 43.1 / 41.3 | 40.5 / 36.9 | 43.7 / 40.3 |
+| low | alive 2.0 + dead-evidence mask | 0.5916 | -0.0039 | -0.0044 | 0.8924 | 6561 | 41.1 / 41.3 | 38.3 / 36.9 | 41.1 / 40.3 |
+| medium | off | 0.5941 | | | 0.8919 | 6535 | 45.9 / 41.3 | 45.1 / 36.9 | 47.4 / 40.3 |
+| medium | alive 0.5 | 0.5960 | +0.0019 | +0.0011 | 0.8933 | 6543 | 44.4 / 41.3 | 43.2 / 36.9 | 45.4 / 40.3 |
+| medium | alive 1.0 | 0.5952 | +0.0011 | +0.0006 | 0.8933 | 6571 | 43.3 / 41.3 | 41.8 / 36.9 | 43.7 / 40.3 |
+| medium | alive 2.0 | 0.5907 | -0.0034 | -0.0046 | 0.8907 | 6608 | 41.1 / 41.3 | 40.1 / 36.9 | 41.0 / 40.3 |
+| medium | cue | 0.5943 | +0.0002 | -0.0001 | 0.8919 | 6547 | 45.9 / 41.3 | 45.1 / 36.9 | 47.4 / 40.3 |
+| medium | alive 1.0 + cue | 0.5953 | +0.0012 | +0.0008 | 0.8933 | 6580 | 43.3 / 41.3 | 41.7 / 36.9 | 43.7 / 40.3 |
+| medium | alive 1.0 + dead-evidence mask | 0.5947 | +0.0005 | +0.0001 | 0.8932 | 6565 | 43.6 / 41.3 | 41.9 / 36.9 | 44.0 / 40.3 |
+| medium | alive 2.0 + dead-evidence mask | 0.5904 | -0.0037 | -0.0042 | 0.8909 | 6597 | 41.7 / 41.3 | 40.4 / 36.9 | 41.5 / 40.3 |
+| high | off | 0.5891 | | | 0.8876 | 6593 | 46.2 / 41.3 | 48.6 / 36.9 | 48.6 / 40.3 |
+| high | alive 0.5 | 0.5903 | +0.0013 | -0.0000 | 0.8886 | 6607 | 44.7 / 41.3 | 45.2 / 36.9 | 46.5 / 40.3 |
+| high | alive 1.0 | 0.5891 | +0.0000 | -0.0003 | 0.8878 | 6634 | 43.4 / 41.3 | 44.0 / 36.9 | 44.8 / 40.3 |
+| high | alive 2.0 | 0.5853 | -0.0038 | -0.0045 | 0.8843 | 6680 | 41.0 / 41.3 | 41.5 / 36.9 | 41.8 / 40.3 |
+| high | cue | 0.5892 | +0.0002 | -0.0001 | 0.8876 | 6606 | 46.2 / 41.3 | 48.6 / 36.9 | 48.6 / 40.3 |
+| high | alive 1.0 + cue | 0.5892 | +0.0002 | -0.0003 | 0.8878 | 6643 | 43.4 / 41.3 | 44.0 / 36.9 | 44.8 / 40.3 |
+| high | alive 1.0 + dead-evidence mask | 0.5888 | -0.0003 | -0.0006 | 0.8877 | 6624 | 43.7 / 41.3 | 44.3 / 36.9 | 45.2 / 40.3 |
+| high | alive 2.0 + dead-evidence mask | 0.5851 | -0.0039 | -0.0044 | 0.8846 | 6670 | 41.7 / 41.3 | 42.4 / 36.9 | 42.5 / 40.3 |
+
+A (PFF held-out, 20 matches, real occlusions; validation only: reject if the drop exceeds 0.03):
+
+| noise | variant | spellF1 | d | macroF1 | possessions | hidden D pred / true % |
+|---|---|---|---|---|---|---|
+| none | off (no tags) | 0.5231 | | 0.8626 | 6395 | 66.3 / 64.0 |
+| medium | off | 0.5109 | | 0.8485 | 6019 | 68.2 / 64.0 |
+| medium | alive 1.0 | 0.5109 | -0.0000 | 0.8491 | 6131 | 65.6 / 64.0 |
+| medium | alive 2.0 | 0.5026 | -0.0083 | 0.8441 | 6299 | 62.9 / 64.0 |
+| medium | alive 1.0 + dead-evidence mask | 0.5106 | -0.0003 | 0.8487 | 6106 | 66.4 / 64.0 |
+| medium | alive 2.0 + dead-evidence mask | 0.5039 | -0.0070 | 0.8458 | 6229 | 64.8 / 64.0 |
+| high | off | 0.5051 | | 0.8453 | 6149 | 68.0 / 64.0 |
+| high | alive 1.0 | 0.5039 | -0.0011 | 0.8434 | 6265 | 65.1 / 64.0 |
+| high | alive 2.0 | 0.4948 | -0.0103 | 0.8352 | 6443 | 61.7 / 64.0 |
+| high | alive 1.0 + dead-evidence mask | 0.5033 | -0.0018 | 0.8440 | 6240 | 66.1 / 64.0 |
+| high | alive 2.0 + dead-evidence mask | 0.4970 | -0.0081 | 0.8390 | 6371 | 64.0 / 64.0 |
+
+**Decision: not adopted, `w_phase_alive = 0`, `phase_cue: false`, `alive_exclude_dead_evidence: false`.**  Adoption rule
+(coordinator update): B' mean >= +0.01 at medium **and** high noise with no seed below -0.003 (A only a guard, -0.03), or a
+demonstrated fix of the `D` over-prediction winning all three seeds at medium and high.  The best B' gain, with optimistic
+tags, is +0.0019 (alive 0.5, medium) and +0.0013 (high); the weight that corrects the `D` over-prediction (alive 2.0:
+predicted 41.0-41.1 % vs true 41.3 %) loses 0.003-0.004 spellF1 on every seed, and the intermediate weight 1.0 gains
++0.0011 at medium and nothing at high (worst seed -0.0003).  The transition cue adds +0.0002 (neutral), and excluding the
+frames with dead-ball evidence from the mask does not help (it only weakens the prior).  Why so little: on degraded IDSSE
+the specialists predict `D` for 43-46 % of the hidden frames vs 41 % true (the 92 % of BAR-ATH is not reproduced by this
+recipe on external matches), and with 69 % phase coverage 30-55 % of the covered frames are dead, so the prior pushes dead
+frames towards alive about as often as it helps.  Code, tests and the simulator stay
+(`tests/test_43_smart_tagging_alive_prior.py`), switchable by configuration.  No BAR-ATH label or output was used and
+nothing was tuned on BAR-ATH; the effect of the prior on BAR-ATH is not reported because it stays off.
 
 **#51 -- the front end of a graded block only sees its own block.**  The warm-up (`0..11184`), half-time
 (`90652..110807`), the dead start of the second half (`110808..113741`, forced `D` by the contract) and the post-match are

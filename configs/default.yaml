@@ -138,6 +138,11 @@ transition_matrix:
   restart_open: -1.0            # D -> restart team around a restart frame t*
   restart_halfwidth: 3          # window = t* +- this many frames
   restart_other_team: -3.0      # extra log-penalty for the other team when the restart team is known
+  phase_cue: false              # Issue #43: open H<->A around Smart Tagging Attacking / Defensive Transition starts
+  phase_cue_open: -4.0          # ... to this log-value (towards the team that gains the ball)
+  phase_cue_before_s: 4.0
+  phase_cue_after_s: 8.0
+  phase_cue_hidden_only: true   # ... only inside occlusions
 
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:
@@ -178,6 +183,7 @@ spell_optimizer:
 heuristic_emissions:
   w_evidence: 0.5               # logit of H vs A per unit of possession_evidence (in [-1, 1]); weak term
   w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
+  w_phase_alive: 0.0            # Issue #43: D logit lowered by this where the ball is hidden in a live phase (0 = off)
   w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
   owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
   dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
@@ -200,6 +206,9 @@ pipeline:
   use_phase_prior: true         # Smart Tagging phase prior as a weak H/A prior
   use_owner_channel: true       # ATD owning-team ball channel, if declared
   use_spell_optimizer: true
+  alive_exclude_dead_evidence: false   # Issue #43: live-phase mask also drops frames with dead-ball evidence
+  alive_dead_threshold: 0.6
+  alive_dead_after_s: 3.0
   use_aerial_filter: false      # Issue #12: is_aerial mask suppresses the touches of airborne frames
   use_homography: false         # feed the tactical homographies to the aerial filter (reprojection-jump cue)
   isolate_play_blocks: true     # Issue #51: tracking outside the play blocks is masked (no leak across blocks)

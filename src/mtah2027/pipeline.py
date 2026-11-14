@@ -86,6 +86,12 @@ class PipelineParams:
     use_spell_optimizer: bool = True
     use_aerial_filter: bool = False   # Issue #12: is_aerial mask suppresses the touches of airborne frames
     use_homography: bool = False      # feed the tactical homographies to the aerial filter (jump cue)
+    # Issue #43: the live-phase mask additionally drops frames with physical dead-ball evidence
+    # (ball out of bounds or dead_score >= alive_dead_threshold) and ``alive_dead_after_s`` s after them,
+    # because the phases lag when the ball leaves the pitch and quick restarts carry no set-piece tag
+    alive_exclude_dead_evidence: bool = False
+    alive_dead_threshold: float = 0.6
+    alive_dead_after_s: float = 3.0
     isolate_play_blocks: bool = True  # Issue #51: tracking outside the play blocks is masked (no leak)
 
     @classmethod
@@ -196,6 +202,46 @@ class FrontEnd:
     mem: Any = None
     throwins: Any = None          # list of ThrowInResolution (Issue #15), None when not run
     is_aerial: np.ndarray | None = None   # Issue #12 mask (None when the filter is off or failed)
+    phase_alive: np.ndarray | None = None     # Issue #43: live phase, outside pre-t* / post-goal windows
+    transitions: list | None = None           # Issue #43: (frame, possession side) of Transition phases
+
+
+def live_phase_mask(smart_tagging: Any, anchors: Any, n: int, goal_tail_s: float = 30.0,
+                    fps: float = FPS) -> np.ndarray:
+    """Frames in a live Smart Tagging phase, outside the pre-restart and post-goal windows (Issue #43).
+
+    Excluded: the forced dead intervals of the anchors; for every set piece the part of its tag window before
+    the restart frame ``t*`` (the whole window when unresolved); and for every goal the frames from the goal
+    tag up to ``goal_tail_s`` after it unless the next kick-off is anchored (then up to its ``t*``)."""
+    live = np.asarray(smart_tagging.phase_cover, dtype=bool).copy()
+    if live.shape != (n,):
+        return np.zeros(n, dtype=bool)
+    if anchors is not None:
+        live &= ~np.asarray(anchors.forced_dead_mask, dtype=bool)
+        for an in anchors.anchors:
+            hi = an.t_star if an.resolved else an.tag_end
+            live[max(0, an.tag_start):max(0, min(n, hi))] = False
+    tail = int(round(goal_tail_s * fps))
+    linked = [d for d in (anchors.forced_dead_intervals if anchors is not None else []) if d.kind == "goal"]
+    for gi, g in enumerate(smart_tagging.goals):
+        is_linked = any(d.goal_index == gi and d.anchor_index >= 0 for d in linked)
+        hi = g.end_frame if is_linked else g.end_frame + tail
+        live[max(0, g.start_frame):max(0, min(n, hi))] = False
+    return live
+
+
+def dead_evidence_mask(dead_score: np.ndarray, ball_out: np.ndarray | None, threshold: float, after_s: float,
+                       fps: float = FPS) -> np.ndarray:
+    """Frames with physical dead-ball evidence plus ``after_s`` seconds after each of them (Issue #43)."""
+    ev = np.nan_to_num(np.asarray(dead_score, dtype=np.float64), nan=0.0) >= threshold
+    if ball_out is not None:
+        ev |= np.nan_to_num(np.asarray(ball_out, dtype=np.float64)) > 0.5
+    k = int(round(after_s * fps))
+    if k > 0 and ev.any():
+        idx = np.arange(len(ev))
+        last = np.maximum.accumulate(np.where(ev, idx, -10 ** 9))
+        ev = ev | ((idx - last) <= k)
+    return ev
 
 
 def mask_outside_blocks(players_xy: np.ndarray, ball_xy: np.ndarray,
@@ -331,6 +377,14 @@ def compute_front_end(
         phase = np.asarray(smart_tagging.phase_prior_home, dtype=np.float64)
         if phase.shape != (n,):
             phase = None
+    phase_alive, transitions = None, None
+    if (smart_tagging is not None and pp.use_phase_prior
+            and getattr(smart_tagging, "phase_cover", None) is not None):
+        phase_alive = live_phase_mask(smart_tagging, anchors, n)
+        if pp.alive_exclude_dead_evidence:
+            phase_alive &= ~dead_evidence_mask(dead_score, sig.ball_out if sig is not None else None,
+                                               pp.alive_dead_threshold, pp.alive_dead_after_s, fps)
+        transitions = list(getattr(smart_tagging, "transitions", []) or [])
     touches = None
     if bk is not None:
         touches = touch_signal(bk.touch_mask, bk.delta_d, EmissionParams.from_config(cfg).touch_margin_m)
@@ -348,7 +402,7 @@ def compute_front_end(
     return FrontEnd(pxy=pxy, bxy=bxy, team=team, pvel=pvel, bvel=bvel, bacc=bacc, pspeed=pspeed,
                     bspeed=bspeed, visible=visible, sig=sig, bk=bk, anchors=anchors, dead_score=dead_score,
                     owner=owner, owner_key=owner_key, phase=phase, touches=touches, phys=phys, mem=mem,
-                    throwins=throwins, is_aerial=is_aerial)
+                    throwins=throwins, is_aerial=is_aerial, phase_alive=phase_alive, transitions=transitions)
 
 
 def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_Stages | None" = None):
@@ -360,7 +414,8 @@ def heuristic_emissions(fe: FrontEnd, fps: float, config_path=None, stages: "_St
         fe.dead_score, bk.possession_evidence if bk is not None else np.zeros(n),
         bk.evidence_valid if bk is not None else np.zeros(n, bool), fe.visible,
         status_dead=sig.status_dead if (sig is not None and sig.has_status) else None,
-        phase_prior_home=fe.phase, owner_team=fe.owner, touch_signed=fe.touches, fps=fps,
+        phase_prior_home=fe.phase, owner_team=fe.owner, touch_signed=fe.touches,
+        phase_alive=fe.phase_alive, fps=fps,
         params=EmissionParams.from_config(config_path)), required=True)
 
 
@@ -448,7 +503,8 @@ def run_core(
             params=tp or TransitionParams.from_config(cfg),
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
-            spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None)
+            spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
+            transitions=fe.transitions)
 
     log_trans = st.run("transitions", _transitions)
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive
