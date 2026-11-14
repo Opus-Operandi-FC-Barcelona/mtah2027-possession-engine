@@ -809,6 +809,38 @@ that happen to be close to the ball rather than the ball itself.  The simulation
 accurate detector to gain anything, so this confirms with real measurements the decision to keep `vision.enabled:
 false` in the submission.  A detector trained for this camera remains future work.
 
+### Ball detector with roboflow/supervision on the real tactical video (Issue #63; experiment, off by default)
+
+`supervision` (MIT) is a toolkit, not a detector.  `src/mtah2027/vision/sv_ball.py` combines it with the
+single-class ball model of roboflow/sports (`football-ball-detection.pt`, YOLOv8, loaded only from a local file
+through `ultralytics.YOLO(path)`; no hosted inference, no API key, no frame leaves the machine).  Two fixed
+configurations, chosen a priori: `sv_ball` (`InferenceSlicer`, 320 px tiles, 64 px overlap) and `sv_ball640` (the
+whole 640x640 attention crop, no slicing); confidence floor 0.05.  Optional temporal filter (`--sv-clip 5`): the 5
+consecutive frames around each sampled frame are scanned, candidates are reprojected with `H^-1` and the centre
+frame candidates are rescored by the support they find in the neighbour frames (speed gate 38 m/s, bonus when
+t-1 / t+1 agree with a constant-velocity motion).  ByteTrack is not used: supervision >= 0.31 moved it to a separate
+package.  CPU only, deterministic (same output on repeated runs, checked).
+
+Licence notes.  `supervision` and `roboflow/sports` code: MIT.  `ultralytics` (YOLOv8 runtime): AGPL-3.0 (already
+an optional extra, never needed for the submission).  The weights file has no licence of its own in the
+repository; the roboflow/sports README says the ball dataset (Roboflow Universe, `football-ball-detection-rejhg`)
+was derived from the Kaggle "DFL - Bundesliga Data Shootout" broadcast footage, so the model was trained on
+broadcast views and its use must follow the YOLOv8/AGPL terms plus whatever terms that dataset carries.  Weights
+and videos are never committed; torch/ultralytics/supervision live in a separate environment and the default
+path and CI do not need them (tests skip with `pytest.importorskip`).
+
+Sanity check on a public roboflow/sports broadcast sample (`2e57b9_0.mp4`, 8 frames, aggregates only): the model
+returns a ball candidate in 8/8 full frames (median top confidence 0.85).  Cost on CPU for one 640x640 crop:
+about 4 s (`sv_ball`) and 0.9 s (`sv_ball640`) per frame, times the clip length with `--sv-clip`.
+
+Run (aggregates only, same guard as Issue #58):
+
+```bash
+<venv>/Scripts/python scripts/real_video_ball_check.py --data-dir data --detectors sv_ball640,sv_ball     --sv-weights <path>/football-ball-detection.pt --sample 1000 --json <outside the repo>/sv_ball.json
+```
+
+Result on the real tactical video: pending (run locally by the lead).
+
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),

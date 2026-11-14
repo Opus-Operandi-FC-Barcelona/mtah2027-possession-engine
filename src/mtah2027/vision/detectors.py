@@ -288,7 +288,7 @@ class MultiFrameMotionBallDetector:
 def motion_geometry(origin, H_inv_triplet, *, pitch=(105.3, 68.0), fps: float = 25.0) -> dict | None:
     """Geometry record of one crop for the motion detector (``None`` if a homography is not finite)."""
     Hi = np.asarray(H_inv_triplet, dtype=np.float64)
-    if Hi.shape != (3, 3, 3) or not np.isfinite(Hi).all():
+    if Hi.ndim != 3 or Hi.shape[1:] != (3, 3) or Hi.shape[0] < 3 or not np.isfinite(Hi).all():
         return None
     return {"origin": (float(origin[0]), float(origin[1])), "H_inv": Hi, "pitch": tuple(pitch),
             "fps": float(fps)}

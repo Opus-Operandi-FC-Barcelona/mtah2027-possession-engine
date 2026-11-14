@@ -15,6 +15,10 @@ crop is ever written.
 
     python scripts/real_video_ball_check.py --data-dir data --sample 1000 --json reports/real_video_ball_check.json
     python scripts/real_video_ball_check.py --data-dir data --detectors motion,yolo --search-offset-m 3
+    python scripts/real_video_ball_check.py --data-dir data --detectors sv_ball,sv_ball640 --sv-weights W.pt --sv-clip 5
+
+``sv_ball`` / ``sv_ball640`` (Issue #63) need torch + ultralytics + supervision in a separate environment and a
+LOCAL football-ball weights file; they are import-guarded, so the default path and CI need none of that.
 
 Caveat: the crop is centred on the ATD ball (``--search-offset-m`` shifts it by a seeded random offset to mimic
 the uncertainty of a real search point), so the detection rates are an upper bound of the gap-recovery use.
@@ -158,13 +162,23 @@ def detection_metrics(ds, ball_xy, radii, fp_radius: float, n_planned: int) -> d
     return out
 
 
-def make_detectors(names, params):
-    """``({name: detector}, {name: reason})`` for the ones that can / cannot be constructed."""
+def make_detectors(names, params, sv_weights=None, sv_clip: int = 0):
+    """``({name: detector}, {name: reason})`` for the ones that can / cannot be constructed.
+
+    ``sv_ball`` / ``sv_ball640`` (Issue #63: local football-ball YOLO + supervision InferenceSlicer) are built
+    lazily so that torch / ultralytics / supervision are never needed by the default path."""
     from mtah2027.vision.detectors import make_detector
 
     dets, skipped = {}, {}
     for name in names:
         try:
+            if name in ("sv_ball", "sv_ball640"):
+                from mtah2027.vision.sv_ball import SupervisionBallDetector
+
+                if not sv_weights or not Path(sv_weights).is_file():
+                    raise FileNotFoundError("sv_ball weights (--sv-weights)")
+                dets[name] = SupervisionBallDetector(str(sv_weights), name, clip=sv_clip)
+                continue
             dets[name] = make_detector(dataclasses.replace(params, detector=name))
         except Exception as exc:                                  # missing ultralytics / weights / OpenCV
             skipped[name] = type(exc).__name__
@@ -173,7 +187,7 @@ def make_detectors(names, params):
 
 def build_report(ball_xy, hom, blocks, video, params, pitch, fps, *, detectors=("motion", "yolo"),
                  n_sample: int = 1000, seed: int = 0, radii=(1.0, 2.0, 5.0), fp_radius: float = 5.0,
-                 offset_m: float = 0.0) -> dict:
+                 offset_m: float = 0.0, sv_weights=None, sv_clip: int = 0) -> dict:
     """Aggregate report (the only thing this module ever returns)."""
     from mtah2027.vision import recovery as rec
 
@@ -182,7 +196,7 @@ def build_report(ball_xy, hom, blocks, video, params, pitch, fps, *, detectors=(
     rep: dict = {"sample": counts, "seed": int(seed), "crop_search_offset_m": float(offset_m),
                  "ball_size_px_median": ball_size_px(frames, ball_xy, hom, pitch, params.ball_diameter_m)
                  if len(frames) else None}
-    dets, skipped = make_detectors(detectors, params)
+    dets, skipped = make_detectors(detectors, params, sv_weights, sv_clip)
     rep["skipped_detectors"] = skipped
     rep["detectors"] = {}
     plan = build_plan(frames, ball_xy, hom, params, pitch, offset_m, seed) if len(frames) else None
@@ -193,6 +207,9 @@ def build_report(ball_xy, hom, blocks, video, params, pitch, fps, *, detectors=(
         ds = rec.run_detection(video, plan, det, hom, params, pitch=pitch, fps=fps)
         m = detection_metrics(ds, ball_xy, radii, fp_radius, len(plan))
         m["seconds"] = round(time.perf_counter() - t1, 2)
+        m["seconds_per_frame"] = round(m["seconds"] / max(1, len(plan)), 3)
+        if name.startswith("sv_ball"):
+            m["sv_clip_frames"] = int(sv_clip) if sv_clip > 1 else 1
         rep["detectors"][name] = m
     rep["seconds_total"] = round(time.perf_counter() - t0, 2)
     assert_aggregate(rep)
@@ -207,7 +224,11 @@ def main(argv=None) -> int:
     ap.add_argument("--config", default=None)
     ap.add_argument("--sample", type=int, default=1000, help="sampled frames (default 1000)")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--detectors", default="motion,yolo", help="comma list of motion|yolo|hough")
+    ap.add_argument("--detectors", default="motion,yolo", help="comma list of motion|yolo|hough|sv_ball|sv_ball640")
+    ap.add_argument("--sv-weights", default=os.environ.get("MTAH_SV_BALL_WEIGHTS"),
+                    help="local football-ball-detection.pt for sv_ball (Issue #63; torch/ultralytics/supervision)")
+    ap.add_argument("--sv-clip", type=int, default=0,
+                    help="sv_ball temporal filter over this many consecutive frames (odd, e.g. 5; 0 = off)")
     ap.add_argument("--radii", default="1,2,5", help="detection radii in metres")
     ap.add_argument("--fp-radius", type=float, default=5.0)
     ap.add_argument("--search-offset-m", type=float, default=0.0)
@@ -231,7 +252,8 @@ def main(argv=None) -> int:
     names = [s.strip() for s in args.detectors.split(",") if s.strip()]
     radii = tuple(float(s) for s in args.radii.split(",") if s.strip())
     rep = build_report(ball, hom, blocks, video, params, pitch, fps, detectors=names, n_sample=args.sample,
-                       seed=args.seed, radii=radii, fp_radius=args.fp_radius, offset_m=args.search_offset_m)
+                       seed=args.seed, radii=radii, fp_radius=args.fp_radius, offset_m=args.search_offset_m,
+                       sv_weights=args.sv_weights, sv_clip=args.sv_clip)
     text = json.dumps(rep, indent=1)
     print(text)
     if args.json:
