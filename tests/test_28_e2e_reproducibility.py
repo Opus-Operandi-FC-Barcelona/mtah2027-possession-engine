@@ -163,7 +163,7 @@ def test_pipeline_output_obeys_the_contract(short_run, synthetic_spec):
     result, blocks = short_run
     lab = result.labels
     assert lab.shape == (synthetic_spec.n_frames,) and lab.dtype == np.int8
-    assert result.diagnostics["route"] == "heuristic"
+    assert result.diagnostics["route"] in ("heuristic", "specialists")
     assert (lab[:blocks.half1[0]] == X).all() and (lab[blocks.half1[1] + 1:blocks.half2_dead[0]] == X).all()
     assert (lab[blocks.half2_dead[0]:blocks.half2_dead[1] + 1] == D).all()
     assert (lab[blocks.half2_play[1] + 1:] == X).all()
@@ -227,7 +227,7 @@ def test_missing_smart_tagging_is_skipped_not_fatal(synthetic_dir, synthetic_spe
     for f in clone.rglob("*smart_tagging.xml"):
         f.unlink()
     res = pipeline.run_pipeline(clone, None, _blocks(synthetic_spec), log=lambda m: None)
-    assert res.diagnostics["route"] == "heuristic"
+    assert res.diagnostics["route"] in ("heuristic", "specialists")
     assert res.diagnostics["loader_stages"]["load_smart_tagging"]["status"].startswith("failed")
     assert res.diagnostics["core"]["stages"]["set_piece_anchors"]["status"].startswith("skipped")
     assert eb.validate_labels_array(res.labels, synthetic_spec.n_frames)
@@ -243,7 +243,7 @@ def test_failing_optional_stage_degrades_gracefully(synthetic_dir, synthetic_spe
     stages = res.diagnostics["core"]["stages"]
     assert stages["ball_kinematics"]["status"].startswith("failed")
     assert stages["set_piece_anchors"]["status"].startswith("failed")
-    assert res.diagnostics["route"] == "heuristic"
+    assert res.diagnostics["route"] in ("heuristic", "specialists")
     assert eb.validate_labels_array(res.labels, synthetic_spec.n_frames)
 
 

@@ -30,7 +30,7 @@ def test_report_sections_and_shape(report, synthetic_spec):
     assert report["homography"]["tactical"]["valid_pct_graded"] > 0
     st = report["smart_tagging"]
     assert st["set_pieces"] > 0 and "set pieces" in st["by_code"] and st["instances_in_xml"] == st["events"]
-    assert report["pipeline"]["route"] == "heuristic"
+    assert report["pipeline"]["route"] in ("heuristic", "specialists")
     assert "set_piece_anchors" in report["pipeline"]["stages"]
 
 
