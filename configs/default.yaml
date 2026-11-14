@@ -84,6 +84,8 @@ setpiece_anchor:
   collective_window_s: 1.0      # windows before/after for the collective speed jump
   collective_jump_min_mps: 0.4  # minimum rise of the mean player speed
   collective_conf_max: 0.5      # confidence ceiling of the collective method
+  collective_dead_lag_s: 1.0     # Issue #40: the speed jump must follow dead evidence within this lag (0 = off); external
+                                # pseudo-window check: mean |t* error| 208->126 (IDSSE), 247->181 (PFF), 259->143 (Metrica) frames
   dead_threshold: 0.5           # dead_score above this counts as dead-ball evidence
   dead_gap_close_s: 1.0         # evidence gaps shorter than this are bridged
   dead_tail_s: 1.0              # evidence may end this long before t*
@@ -200,9 +202,18 @@ pipeline:
 
 # Issue #19 -- realistic degradation of clean external matches (ball occlusion blocks + automatic-tracking
 # artefacts).  Used only to build validation / self-supervision data, never on the competition match.
+# Issue #38 -- calibrated so that the 7 degraded IDSSE matches reproduce the label-free aggregates of the
+# competition ATD (``external_degrader_target`` below, measured with scripts/compare_input_stats.py).
+# The Issue #19 behaviour stays reproducible: section external_degrader_legacy below.
 external_degrader:
-  hide_frac: 0.41                  # share of alive (H/A) frames whose ball is hidden
-  dur_edges_s: [5.0, 20.0, 60.0, 120.0]   # block-duration classes: [5,20) [20,60) [60,120] seconds
+  hide_frac: 0.424                 # share of alive (H/A) frames whose ball is hidden (ball missing ~40.7 % of graded)
+  gap_model: lognormal             # lognormal (Issue #38) | classes (Issue #19: dur_edges_s / dur_probs)
+  gap_median_s: 12.5               # lognormal block duration: median ...
+  gap_sigma: 0.95                  # ... and log-scale spread, clipped to [gap_min_s, gap_max_s]
+  gap_min_s: 5.0
+  gap_max_s: 240.0
+  guard_s: 9.0                     # visible ball kept between two blocks (no merging into longer gaps)
+  dur_edges_s: [5.0, 20.0, 60.0, 120.0]   # gap_model classes: [5,20) [20,60) [60,120] seconds
   dur_probs: [0.33, 0.48, 0.19]    # empirical ATD gap mix of the spec
   density_radius_m: 5.0            # players within this distance of the ball define the crowding
   density_floor: 0.25              # added to the mean crowding so empty areas keep some probability
@@ -216,8 +227,33 @@ external_degrader:
   dup_rate_per_min: 0.3            # duplicate-track episodes per minute
   dup_duration_s: [5.0, 40.0]
   dup_offset_m: 0.4                # offset of the duplicate from the original track
-  drop_rate_per_min: 0.5           # dropped-player episodes per minute
+  drop_rate_per_min: 2.4           # single-player dropout episodes per minute
+  drop_duration_s: [5.0, 30.0]
+  group_drop_rate_per_min: 0.5     # Issue #38: episodes in which several players are lost together
+  group_drop_players: [3, 6]
+  group_drop_duration_s: [5.0, 20.0]
+
+# Issue #38 -- the Issue #19 degrader profile (merged key by key over external_degrader).  The adopted specialists
+# (models/specialists.json) were trained on IDSSE rows degraded with it (specialist_data.degrader_section); the
+# evaluation of the external matches uses the calibrated external_degrader.
+external_degrader_legacy:
+  hide_frac: 0.41
+  gap_model: classes
+  guard_s: 0.0
+  drop_rate_per_min: 0.5
   drop_duration_s: [2.0, 20.0]
+  group_drop_rate_per_min: 0.0
+
+# Issue #38 -- aggregates of the competition tactical ATD (BAR-ATH, graded 105.9 min).  Tracking-only, label-free
+# statistics printed by scripts/compare_input_stats.py --data-dir data (no labels, no per-frame data); they are the
+# calibration target of the degrader above, never a tuning objective for the possession model.
+external_degrader_target:
+  ball_missing_pct: 40.7
+  gaps_per_10min: 12.94
+  gap_s_p50_p90_p99: [11.5, 37.9, 113.7]
+  hidden_mass_pct_lt5_5to20_20to60_gt60: [0.3, 32.7, 48.0, 19.0]
+  players_mean: 20.49
+  frames_lt20_players_pct: 14.9
 
 # Issue #17 -- collective physics of each team (goalkeeper-free outfield block).
 collective_physics:
@@ -274,6 +310,9 @@ specialist_data:
   skillcorner_max_matches: 0    # 0 = all, else the first N by name
   pff_weight: 0.5
   pff_max_matches: 20           # 0 = all; the first N by name (deterministic)
+  # Issue #38: degrader of the IDSSE training rows.  external_degrader_legacy (Issue #19 profile) = the adopted
+  # models; external_degrader = the degrader calibrated to the competition ATD gap statistics (measured, not adopted).
+  degrader_section: external_degrader_legacy
 
 # Issue #20 -- Specialist A (ball visible): ultra-confident anchors.
 specialist_a:

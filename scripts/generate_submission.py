@@ -59,9 +59,11 @@ def parse_args(argv=None) -> argparse.Namespace:
                     help="external benchmark .npz directory (default: $MTAH_BENCH_DIR or the sibling "
                          "mtah2027-external-benchmarks/cache)")
     ap.add_argument("--model-path", default=None, help="specialists file (default: models/specialists.json)")
-    ap.add_argument("--model-variant", choices=("default", "idsse", "mixed", "pff"), default="default",
+    ap.add_argument("--model-variant", choices=("default", "idsse", "mixed", "pff", "calib"),
+                    default="default",
                     help="Issue #35: specialists trained on IDSSE (degraded), IDSSE + PFF (mixed) or "
-                         "PFF only (models/specialists_<variant>.json); implies --specialists load; pick it "
+                         "PFF only; Issue #38: calib = IDSSE degraded with the calibrated degrader + PFF "
+                         "(models/specialists_<variant>.json); implies --specialists load; pick it "
                          "with scripts/compare_input_stats.py")
     ap.add_argument("--kpi", action="store_true",
                     help="after writing the CSV run the KPI dashboard (Issue #27): aggregate numbers + "

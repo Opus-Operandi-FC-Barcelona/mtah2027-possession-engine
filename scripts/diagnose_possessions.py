@@ -128,11 +128,14 @@ def main(argv=None) -> int:
     ap.add_argument("--source-weight", nargs="*", default=[], metavar="SOURCE=W",
                     help="sample weight per source")
     ap.add_argument("--drop-dead", nargs="*", default=[], help="sources whose D rows are left out")
+    ap.add_argument("--matches", nargs="*", default=None, help="subset of match names (file stems)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
     files = sorted(Path(args.bench_dir).glob("*.npz"))
     files = [f for f in files if np.isfinite(np.load(f, allow_pickle=True)["ball_xy"]).all()]
+    if args.matches:
+        files = [f for f in files if f.stem in set(args.matches)]
     models = {}
     training = None
     if "specialists" in args.routes:

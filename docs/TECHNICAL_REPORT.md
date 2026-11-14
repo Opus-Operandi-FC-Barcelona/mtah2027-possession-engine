@@ -400,6 +400,124 @@ tracked players per frame are 21.8 (degraded IDSSE) and 22.0 (PFF).)  Rule of th
 ATD has long, few gaps close to the degraded-IDSSE profile, use `idsse`; if it has many short gaps like PFF, use the
 default `mixed`.
 
+**Item 6 (Issue #38): degrader calibrated to the real ATD gap statistics, model re-selection.**  Label-free aggregates of
+the competition tactical ATD (`scripts/compare_input_stats.py --data-dir data`; tracking only, no labels, no per-frame
+output) showed that the Issue #19 degrader had the right amount of hidden ball but the wrong shape.  The degrader was
+calibrated (random search + 8-seed pooled check on the 7 IDSSE matches; nothing from BAR-ATH beyond those aggregates,
+stored in `external_degrader_target`): log-normal block durations (`gap_model: lognormal`, median 12.5 s, sigma 0.95,
+5-240 s) separated by >= 9 s of visible ball (`guard_s`, otherwise adjacent blocks merge into long gaps), `hide_frac`
+0.424, more single-player dropouts (2.4 per min, 5-30 s) and a new group-dropout stream (0.5 per min, 3-6 players for
+5-20 s).  The Issue #19 profile is the section `external_degrader_legacy` (`gap_model: classes`) and reproduces the old
+random stream exactly.
+
+| (7 IDSSE, 8 seeds pooled) | ball missing | gaps / 10 min | gap p50 / p90 / p99 (s) | hidden time <5 / 5-20 / 20-60 / >60 s (%) | players / frame | frames < 20 players |
+|---|---|---|---|---|---|---|
+| target (BAR-ATH ATD) | 40.7 % | 12.94 | 11.5 / 37.9 / 113.7 | 0.3 / 32.7 / 48.0 / 19.0 | 20.49 | 14.9 % |
+| Issue #19 degrader (seed 0) | 40.2 % | 5.73 | 35.1 / 82.5 / 118.4 | 0.1 / 9.0 / 43.4 / 47.5 | 21.82 | 0.8 % |
+| calibrated | 40.6 % | 13.38 | 12.2 / 38.6 / 97.3 | 0.0 / 37.2 / 42.9 / 19.9 | 20.77 | 15.4 % |
+
+(The tail of the real gaps, p99, and the 5-20 s vs 20-60 s split are only approximated by a single log-normal.)
+
+Re-selection, same protocol as #35.  **B'** = 7 degraded IDSSE leave-one-match-out with the calibrated degrader, seeds
+0-2 (primary criterion now); **A** = PFF held-out, 4 folds (secondary guard: must not drop more than 0.01 vs mixed).
+"Train degrader" = degrader of the IDSSE training rows.
+
+| training set | train degrader | B' seed 0 / 1 / 2 | B' mean spellF1 / macroF1 | B' possessions (true 3061) | A spellF1 / macroF1 | A possessions (true 7069) |
+|---|---|---|---|---|---|---|
+| IDSSE + PFF 0.5 (**current default**) | legacy | 0.6008 / 0.6053 / 0.6069 | **0.6044** / 0.9016 | 2239 | 0.5231 / 0.8626 | 6395 |
+| IDSSE only | legacy | 0.6091 / 0.6100 / 0.6086 | 0.6092 / 0.9026 (+0.0048) | 2425 | 0.4659 / 0.8405 | 7897 |
+| PFF only | legacy | 0.5100 / 0.4938 / 0.4921 | 0.4986 / 0.8261 (-0.106) | 1858 | 0.5534 / 0.8707 | 5319 |
+| IDSSE only | calibrated | 0.6107 / 0.6133 / 0.6136 | 0.6125 / 0.9056 (+0.0081) | 2329 | 0.4790 / 0.8412 (-0.044) | 7377 |
+| IDSSE + PFF 0.5 | calibrated | 0.6084 / 0.6071 / 0.6099 | 0.6085 / 0.9035 (+0.0041) | 2219 | 0.5278 / 0.8639 (+0.005) | 6196 |
+
+For reference, the same models scored with the old degrader (#35): mixed B 0.6321, IDSSE-only 0.6415; the calibrated
+degrader is harder (-0.03 ... -0.04) because its gaps are less forgiving (shorter visible stretches, many player dropouts).
+Decision rule: adopt a variant if it beats the default by >= +0.01 on the B' mean with no seed below -0.003 and A not
+worse than -0.01.  The best B' gain is +0.0081 (IDSSE only, calibrated) and it also loses 0.044 on A; the calibrated
+mixed model gains +0.004 on B' (every seed better) and +0.005 on A.  **No variant passes: the default
+(`models/specialists.json` = IDSSE + PFF 0.5 trained with the legacy degrader) is kept**; `specialists.json` is unchanged.
+The calibrated mixed model is stored as `models/specialists_calib.json` (`generate_submission.py --model-variant calib`;
+training: `scripts/train_specialists.py --degrader-section external_degrader`).  `specialist_data.degrader_section`
+(default `external_degrader_legacy`) keeps the run-time training equal to the committed default.  Tools:
+`scripts/eval_pff_heldout.py` (validation A), `--degrader-section` of `eval_external.py` / `train_specialists.py`.
+Decoder overrides under the calibrated degrader (`diagnose_possessions.py`, cached LOMO models, seeds 0-2, 21 runs):
+with `route_overrides.specialists` 0.5997 / 0.8999, without 0.5954 / 0.8999 (+0.0043 from the tuned overrides), i.e. the
+Issue #31 parameters are not broken by the calibration (absolute values differ slightly from the table above because
+`diagnose_possessions.py` uses another match/seed offset).
+
+### Real-data ingestion check (Issue #37, aggregates only)
+
+`scripts/real_data_sanity.py` on the BAR-ATH bundle (nothing per-frame is printed).  Ingestion is correct: 199,319
+frames parsed (all present), 46 slots, channels `x, y, s` for players and ball (`s` = `speed_kph`; it is not
+recognised as the canonical `speed` channel, which is harmless because speeds are re-derived from positions), the
+tactical homography is valid on 100 % of the graded frames (99.85 % with error < 5), the broadcast one on 55 %.
+The ball is missing on 41.1 % of the graded frames (40.7 % / 41.6 % per half); on average 20.5 players per frame are
+on the pitch, 14.2 % of the frames have fewer than 20 and 6.3 % fewer than 16 (episodes: median 2.4 s, 84 % of those
+frames in episodes of > 5 s).  Smart Tagging: 638 instances parsed of 638 in the XML, 59 set pieces (26 throw-ins
+with Team = N/A, 12 corners, 10 goal kicks, 5 free kicks, 2 + 4 kick-offs), 4 goals; all 14 codes and the six
+label groups are recognised.  All stages ran (clean, kinematics, dead-ball signals, ball kinematics, set-piece
+anchors, throw-in resolver, collective physics, ball memory, specialists, transitions, Viterbi, optimiser); the
+aerial filter, broadcast sync and vision recovery are off by configuration.
+
+`D` over-prediction diagnostic (specialists / heuristic emissions): the predicted `D` share is 24 % / 29 % with the
+ball visible and 92 % / 83 % with it hidden, 94 % / 85 % when fewer than 20 players are tracked.  Checked for a bug:
+the tracked players in the predicted-`D` frames are slow (median mean speed 0.8-1.2 m/s vs 2.0-2.2 m/s in the
+frames labelled alive), so the `D` comes from the speed physics and not from NaN handling.  On external matches
+with real occlusions the same pattern exists (PFF: 61 % of hidden-ball frames are truly `D`, 8 % with the ball
+visible) and the engine reproduces the true `D` share per cell within a few points (degraded IDSSE and PFF, with
+the specialists: 46.96 vs 46.62 % overall).  The heavy player dropouts of BAR-ATH (up to 14 % of the frames) have no
+external counterpart (<= 1.2 %), so that cell cannot be validated; no bug was found and nothing was tuned.
+
+### Smart Tagging on the real match (Issue #40, aggregates only)
+
+*Parsing.*  638 / 638 instances, codes and label groups as documented (`Team`: 314 Barcelona, 288 Atletic Club, 36 N/A;
+no phase code is unknown).  *Semantics bug fixed.*  `Team` is "the team performing the event", which for
+`Defending in Attacking / Middle / Defensive Third` (118 instances) and `Defensive Transition` (24) is the defender, so
+the possession of those phases belongs to the opponent.  The old loader credited the tagged team: every attacking phase
+has a paired defending phase of the other team over the same frames (the alive-frame counts of `Progression` and
+`Defending in Middle Third` are identical on BAR-ATH), so the two cancelled in `phase_prior_home`.  Evidence: the
+official definitions plus the pairing structure; the predicted possessor agrees with the *possession side* in 74-97 %
+of the alive frames of the defending codes (3-26 % with the raw tag).  Fix: `DEFENDING_CODES` in
+`io/smart_tagging_loader.py`; the raw `TagEvent.team` is untouched.  Effect on the labels is small by design (the prior
+weighs `w_phase = 0.3`): 0.4 % (specialists) / 1.1 % (heuristic) of the graded frames change, 245 -> 238 possessions.
+The weight itself cannot be tuned (no external match has Smart Tagging).
+
+*Anchors.*  59 set pieces, 57 anchored (96.6 %; before the gate below 58): 9 + 3 corners ball/collective, 17 + 9
+throw-ins, `t*` inside the tag window for 93 %, 12 % of the graded frames forced to `D`.  All set-piece windows are
+35 s long (5 s for the kick-offs).  The two `Kick Off (Start)` anchors fall 10 and 38 frames before the published
+kick-off (the second with the collective cue).  Throw-ins with Team = N/A: 20 / 26 resolved (14 taker + controller,
+3 + 3 one cue, 6 left unresolved on purpose).  *Anchor accuracy on external matches* (`scripts/eval_anchor_accuracy.py`:
+pseudo 35 s windows around the true restarts of IDSSE / PFF / Metrica, restart at a random offset 3-33 s): ball cue
+median error -2 frames, 85 % within 3 frames; collective cue (ball hidden) was poor (median +53 frames, 10 % within 12
+frames).  Gating the collective jump on dead-ball evidence in the previous second (`collective_dead_lag_s = 1.0`)
+reduces the mean |error| from 208 to 126 (IDSSE), 247 to 181 (PFF) and 259 to 143 (Metrica) frames at the cost of more
+unresolved anchors (nothing is invented); adopted, since it is better on all three sources.  It cannot be scored in
+spellF1 (the external matches carry no Smart Tagging).
+
+### Broadcast synchronisation on the real match (Issue #39, aggregates only)
+
+`scripts/real_broadcast_check.py` on `data/broadcast` (deterministic: two runs give the same injected ball).  117
+continuous blocks (median 26 s), 74 synchronised (63 %; 39 rejected by the position test, 2 by fingerprint, 2 by ball);
+fingerprint correlation median 0.78 (accepted blocks 0.62-0.93), median nearest-same-team residual 0.29 m, median
+tactical-vs-TV ball disagreement 0.78 m (p90 1.5 m); the accepted blocks share essentially one offset (median 160.6 s
+broadcast-to-tactical, 10-90 % range 160-1077 s) and are in broadcast order 100 % of the time.  They cover 58.8 % of
+the graded frames, but the TV ball only fills **7.4 %** of the hidden tactical-ball frames (4,720 of 64,079; 88 runs, median
+0.7 s): ball missing 41.1 % -> 38.1 %.  Physical consistency: no injected point off the pitch, in-run speed p90 9 m/s,
+0.3 % of steps > 35 m/s; the jump between the last tactical ball and the first injected one has median 1.5 m but p90
+13 m and p99 53 m (about 39 % of the borders imply > 35 m/s, mostly 1-frame gaps with ~1.5 m disagreement).  Switching
+the injection on changes 2.0 % of the graded labels (243 -> 257 possessions, `D` 50.1 -> 49.7 %).
+
+Value on external matches (`simulate_broadcast_value.py`, simulated TV view, 3 seeds x the 7 IDSSE + 3 Metrica matches,
+spellF1 without -> with injection).  Two *non-leave-one-out* setups were also run and are **not** the production route:
+`simf` (PFF-only specialists `models/specialists_pff.json`, which have never seen IDSSE / Metrica and are weak there,
+0.51): +0.045 to +0.053, 30/30 runs up; `simm` (the production file `models/specialists.json`, mixed IDSSE + PFF, loaded):
++0.001 / +0.004 (seeds 0 / 1), but 7 of the 10 target matches are in its training set, so its baseline (0.68) is
+inflated.  The setup that corresponds to production (mixed specialists applied to a match they were *not* trained
+on) is leave-one-match-out: specialists trained on all other matches, the target as unlabelled input, 30 runs: **+0.0050**
+mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6198 -> 0.6283 on the first four IDSSE
+matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
+worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
+%), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

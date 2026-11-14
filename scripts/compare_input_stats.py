@@ -82,8 +82,9 @@ def pool(items: list[dict]) -> dict:
                 100.0 * sum(i["players_lt20"] for i in items) / max(frames, 1), 1)}
 
 
-def bench_groups(bench_dir: Path, seed: int = 0, max_matches: int = 0) -> dict[str, list[dict]]:
-    from mtah2027.models.external_degrader import degrade_match
+def bench_groups(bench_dir: Path, seed: int = 0, max_matches: int = 0,
+                 config=None) -> dict[str, list[dict]]:
+    from mtah2027.models.external_degrader import DegraderParams, degrade_match
     from mtah2027.validation import eval_bridge as eb
 
     out: dict[str, list[dict]] = {"idsse": [], "idsse_degraded": [], "pff": [], "skillcorner": []}
@@ -101,7 +102,8 @@ def bench_groups(bench_dir: Path, seed: int = 0, max_matches: int = 0) -> dict[s
             ball = np.where(z["ball_visible"][:, None], ball, np.float32(np.nan)).astype(np.float32)
         out[kind].append(input_stats(ball, players, blocks, fps, graded_mask=graded))
         if kind == "idsse":
-            dm = degrade_match(players, z["team_of_slot"].astype(np.int8), ball, gt, fps=fps, seed=seed)
+            dm = degrade_match(players, z["team_of_slot"].astype(np.int8), ball, gt, fps=fps, seed=seed,
+                               params=DegraderParams.from_config(config))
             out["idsse_degraded"].append(
                 input_stats(dm.ball_xy, dm.players_xy, blocks, fps, graded_mask=graded))
     return {k: v for k, v in out.items() if v}
@@ -118,6 +120,30 @@ def print_table(groups: dict[str, dict]) -> None:
               f"frames with <20 players {s['frames_lt20_players_pct']} %")
 
 
+def target_from_config(path=None) -> dict | None:
+    """Issue #38: the label-free aggregates of the competition ATD stored in ``external_degrader_target``."""
+    from mtah2027.config import load_section
+
+    t = load_section("external_degrader_target", path)
+    return dict(t) if t else None
+
+
+def print_target(target: dict, stats: dict) -> None:
+    """Side by side: configured target vs the measured degraded group."""
+    mass = stats["hidden_mass_pct_lt5_5to20_20to60_gt60"]
+    rows = [("ball missing %", target["ball_missing_pct"], stats["ball_missing_pct"]),
+            ("gaps / 10 min", target["gaps_per_10min"], stats["gaps_per_10min"]),
+            ("players / frame", target["players_mean"], stats["players_mean"]),
+            ("frames < 20 players %", target["frames_lt20_players_pct"], stats["frames_lt20_players_pct"])]
+    rows += [(f"gap {n} (s)", t, m) for n, t, m in zip(("p50", "p90", "p99"), target["gap_s_p50_p90_p99"],
+                                                     stats["gap_s_p50_p90_p99"])]
+    rows += [(f"mass {n} %", t, m) for n, t, m in zip(("<5 s", "5-20 s", "20-60 s", ">60 s"),
+                                                      target["hidden_mass_pct_lt5_5to20_20to60_gt60"], mass)]
+    print("== calibration target (competition ATD, label-free) vs idsse_degraded")
+    for name, t, m in rows:
+        print(f"   {name:<24} target {t:>7}   degraded {m:>7}")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data-dir", default=None, help="competition ATD directory (graded blocks of config)")
@@ -126,6 +152,7 @@ def main(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=0, help="degrader seed of idsse_degraded")
     ap.add_argument("--max-matches", type=int, default=0, help="per external group (0 = all)")
     ap.add_argument("--min-gap-s", type=float, default=0.2)
+    ap.add_argument("--config", default=None, help="YAML (degrader parameters and Issue #38 target)")
     args = ap.parse_args(argv)
     groups: dict[str, dict] = {}
     if args.data_dir:
@@ -138,12 +165,16 @@ def main(argv=None) -> int:
         groups["competition_atd"] = pool([input_stats(td.ball_xy, td.players_xy, blocks, td.fps,
                                                       args.min_gap_s)])
     if Path(args.bench_dir).is_dir():
-        for name, items in bench_groups(Path(args.bench_dir), args.seed, args.max_matches).items():
+        groups_ = bench_groups(Path(args.bench_dir), args.seed, args.max_matches, args.config)
+        for name, items in groups_.items():
             groups[name] = pool(items)
     if not groups:
         print("nothing to describe: pass --data-dir and / or an existing --bench-dir")
         return 1
     print_table(groups)
+    target = target_from_config(args.config)
+    if target and "idsse_degraded" in groups:
+        print_target(target, groups["idsse_degraded"])
     return 0
 
 

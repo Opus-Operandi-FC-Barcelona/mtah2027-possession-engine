@@ -11,6 +11,9 @@ from mtah2027.models import external_degrader as ed
 from mtah2027.models.external_degrader import DegraderParams, degrade_match
 
 FPS = 25.0
+# Issue #19 behaviour (classes of 5-20 / 20-60 / 60-120 s, no guard); the default is now the Issue #38 one
+LEGACY = DegraderParams(hide_frac=0.41, gap_model="classes", guard_s=0.0, drop_rate_per_min=0.5,
+                        drop_duration_s=(2.0, 20.0), group_drop_rate_per_min=0.0)
 
 
 def _match(n=60000, s=12, crowd_first_half=False, seed=0):
@@ -51,7 +54,7 @@ def test_yaml_section_matches_defaults_and_rejects_typos():
 # ---------------------------------------------------------------------------------- hidden ball
 def test_hidden_share_of_alive_frames_is_met_exactly(match):
     players, team, ball, gt = match
-    out = degrade_match(players, team, ball, gt, fps=FPS, seed=3)
+    out = degrade_match(players, team, ball, gt, fps=FPS, seed=3, params=LEGACY)
     alive = np.isin(gt, ["H", "A"])
     assert out.report.hidden_alive_share == pytest.approx(0.41, abs=2e-3)
     assert out.hidden[alive].mean() == pytest.approx(0.41, abs=2e-3)
@@ -62,7 +65,8 @@ def test_hidden_share_of_alive_frames_is_met_exactly(match):
 
 def test_blocks_are_contiguous_inside_one_period_and_follow_duration_classes():
     players, team, ball, gt = _match(n=400000, s=8, seed=1)
-    out = degrade_match(players, team, ball, gt, fps=FPS, seed=0, hide_frac=0.3, artefacts=False)
+    out = degrade_match(players, team, ball, gt, fps=FPS, seed=0, hide_frac=0.3, artefacts=False,
+                        params=LEGACY)
     edges = np.diff(np.concatenate([[0], out.hidden.astype(np.int8), [0]]))
     starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
     graded = gt != "X"
@@ -78,7 +82,7 @@ def test_blocks_are_contiguous_inside_one_period_and_follow_duration_classes():
 
 def test_duration_sampler_follows_the_configured_mix():
     rng = np.random.default_rng(0)
-    p = DegraderParams()
+    p = LEGACY
     d = np.array([ed.sample_block_frames(rng, p, FPS) for _ in range(6000)]) / FPS
     assert (d >= 5.0).all() and (d <= 120.0 + 1e-6).all()
     assert (d < 20).mean() == pytest.approx(0.33, abs=0.03)
@@ -171,7 +175,8 @@ def test_duplicates_and_drops_use_spare_slots_and_blank_tracks():
     ball = np.full((n, 2), 50.0, dtype=np.float32)
     gt = np.full(n, "A", dtype="<U1")
     p = DegraderParams(hide_frac=0.0, noise_player_m=0.0, noise_ball_m=0.0, cut_rate_per_min=0.0,
-                       dup_rate_per_min=1.0, drop_rate_per_min=0.0, dup_offset_m=0.4)
+                       dup_rate_per_min=1.0, drop_rate_per_min=0.0, group_drop_rate_per_min=0.0,
+                       dup_offset_m=0.4)
     out = degrade_match(players, team, ball, gt, fps=FPS, seed=4, params=p)
     assert out.report.n_duplicates > 3 and out.report.n_drops == 0
     for spare in (3, 7):
@@ -180,7 +185,7 @@ def test_duplicates_and_drops_use_spare_slots_and_blank_tracks():
         src = out.players_xy[dup, spare, 0][:, None] - out.players_xy[dup][:, :s, 0]
         assert (np.nanmin(np.abs(src[:, [i for i in range(s) if i != spare]]), axis=1) <= 0.41).all()
     p = DegraderParams(hide_frac=0.0, noise_player_m=0.0, noise_ball_m=0.0, cut_rate_per_min=0.0,
-                       dup_rate_per_min=0.0, drop_rate_per_min=1.0)
+                       dup_rate_per_min=0.0, drop_rate_per_min=1.0, group_drop_rate_per_min=0.0)
     out = degrade_match(players, team, ball, gt, fps=FPS, seed=4, params=p)
     assert out.report.n_drops > 3
     assert np.isnan(out.players_xy[:, [0, 1, 2, 4, 5, 6], 0]).any()     # dropped tracks
@@ -205,6 +210,6 @@ def test_full_size_degradation_is_fast():
     gt[190198:] = "X"
     team = np.array([0] * 23 + [1] * 23)
     t0 = time.perf_counter()
-    out = degrade_match(players, team, ball, gt, fps=FPS, seed=0)
+    out = degrade_match(players, team, ball, gt, fps=FPS, seed=0, params=LEGACY)
     assert time.perf_counter() - t0 < 5.0
     assert out.report.hidden_alive_share == pytest.approx(0.41, abs=2e-3)

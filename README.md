@@ -153,6 +153,11 @@ Issue #35: extra training matches.  Validation A = held-out PFF matches with rea
 the 7 degraded IDSSE leave-one-match-out: IDSSE + 20 PFF matches at weight 0.5 is **adopted** (A 0.4659 -> 0.5231, B
 0.6415 -> 0.6321); SkillCorner (-0.03 on B) is off.  The IDSSE-only and PFF-only models stay selectable
 (`generate_submission.py --model-variant idsse|mixed|pff`, choose with `scripts/compare_input_stats.py`).
+Issue #38: the degrader was calibrated to the label-free gap statistics of the competition ATD (`external_degrader_target`
+in the configuration; `compare_input_stats.py` prints target vs degraded; the Issue #19 profile stays in
+`external_degrader_legacy`).  Re-selection under it (validation B' = 7 degraded IDSSE LOMO, seeds 0-2; A = PFF held-out):
+no variant gains the required +0.01 on B', so the default (IDSSE + PFF 0.5, trained with the legacy degrader) is kept;
+`--model-variant calib` (calibrated-degrader training) is selectable.
 
 ### Possession count and the KPI 7 evidence
 
@@ -253,6 +258,44 @@ python scripts/generate_submission.py --data-dir data --out outputs/OpusOperandi
 # 2. value estimate on other matches with a simulated camera (never BAR-ATH):
 python scripts/simulate_broadcast_value.py --seed 0 --specialists lomo
 ```
+
+## Real-data sanity report (aggregates only)
+
+```bash
+python scripts/real_data_sanity.py --data-dir data            # JSON of counts / shares, never per-frame rows
+python scripts/real_data_sanity.py --synthetic                # same report on the synthetic match
+python scripts/external_d_diagnostic.py --bench-dir ../mtah2027-external-benchmarks/cache --groups pff idsse --degrade
+```
+
+`real_data_sanity.py` (Issue #37) reports the declared ATD channels, frames parsed vs expected, ball-missing share
+per graded half, on-pitch players per team, homography validity (tactical / broadcast), Smart Tagging counts by
+code / team / set-piece type, which pipeline stages ran or were skipped, and the share of predicted `D` cut by ball
+visibility, tracked players (< 20) and Smart Tagging set-piece windows.  `external_d_diagnostic.py` produces the
+same cuts on external matches next to their true `D`, to tell a bug from a property of the data.
+
+## Smart Tagging on the real match (Issue #40)
+
+```bash
+python scripts/smart_tagging_check.py --data-dir data       # anchors, throw-ins, phase-prior consistency (aggregates)
+python scripts/eval_anchor_accuracy.py --bench-dir ../mtah2027-external-benchmarks/cache --groups idsse pff metrica --collective-only-incomplete
+```
+
+`Team` of a phase is "the team performing the event" (`docs/official/OVERVIEW.md`), so the four defensive codes
+(`Defending in Attacking / Middle / Defensive Third`, `Defensive Transition`) name the *defender*: the loader credits
+the opponent in `phase_prior_home` (`smart_tagging_loader.DEFENDING_CODES`, `defending_codes=()` restores the raw
+tag).  On BAR-ATH every attacking phase has a paired defending phase of the opponent over exactly the same frames, so
+without the flip they cancelled each other; with it 67 % of the graded frames carry a prior and the predicted
+possessor agrees with the possession side in 65-97 % of the alive frames per code (and 3-26 % with the raw defending
+tag).  The collective restart cue (ball hidden around the set piece) is now gated on recent dead-ball evidence
+(`setpiece_anchor.collective_dead_lag_s`, external pseudo-window check, three sources: mean |t* error| 208 -> 126,
+247 -> 181, 259 -> 143 frames).
+
+## Broadcast sync on the real bundle (Issue #39)
+
+`python scripts/real_broadcast_check.py --data-dir data [--effect]` prints aggregates only (blocks synchronised,
+correlation / residual / offset distributions, share of the hidden tactical frames filled, physical consistency of
+the injected ball, label change with injection).  Decision (adoption rule: +0.01 spellF1 on the external simulation,
+no seed worse than -0.003): **stays off** (`broadcast_sync.enabled: false`), see `docs/TECHNICAL_REPORT.md`.
 
 ## Repository layout
 

@@ -125,8 +125,13 @@ def main(argv=None) -> int:
     ap.add_argument("--matches", nargs="*", default=None)
     ap.add_argument("--window", type=float, default=35.0, help="visible pitch window along x (m)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seeds", type=int, nargs="*", default=None,
+                    help="several seeds in one run (the lomo specialists of a held-out match are trained once)")
     ap.add_argument("--config", default=None)
-    ap.add_argument("--specialists", choices=("off", "lomo"), default="off")
+    ap.add_argument("--specialists", choices=("off", "lomo", "file"), default="off",
+                    help="lomo: train leave-one-match-out (slow); file: load --model-path (use a file whose "
+                         "training data excludes the simulated matches, e.g. models/specialists_pff.json)")
+    ap.add_argument("--model-path", default=None)
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
@@ -138,6 +143,11 @@ def main(argv=None) -> int:
         return 1
     params = bs.BroadcastSyncParams.from_config(args.config)
     training = fusion = None
+    file_spec = None
+    if args.specialists == "file":
+        from mtah2027.models import specialist_fusion as sf
+
+        file_spec = sf.load_specialists(args.model_path or sf.DEFAULT_MODEL_PATH, args.config)
     if args.specialists == "lomo":
         from mtah2027.models import specialist_fusion as sf
         from mtah2027.models.specialist_data import build_training_set
@@ -145,28 +155,33 @@ def main(argv=None) -> int:
         training = build_training_set(args.bench_dir, config_path=args.config, log=lambda m: None)
         fusion = sf.FusionParams.from_config(args.config)
     rows = []
-    for i, f in enumerate(files):
+    seeds = list(args.seeds) if args.seeds else [args.seed]
+    spec_cache: dict = {}
+    jobs = [(seed, i, f) for seed in seeds for i, f in enumerate(files)]
+    for seed, i, f in jobs:
         z = np.load(f, allow_pickle=True)
         players, team = z["players_xy"].astype(np.float32), z["team_of_slot"].astype(np.int8)
         truth_ball = z["ball_xy"].astype(np.float32)
         fps, pitch = float(z["fps"]), tuple(float(v) for v in z["pitch"])
         periods = [(int(a), int(b)) for a, b in z["period_bounds"]]
         gt = eb.to_codes(z["gt"])
-        dm = degrade_match(players, team, truth_ball, gt, fps=fps, seed=args.seed + i)
+        dm = degrade_match(players, team, truth_ball, gt, fps=fps, seed=seed + i)
         fb = fake_broadcast(players, team, truth_ball, periods, fps=fps, window_m=args.window,
-                            seed=1000 * args.seed + i)
+                            seed=1000 * seed + i)
         t0 = time.perf_counter()
         res = bs.sync_broadcast(dm.players_xy, team, dm.ball_xy, fb["players_xy"], fb["team_of_slot"],
                                 fb["ball_xy"], fb["usable"], fps=fps, pitch=pitch, graded=periods, params=params)
         sec = time.perf_counter() - t0
         acc = offset_accuracy(res.blocks, fb["offset"])
         err = injected_error(res.ball_xy, res.ball_source, truth_ball)
-        spec = None
+        spec = file_spec
         if training is not None:
-            spec = dataclasses.replace(sf.train_specialists(args.bench_dir, config_path=args.config,
-                                                            training=training, exclude_match=f.stem),
-                                       fusion=fusion)
-        row = {"match": f.stem, **acc, "fill_rate": res.stats["fill_rate"], "inject_err_m": err,
+            if f.stem not in spec_cache:
+                spec_cache[f.stem] = dataclasses.replace(sf.train_specialists(
+                    args.bench_dir, config_path=args.config, training=training, exclude_match=f.stem),
+                    fusion=fusion)
+            spec = spec_cache[f.stem]
+        row = {"match": f.stem, "seed": seed, **acc, "fill_rate": res.stats["fill_rate"], "inject_err_m": err,
                "seconds": round(sec, 1)}
         for tag, ball in (("without", dm.ball_xy), ("with", res.ball_xy)):
             core = run_core(dm.players_xy, team, ball, play_blocks=periods, fps=fps, pitch=pitch,
@@ -177,7 +192,7 @@ def main(argv=None) -> int:
                               config_path=args.config, log=lambda m: None, specialists=spec)
                 row[f"spec_{tag}"] = ee.score(gt, lc.codes)["spell_f1"]
         rows.append(row)
-        print(f"{f.stem:<16} blocks {acc['accepted']:3d}/{acc['blocks']:3d} within2f {acc['within_tol']:.2f} "
+        print(f"{f.stem:<16} s{seed} blocks {acc['accepted']:3d}/{acc['blocks']:3d} within2f {acc['within_tol']:.2f} "
               f"fill {100 * row['fill_rate']:5.1f}% err {err:.2f} m  engine {row['engine_without']:.4f} -> "
               f"{row['engine_with']:.4f}"
               + (f"  spec {row['spec_without']:.4f} -> {row['spec_with']:.4f}" if spec is not None else "")
@@ -186,7 +201,11 @@ def main(argv=None) -> int:
     def mean(key):
         return float(np.nanmean([r[key] for r in rows]))
 
-    print(f"\nwindow {args.window:.0f} m, seed {args.seed}, {len(rows)} matches")
+    def gain_stats(a, b):
+        d = np.array([r[b] - r[a] for r in rows])
+        return f"matches up {int((d > 0).sum())}, down {int((d < 0).sum())}, worst {d.min():+.4f}, best {d.max():+.4f}"
+
+    print(f"\nwindow {args.window:.0f} m, seeds {seeds}, {len(rows)} runs")
     print(f"offset recovery: accepted blocks {100 * mean('accepted_frac'):.1f}%, within 2 frames "
           f"{100 * mean('within_tol'):.1f}%, median |err| {mean('median_abs_err'):.2f} frames")
     print(f"hidden graded frames filled {100 * mean('fill_rate'):.1f}%, injected ball error "
@@ -197,7 +216,11 @@ def main(argv=None) -> int:
         if a in rows[0]:
             wa, wb = mean(a), mean(b)
             summary[name] = {"without": wa, "with": wb}
-            print(f"{name:<12}{wa:9.4f}{wb:9.4f}{wb - wa:+9.4f}")
+            print(f"{name:<12}{wa:9.4f}{wb:9.4f}{wb - wa:+9.4f}   ({gain_stats(a, b)})")
+            if len(seeds) > 1:
+                per = [np.mean([r_[b] - r_[a] for r_ in rows if r_["seed"] == sd]) for sd in seeds]
+                print(f"{'':<12}per-seed mean delta: " + "  ".join(f"s{sd} {d:+.4f}" for sd, d in zip(seeds, per)))
+                summary[name]["per_seed_delta"] = [float(d) for d in per]
     if args.json:
         Path(args.json).write_text(json.dumps({"summary": summary, "rows": rows}, indent=2), encoding="utf-8")
     return 0
