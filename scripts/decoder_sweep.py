@@ -102,7 +102,8 @@ def model_path(root: Path, cell: dict, variant: str) -> Path:
         return root / f"lomo_{variant}" / f"{cell['match']}.json"
     if cell["world"] == "pff":
         return root / f"pff_{variant}" / f"fold{cell['fold']}.json"
-    return REPO_ROOT / "models" / f"specialists_{variant}.json"
+    own = root / f"unseen_{variant}.json"      # Issue #55: candidate all-data model (else the committed one)
+    return own if own.is_file() else REPO_ROOT / "models" / f"specialists_{variant}.json"
 
 
 def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_raw: dict):
@@ -217,7 +218,7 @@ def cmd_run(args) -> int:
     names = [c["name"] for c in cands]
     if len(set(names)) != len(names):
         raise SystemExit("candidate names must be unique")
-    cells = cells_for(args.world, Path(args.bench_dir), args.seeds)
+    cells = cells_for(args.world, Path(args.bench_dir), args.seeds, n_pff=args.n_pff)
     k, _, m = args.shard.partition("/")
     cells = [c for i, c in enumerate(cells) if i % int(m) == int(k)]
     out_dir = Path(args.out_dir)
@@ -333,6 +334,7 @@ def main(argv=None) -> int:
     r.add_argument("--bench-dir", default=str(DEFAULT_BENCH))
     r.add_argument("--config", default=None)
     r.add_argument("--shard", default="0/1")
+    r.add_argument("--n-pff", type=int, default=20, help="PFF matches of the 4-fold world (Issue #55: 56)")
     r.add_argument("--verify", action="store_true")
     a = sub.add_parser("agg")
     a.add_argument("--out-dirs", nargs="+", required=True)
