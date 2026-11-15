@@ -1744,7 +1744,7 @@ turnover head (none / H->A / A->H within +-5 frames, the targets of Specialist C
 3 minutes on an RTX 3060) on degraded external matches: IDSSE with the calibrated degrader at `dead_affinity` 33 (2 training seeds) and 1 (1 seed),
 home/away swapped copies, and PFF matches 20..55 (never in the A cells or the 8 unseen), sampled with the #71 world mixture (0.32 / 0.20 / 0.48).
 Leave-one-match-out for the 7 IDSSE cells; one all-data model for A.  Training seeds (101..) are never evaluation seeds.  The weights are exported
-to `.npz` and run in NumPy (parity with torch 1e-6); the run-time pipeline needs no torch.  Two modes, both off (`sequence_model.enabled: false`):
+to `.npz` and run in NumPy (parity with torch 1e-6); the run-time pipeline needs no torch.  Two modes (the adopted default is `emissions`, see *Adoption* below):
 `emissions` (hidden-ball frames only: `log p = (1 - w) log p_prod + w * 0.5 * log p_seq`) and `turnover` (the turnover head replaces the touch rule as
 the H<->A opening through the #57 gate: `hard` / `max` / `blend`).
 
@@ -1786,9 +1786,7 @@ The variant selected on seed 0 of B'(33) is E100 (+0.0118).
 
 *Verdict.*  E100 meets the preregistered rule on both training seeds (B'(33) +0.0106 / +0.0121 with every eval seed above +0.0087, B'(1) up, A up), by a
 small margin on B'(33) (the rule is +0.010) and with the integration weight chosen on the same cells as the verdict (a fixed 6-variant grid, selection on
-seed 0).  It stays OFF in this branch because enabling it changes the default pipeline (synthetic SHA256) and needs a trained model file for BAR-ATH
-(an all-data network, about 1 MB `.npz`) committed to `models/`; that step, and the choice of the production training seed(s), is left to the owner.
-Synthetic SHA256 of the default route is unchanged (`2a31a913...`).
+seed 0).  The evaluation branch shipped it OFF; the owner then adopted it with a two-seed ensemble (see *Adoption* below).
 
 Reproduce (GPU venv for training, the main venv for the rest): `python scripts/sequence_data.py build --out-dir D`, `python scripts/train_sequence.py --data-dir D
 --out M/lomo/<match>.npz --exclude <match> --steps 6000` (and `--out M/full.npz` without `--exclude`), `python scripts/sequence_eval.py run --world b33|b1|pff
