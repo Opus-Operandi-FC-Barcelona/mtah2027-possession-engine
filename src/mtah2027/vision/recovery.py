@@ -112,7 +112,12 @@ def read_crops(video_path: str | os.PathLike, plan: CropPlan, params: VisionPara
             if cur is None:
                 continue
             idx_batch.append(i)
-            if ctx:
+            if ctx > 1:                                # clip of 2*ctx+1 frames (#63)
+                lead = ctx - (f - first)
+                clip = [cur] * lead + [im if im is not None else cur for im in imgs]
+                clip += [cur] * (2 * ctx + 1 - len(clip))
+                crops.append(np.stack(clip))
+            elif ctx:
                 prev = imgs[0] if first < f and imgs[0] is not None else cur
                 nxt = imgs[-1] if imgs[-1] is not None and len(imgs) > f - first + 1 else cur
                 crops.append(np.stack([prev, cur, nxt]))
@@ -459,6 +464,9 @@ def recover_ball(ball_xy: np.ndarray, players_xy: np.ndarray, homographies: Homo
         st["status"] = "no cache"
         return VisionResult(ball_before, src, st)
     frames, xy, _ = select_detections(ds, ball_before, fps=fps, pitch=pitch, params=p)
+    if p.tracklet_gate:                                     # Issue #66 (off by default)
+        from mtah2027.vision.tracklet_gate import gate_points
+        frames, xy = gate_points(frames, xy, fps=fps, params=p)
     ball, source = inject_points(ball_before, frames, xy, fps=fps, params=p)
     st = vision_stats(ball_before, source, plan, ds, play_blocks, len(frames), time.perf_counter() - t0,
                       max_frames)

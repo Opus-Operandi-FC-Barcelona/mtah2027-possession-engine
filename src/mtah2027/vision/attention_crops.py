@@ -77,6 +77,14 @@ class VisionParams:
     speed_slack_m: float = 1.5        # position noise allowed on top of max_speed * dt
     interp_max_frames: int = 25       # frames filled between two points when one of them is a detection
     cache_dir: str = "cache/vision"
+    # --- Issue #66: tracklet gate on the detections + emission tempering on injected frames (both off)
+    tracklet_gate: bool = False       # keep a detection only if it belongs to a smooth run of crops
+    tracklet_min_len: int = 3         # consecutive crops (detections) a run needs
+    tracklet_max_speed_mps: float = 35.0   # plausible speed between linked detections
+    tracklet_speed_slack_m: float = 1.0    # position noise allowed on top of max_speed * dt
+    tracklet_max_residual_m: float = 1.0   # distance to the smooth (local polynomial) fit of the run
+    tracklet_max_link_frames: int = 10     # linked detections are at most this many frames apart
+    injected_emission_scale: float = 1.0   # <1 tempers emissions where ball_source is 2/3
 
     @classmethod
     def from_config(cls, path=None) -> "VisionParams":

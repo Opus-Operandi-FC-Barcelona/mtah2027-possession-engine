@@ -149,6 +149,22 @@ transition_matrix:
   phase_cue_before_s: 4.0
   phase_cue_after_s: 8.0
   phase_cue_hidden_only: true   # ... only inside occlusions
+  learned_gate_mode: "off"      # Issue #57: off | hard | blend | max -- gate H<->A with Specialist C (models/specialist_c.json)
+  learned_gate_threshold: 0.5   # hard: gate open where P_C >= this
+  learned_gate_blend: 0.5       # blend: g = blend * rule + (1 - blend) * P_C
+
+# Issue #57 -- Specialist C (learned H<->A turnover gate): training settings (external matches only).
+specialist_c:
+  half_window: 5
+  n_estimators: 200
+  learning_rate: 0.05
+  num_leaves: 15
+  min_child_samples: 40
+  subsample: 0.8
+  colsample: 0.7
+  reg_lambda: 5.0
+  calib_folds: 0                # the temperature fitted on the first model was 0.99: no calibration
+  pff_weight: 0.5
 
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:
@@ -169,6 +185,14 @@ duration:
   min_tail_runs: 5
   default_tail_excess_s: 30.0
 
+# Issue #62 -- decoding by expected spellF1: k posterior paths (forward-backward, backward sampling, fixed seed) plus
+# the Viterbi path; the one with the highest mean spellF1 against the others wins.  Kept OFF unless adopted.
+expected_spellf1:
+  enabled: false
+  k: 100
+  temperature: 1.0              # sampling temperature (> 1 flattens the posterior)
+  seed: 0
+
 # Issue #25 -- spellF1-oriented post-processing of the decoded labels (never crosses a graded block).
 spell_optimizer:
   micro_poss_s: 1.2             # H->A->H / A->H->A middle runs shorter than this are absorbed ...
@@ -184,6 +208,14 @@ spell_optimizer:
   bridge_gap_close_s: 1.0       # ... bridging evidence gaps shorter than this ...
   bridge_requires_geometry: true  # ... and there is touchline / set-piece / out-of-play support
 
+# Issue #61 -- post-Viterbi refinement of each boundary to the touch peak of the gaining team (H<->A) or to the
+# restart frame t* (D->alive) within +-window_frames.  Off: not adopted unless the #61 rule is met.
+boundary_snap:
+  enabled: false
+  window_frames: 12
+  snap_ha: true
+  snap_restart: true
+
 # Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
 # Generic priors; to be tuned on external matches only.
 heuristic_emissions:
@@ -191,6 +223,11 @@ heuristic_emissions:
   w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
   w_long_ball: 0.0              # Issue #49: D logit lowered on hidden-ball frames of Long Ball / Ball in the Box phases
   w_phase_alive: 0.0            # Issue #43: D logit lowered by this where the ball is hidden in a live phase (0 = off)
+  w_phase_hidden: 0.0           # Issue #65: extra phase-prior weight on the H-vs-A odds of hidden-ball frames (0 = off)
+  phase_hidden_min_s: 0.0       # ... only in hidden runs of at least this many seconds (0 = every hidden frame)
+  auto_calibrate_phase_hidden: false  # Issue #65: label-free weight from phase vs Specialist A's confident visible frames
+  phase_hidden_cap: 2.5
+  phase_hidden_min_frames: 250
   w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
   owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
   dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
@@ -299,6 +336,9 @@ ball_memory:
 # +-W frames and mean(t..t+W) - mean(t-W..t), block-local.  Empty list = off (then the stored model must match).
 specialist_features:
   context_windows: [50, 100]
+  gk_context: false             # Issue #56: goalkeeper depth + change over +-gk_span frames (off = adopted set)
+  gk_span: 150
+  carrier_swarm: false          # Issue #64: implicit carrier + 22v22 pressure micro-geometry (off = adopted set)
 
 # Issues #20-#22 -- shared gradient-boosting settings of the learned specialists (LightGBM with a scikit-learn
 # HistGradientBoosting fallback).  Generic priors; tuned on external matches only (leave-one-match-out).
@@ -463,6 +503,15 @@ vision:
   speed_slack_m: 1.5
   interp_max_frames: 25         # frames interpolated between two points (at least one a detection)
   cache_dir: cache/vision
+  # Issue #66 (not adopted, off): keep a detection only inside a smooth run of consecutive crops; temper the
+  # emissions of injected frames (ball_source 2/3).  Defaults change nothing.
+  tracklet_gate: false
+  tracklet_min_len: 3
+  tracklet_max_speed_mps: 35.0
+  tracklet_speed_slack_m: 1.0
+  tracklet_max_residual_m: 1.0
+  tracklet_max_link_frames: 10
+  injected_emission_scale: 1.0
 
 # Issue #10 -- broadcast (TV) tracking synchronised to the tactical clock by continuous blocks; its ball fills
 # the tactical holes (ball_source 4).  OFF by default until validated locally on the real broadcast files.

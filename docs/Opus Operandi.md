@@ -54,7 +54,7 @@ for the "last touch" rule.
 | Smart Tagging XML | **used** | set-piece and goal windows -> exact restart frames and forced `D`; throw-in teams; weak phase prior.  The four defending codes name the *defender* (`Team` = team performing the event), so the loader credits the opponent with the possession of those phases |
 | Tactical homography | loaded and validity-checked | only consumed by the optional stages below, which are off |
 | Broadcast ATD + homography | **tried, off** | block-wise synchronisation (`preprocessing/broadcast_sync.py`): 63 % of the blocks synchronised but the TV ball fills only 7.4 % of the hidden tactical-ball frames; +0.005 spellF1 on the leave-one-match-out simulation, below the +0.01 adoption rule |
-| Tactical / broadcast video: YOLO and multi-frame ball detector, attention crops | **built, off** | `vision/`; no video was processed for the submission; simulation shows a gain only with a ~0.3 m accurate detector.  The AGPL `ultralytics` package is an optional extra that nothing in the submission path needs |
+| Tactical / broadcast video: YOLO and multi-frame ball detector, attention crops | **built, off** | `vision/`; no video was processed for the submission; simulation shows a gain only with a ~0.3 m accurate detector.  Measured label-free on the real tactical video (Issue #58, 1,000 frames with the tracked ball visible, ball ~4.5 px): the most confident motion detection is within 2 m of the tracked ball in ~10 % of the frames, with ~3.7 false positives per frame, so the route stays off  The AGPL `ultralytics` package is an optional extra that nothing in the submission path needs |
 | Aerial-ball filter | **built, off** | lowered spellF1 on degraded external matches (touches at kicks/landings are real boundaries) |
 | Explicit-duration (semi-Markov) decoder | **built, off** | possessions 2409 -> 2503 of 3061 but spellF1 -0.001 ... -0.004 |
 | MBR boundary consensus | **built, off** | +-0.0004 |
@@ -205,7 +205,30 @@ Provided match, label-free aggregates of the submission (no ground truth involve
 | Runtime (load model, full match) | -- | 17.5 s |
 <!-- END MILESTONE 9 RESULTS -->
 
-## 7. Reproduction
+## 7. Milestone 10: post-freeze experiments
+
+Twelve further ideas (#55-#66) were each built in a separate branch and measured under the same protocol (B'(33), seeds 0-2, adopt at
+>= +0.010 mean with no seed below -0.003; guards B'(1) and PFF).  None passed, so the submission is unchanged.
+
+| Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |
+|---|---|---|---|
+| #55 | 56 PFF training matches instead of 20 | -0.012 (PFF guard +0.03) | off |
+| #56 | Multi-scale context windows and goalkeeper depth | -0.002 | off |
+| #57 | Learned H<->A turnover gate (third specialist) | -0.001 ... -0.006 (+0.011 / +0.015 on real PFF occlusions) | off |
+| #58 | Classic ball detectors on the real tactical video (aggregates only) | top hit within 2 m in 10 % of frames | vision off |
+| #59 | Latency bias of the boundaries | about 1 frame early, below the 3-frame threshold | no shift |
+| #60 | Bag of three specialist seeds | -0.001 | off |
+| #61 | Boundary snap to the touch / restart frame | +0.0002 | off |
+| #62 | Expected-spellF1 (minimum Bayes risk) decoding | 0.000 ... -0.001 | off |
+| #63 | Pre-trained football ball model (roboflow/sports + supervision) on the real video | top hit within 2 m in 60 %, median 1.1 m; simulated -0.074 | off |
+| #64 | Implicit carrier + 22v22 pressure micro-geometry features for the hidden-ball specialist | B'(33) +0.0002; B'(1) +0.0023; A +0.0003 / +0.0014 | off |
+| #65 | Smart Tagging phase prior on the H-vs-A odds of hidden-ball frames (fixed 0.8-2.5 and label-free auto) | B'(33) +0.0009 at best, -0.0073 at high noise; A down to -0.034 | off |
+| #66 | Tracklet gate and emission tempering on the #63 detections (simulated) | gate 3 -0.005, gate 5 +0.0005 (keeps 6-25 % of the points) | off |
+
+The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
+remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.
+
+## 8. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate

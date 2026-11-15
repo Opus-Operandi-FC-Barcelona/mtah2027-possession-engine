@@ -46,6 +46,7 @@ from mtah2027.config import (
 )
 from mtah2027.decoding.duration_model import DurationParams
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
+from mtah2027.decoding.expected_spellf1 import ExpectedSpellF1Params, decode_match_halves_mbr
 from mtah2027.decoding.mbr_consensus import MbrParams, consensus_labels
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
 from mtah2027.features._utils import speed_from_xy
@@ -73,6 +74,7 @@ from mtah2027.models.heuristic_emissions import (
     resolve_owner_team,
     touch_signal,
 )
+from mtah2027.postprocessing.boundary_snap import BoundarySnapParams, snap_boundaries
 from mtah2027.postprocessing.spell_optimizer import SpellParams, optimize_spells
 from mtah2027.postprocessing.submission_contract import enforce_submission_contract
 from mtah2027.preprocessing.clean_tracks import clean_tracks
@@ -460,7 +462,8 @@ def run_core(
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
         homography: np.ndarray | None = None, durations: Any = None,
-        players_speed_native: np.ndarray | None = None) -> CoreResult:
+        players_speed_native: np.ndarray | None = None,
+        ball_source: np.ndarray | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -514,6 +517,12 @@ def run_core(
         if cfg_route is not cfg:
             cfg = cfg_route
             em = heuristic_emissions(fe, fps, cfg, st)
+    if ball_source is not None:    # Issue #66: temper the emissions of frames whose ball was injected (off: 1.0)
+        from mtah2027.vision.tracklet_gate import temper_injected
+
+        lp = temper_injected(em.log_probs, ball_source, float(VisionParams.from_config(cfg).injected_emission_scale))
+        if lp is not em.log_probs:
+            em = dataclasses.replace(em, log_probs=lp)
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
@@ -532,6 +541,24 @@ def run_core(
             if fe.rules_report is not None:
                 fe.rules_report.update({"calibrated_weight": round(w_cal, 4), "calibration_n": n_cal})
 
+    gate_probs = None     # Issue #57: Specialist C turnover gate (learned route only)
+    if TransitionParams.from_config(cfg).learned_gate_mode != "off":
+        if learned is None or learned.features is None:
+            st.skip("learned_gate", "no learned route / feature matrix")
+        else:
+            def _gate():
+                from mtah2027.models.specialist_c import load_default_specialist_c
+
+                model = getattr(specialists, "c", None) or load_default_specialist_c(cfg)
+                if model is None:
+                    return None
+                fm_c = learned.features
+                if fm_c.names != model.feature_names:
+                    raise ValueError("feature layout does not match Specialist C")
+                return model.predict(fm_c.x)
+
+            gate_probs = st.run("learned_gate", _gate)
+
     def _transitions(tp: TransitionParams | None = None):
         return build_log_transitions(
             n, touch_score=bk.touch_score if bk is not None else None,
@@ -544,7 +571,7 @@ def run_core(
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
-            transitions=fe.transitions)
+            transitions=fe.transitions, gate_probs=gate_probs)
 
     log_trans = st.run("transitions", _transitions)
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive
@@ -561,9 +588,15 @@ def run_core(
             dur_arg = (dmodel.tables(fps, dp), dp.weight)
         else:
             st.skip("duration", "no duration table / route not selected")
-    codes = st.run("viterbi", lambda: decode_match_halves(
-        em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
-        log_init=default_log_init(cfg), duration=dur_arg), required=True)
+    ep = ExpectedSpellF1Params.from_config(cfg)
+    if ep.enabled and dur_arg is None:       # Issue #62: minimum Bayes risk over posterior samples (off by default)
+        codes = st.run("viterbi", lambda: decode_match_halves_mbr(
+            em.log_probs, log_trans, params=ep, play_blocks=play_blocks, dead_blocks=dead_blocks,
+            log_init=default_log_init(cfg)), required=True)
+    else:
+        codes = st.run("viterbi", lambda: decode_match_halves(
+            em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
+            log_init=default_log_init(cfg), duration=dur_arg), required=True)
     mbr_info: dict = {}
     mp = MbrParams.from_config(cfg)
     if mp.enabled and learned is not None:     # variants of the learned route only
@@ -609,6 +642,21 @@ def run_core(
     else:
         st.skip("spell_optimizer", "disabled by configuration")
 
+    # 10b. boundary refinement to the physical touch / restart frame (Issue #61, off by default) -----
+    bsp = BoundarySnapParams.from_config(cfg)
+    snap_stats: dict = {}
+    if bsp.enabled:
+        def _snap():
+            return snap_boundaries(
+                codes, play_blocks=play_blocks, touch_score=bk.touch_score if bk is not None else None,
+                nearest_team=bk.nearest_team if bk is not None else None, ball_visible=visible,
+                is_aerial=fe.is_aerial, restart_frames=restart_frames,
+                forced_dead_mask=anchors.forced_dead_mask if anchors is not None else None, params=bsp)
+
+        res = st.run("boundary_snap", _snap)
+        if res is not None:
+            codes, snap_stats = res
+
     diagnostics = {
         "stages": st.info, "n_frames": int(n), "n_slots": int(players_xy.shape[1]),
         "ball_visible_share": float(visible.mean()) if n else 0.0,
@@ -621,7 +669,7 @@ def run_core(
         "emission_source": emission_source, "restart_rules": fe.rules_report,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
-        "optimizer": opt_stats, "mbr": mbr_info,
+        "optimizer": opt_stats, "boundary_snap": snap_stats, "mbr": mbr_info,
     }
     if keep_features:
         feats.update({"dead_score": dead_score, "visible": visible, "log_probs": em.log_probs,
@@ -778,8 +826,10 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
     play_blocks = [match.half1, match.half2_play]
     dead_blocks = [match.half2_dead] if match.half2_dead[1] >= match.half2_dead[0] else []
     players, ball = _fit_length(td.players_xy, n), _fit_length(td.ball_xy, n)
+    ball_source = None
     if vision is not None and vision.stats.get("status") == "ok":
         ball = vision.ball_xy       # tracking where seen, recovered video points where it was missing
+        ball_source = vision.ball_source
 
     core_diag: dict = {}
     features: dict = {}
@@ -791,7 +841,7 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
             homography=homography, keep_features=keep_features,
             players_speed_native=(_fit_length(td.players_speed, n) if np.isfinite(td.players_speed).any()
-                                  else None))
+                                  else None), ball_source=ball_source)
         codes, core_diag = core.codes, core.diagnostics
         features = core.features
         route = core_diag.get("emission_source", "heuristic")    # "specialists" or "heuristic" (Issue #52)

@@ -18,6 +18,7 @@ matches when they are on disk, else load the committed model file (``models/spec
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -36,6 +37,8 @@ from mtah2027.models.heuristic_emissions import (
     EmissionParams,
     EmissionResult,
     alive_prior_mask,
+    auto_phase_hidden_weight,
+    hidden_run_mask,
 )
 from mtah2027.models.pseudo_labeling import PseudoLabelParams, build_pseudo_dataset
 from mtah2027.models.specialist_ball_absent import (
@@ -92,6 +95,7 @@ class SpecialistSet:
     durations: object = None          # DurationModel of the training labels (Issue #34), optional
     ensemble: tuple = ()              # Issue #44: ((SpecialistSet, weight), ...); empty = this set alone
     mix_mode: str = "loglinear"       # Issue #44: how the member probabilities are combined
+    c: object = None                  # Issue #57: Specialist C (learned turnover gate), optional
 
     def members(self) -> tuple:
         """``((set, normalised weight), ...)``: the ensemble members, or this set alone."""
@@ -123,6 +127,7 @@ class SpecialistSet:
 class FusionResult:
     emissions: EmissionResult
     report: dict
+    features: object = None                     # Issue #57: the FeatureMatrix of the match (Specialist C input)
     anchor_label: np.ndarray | None = None      # Issue #49: Specialist A's ultra-confident class per frame, -1 elsewhere
 
 
@@ -134,7 +139,8 @@ def _logit(p: np.ndarray) -> np.ndarray:
 def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarray | None,
                  status_dead: np.ndarray | None, ep: EmissionParams, phase_alive: np.ndarray | None = None,
                  visible: np.ndarray | None = None, long_ball: np.ndarray | None = None,
-                 w_long_ball: float | None = None) -> tuple[np.ndarray, np.ndarray]:
+                 w_long_ball: float | None = None, w_phase_hidden: float | None = None,
+                 fps: float = FPS) -> tuple[np.ndarray, np.ndarray]:
     """Add the soft priors to the model probabilities ``prob[N, 3]``; returns ``(prob, home_logit)``.
 
     With no prior channel the input is returned untouched (``home_logit = log(pH / pA)``)."""
@@ -143,7 +149,10 @@ def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarra
     use_alive = phase_alive is not None and visible is not None and ep.w_phase_alive != 0.0
     wlb = ep.w_long_ball if w_long_ball is None else float(w_long_ball)
     use_lb = long_ball is not None and visible is not None and wlb != 0.0
-    if phase is None and owner is None and status_dead is None and not use_alive and not use_lb:
+    wph = ep.w_phase_hidden if w_phase_hidden is None else float(w_phase_hidden)
+    use_ph = phase is not None and visible is not None and wph != 0.0
+    if (phase is None and owner is None and status_dead is None and not use_alive and not use_lb
+            and not use_ph):
         return prob, z
     zd = _logit(pd)
     if status_dead is not None:
@@ -155,6 +164,9 @@ def apply_priors(prob: np.ndarray, *, phase: np.ndarray | None, owner: np.ndarra
         zd = zd - wlb * alive_prior_mask(long_ball, visible)
     if phase is not None:
         z = z + ep.w_phase * np.nan_to_num(np.asarray(phase, dtype=np.float64))
+        if use_ph:     # Issue #65: more phase prior on the H-vs-A odds of hidden frames only; p_dead untouched
+            hid = hidden_run_mask(visible, int(round(ep.phase_hidden_min_s * fps)))
+            z = z + wph * np.where(hid, np.nan_to_num(np.asarray(phase, dtype=np.float64)), 0.0)
     if owner is not None:
         ow = np.asarray(owner, dtype=np.float64)
         z = z + np.where(np.isfinite(ow), ep.w_owner * (1.0 - 2.0 * np.nan_to_num(ow)), 0.0)
@@ -219,9 +231,12 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
         rp = RestartRuleParams.from_config(config_path)
         if rp.auto_long_ball_weight:
             w_lb, lb_info = auto_long_ball_weight(fe.long_ball, res_a.anchor_label, vis, params=rp)
+    w_ph, ph_info = None, {}
+    if ep.auto_calibrate_phase_hidden and fe.phase is not None:    # Issue #65: label-free weight
+        w_ph, ph_info = auto_phase_hidden_weight(fe.phase, res_a.anchor_label, vis, params=ep)
     prob, home_logit = apply_priors(prob, phase=fe.phase, owner=fe.owner, status_dead=status, ep=ep,
                                     phase_alive=fe.phase_alive, visible=vis, long_ball=fe.long_ball,
-                                    w_long_ball=w_lb)
+                                    w_long_ball=w_lb, w_phase_hidden=w_ph, fps=fps)
 
     logp = np.log(np.maximum(prob, fp.prob_floor))
     scale = np.where(vis, fp.scale_visible, fp.scale_hidden)[:, None]
@@ -238,9 +253,11 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
               "temperature_a": specialists.a.classifier.temperature,
               "temperature_b": specialists.b.classifier.temperature,
               "pseudo_labels": pseudo_report, "training": specialists.training}
+    if ph_info:
+        report["phase_hidden"] = {"weight": w_ph, **ph_info}
     if lb_info:
         report["long_ball"] = {"weight": w_lb, **lb_info}
-    return FusionResult(emissions=emissions, report=report,
+    return FusionResult(emissions=emissions, report=report, features=fm,
                         anchor_label=np.where(vis, res_a.anchor_label, -1).astype(np.int8))
 
 
@@ -264,11 +281,16 @@ def describe_training(ts: TrainingSet, bench_dir: str | Path, a: SpecialistA, b:
 
 
 def train_specialists(bench_dir: str | Path, *, config_path=None, training: TrainingSet | None = None,
-                      exclude_match: str | None = None,
+                      exclude_match: str | None = None, seed: int | None = None,
                       log: Callable[[str], None] | None = None) -> SpecialistSet:
-    """Train A and B on the degraded external matches of ``bench_dir`` (optionally leaving one match out)."""
+    """Train A and B on the degraded external matches of ``bench_dir`` (optionally leaving one match out).
+
+    ``seed`` (Issue #60) overrides the LightGBM seed of the configuration (a member of a seed bag);
+    ``None`` keeps ``specialist_model.seed``."""
     ts = training or build_training_set(bench_dir, config_path=config_path, log=log)
     cp = ClassifierParams.from_config(config_path)
+    if seed is not None:
+        cp = dataclasses.replace(cp, seed=int(seed))
     a = train_specialist_a(ts, params=SpecialistAParams.from_config(config_path), classifier_params=cp,
                            exclude_match=exclude_match)
     if log:
@@ -322,6 +344,20 @@ def mix_probabilities(probs: list, weights: list, mode: str = "loglinear") -> np
     acc = acc - acc.max(axis=1, keepdims=True)
     e = np.exp(acc)
     return e / e.sum(axis=1, keepdims=True)
+
+
+def save_bag_manifest(files: list, path: str | Path) -> Path:
+    """Issue #60: manifest of a seed bag, an equal-weight ``linear`` ensemble of model files that sit next
+    to the manifest (same training data, different LightGBM seeds)."""
+    out = Path(path)
+    names = [Path(f).name for f in files]
+    if not names or len(set(names)) != len(names):
+        raise ValueError("a bag needs at least one distinct member file")
+    manifest = {"format": ENSEMBLE_FORMAT, "mode": "linear",
+                "members": [{"file": n, "weight": 1.0} for n in names]}
+    text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) + chr(10)
+    out.write_text(text, encoding="utf-8", newline=chr(10))
+    return out
 
 
 def load_specialists(path: str | Path = DEFAULT_MODEL_PATH, config_path=None) -> SpecialistSet:

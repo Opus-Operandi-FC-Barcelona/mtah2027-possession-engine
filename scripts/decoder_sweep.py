@@ -59,6 +59,15 @@ def candidate_config(raw: dict, route: dict) -> dict:
     return cfg
 
 
+def apply_config(raw: dict, overrides: dict) -> dict:
+    """``raw`` with top-level ``section.key`` overrides (Issue #65: ``"config"`` of a candidate)."""
+    cfg = copy.deepcopy(raw)
+    for dotted, value in (overrides or {}).items():
+        section, _, key = dotted.partition(".")
+        cfg.setdefault(section, {})[key] = value
+    return cfg
+
+
 def cells_for(world: str, bench: Path, seeds, n_pff: int = 20, n_unseen: int = 8) -> list[dict]:
     if world in ("b33", "b1"):
         files = sorted(bench.glob("idsse_*.npz"))
@@ -102,7 +111,17 @@ def model_path(root: Path, cell: dict, variant: str) -> Path:
         return root / f"lomo_{variant}" / f"{cell['match']}.json"
     if cell["world"] == "pff":
         return root / f"pff_{variant}" / f"fold{cell['fold']}.json"
-    return REPO_ROOT / "models" / f"specialists_{variant}.json"
+    own = root / f"unseen_{variant}.json"      # Issue #55: candidate all-data model (else the committed one)
+    return own if own.is_file() else REPO_ROOT / "models" / f"specialists_{variant}.json"
+
+
+def c_model_path(root: Path, cell: dict, variant: str) -> Path:
+    """Issue #57: Specialist C of a cell (leave-one-match-out / PFF fold / all-data for the unseen matches)."""
+    if cell["world"] in ("b33", "b1"):
+        return root / f"c_{variant}" / f"{cell['match']}.json"
+    if cell["world"] == "pff":
+        return root / f"c_{variant}" / f"fold{cell['fold']}.json"
+    return root / f"c_{variant}" / "unseen.json"
 
 
 def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_raw: dict):
@@ -117,6 +136,13 @@ def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_ra
             store[key] = sf.load_specialists(model_path(root, cell, variant), config_raw)
         sets.append((store[key], float(weight)))
     first = sets[0][0]
+    if cand.get("c"):     # Issue #57: attach the Specialist C of this cell
+        from mtah2027.models.specialist_c import load_specialist_c
+
+        ckey = ("c", cand["c"], cell["match"], cell["world"])
+        if ckey not in store:
+            store[ckey] = load_specialist_c(c_model_path(root, cell, cand["c"]), config_raw)
+        first = dataclasses.replace(first, c=store[ckey])
     if not ens:
         return first
     return dataclasses.replace(first, ensemble=tuple(sets), mix_mode=ens.get("mode", "loglinear"))
@@ -172,14 +198,21 @@ class CellCache:
         self.sf.build_feature_matrix, self.sf.member_probabilities = self.orig[2], self.orig[3]
 
 
-def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool, log) -> dict:
+def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool, log, sim_noise: str = "none") -> dict:
     from eval_external import score
 
+    from mtah2027.models.specialist_c import turnover_recall
     from mtah2027.pipeline import run_core
     from mtah2027.validation import dropout_strata as ds
 
     players, team, ball, fps, pitch, periods, gt = load_cell_data(cell, config_raw)
     visible = np.isfinite(ball).all(axis=1)
+    smart = None
+    if sim_noise != "none":      # Issue #65: simulated Smart Tagging (as #43 / #49), seed = the cell seed
+        from mtah2027.io.smart_tagging_sim import NOISE_LEVELS, simulate_smart_tagging
+
+        smart = simulate_smart_tagging(gt, periods, fps, noise=NOISE_LEVELS[sim_noise], seed=cell["seed"],
+                                       n_frames=len(gt))
     n_tracked = ds.tracked_counts(players)
     store: dict = {}
     out: dict = {"cell": {k: v for k, v in cell.items() if k != "path"}, "results": {}}
@@ -188,17 +221,20 @@ def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool
     cache.install()
     try:
         for ci, cand in enumerate(cands):
-            cfg = candidate_config(config_raw, cand.get("route", {}))
+            cfg = candidate_config(apply_config(config_raw, cand.get("config")), cand.get("route", {}))
             spec = build_specialists(cand, cell, root, store, config_raw)
             core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
-                            log=lambda m: None, specialists=spec, durations=spec.durations)
+                            log=lambda m: None, specialists=spec, durations=spec.durations,
+                            smart_tagging=smart)
             row = score(gt, core.codes)
+            row["turn"] = turnover_recall(gt, core.codes)     # Issue #57: true H<->A changes matched
             row["strata"] = ds.stratum_counts(gt, core.codes, n_tracked, visible)
             out["results"][cand["name"]] = row
             if verify and ci == 0:
                 cache.uninstall()
                 ref = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
-                               log=lambda m: None, specialists=spec, durations=spec.durations)
+                               log=lambda m: None, specialists=spec, durations=spec.durations,
+                               smart_tagging=smart)
                 cache.install()
                 out["verified"] = bool(np.array_equal(ref.codes, core.codes))
                 log(f"  verify {cell_id(cell)}: cached == uncached -> {out['verified']}")
@@ -217,7 +253,7 @@ def cmd_run(args) -> int:
     names = [c["name"] for c in cands]
     if len(set(names)) != len(names):
         raise SystemExit("candidate names must be unique")
-    cells = cells_for(args.world, Path(args.bench_dir), args.seeds)
+    cells = cells_for(args.world, Path(args.bench_dir), args.seeds, n_pff=args.n_pff)
     k, _, m = args.shard.partition("/")
     cells = [c for i, c in enumerate(cells) if i % int(m) == int(k)]
     out_dir = Path(args.out_dir)
@@ -228,7 +264,8 @@ def cmd_run(args) -> int:
         todo = [c for c in cands if c["name"] not in have["results"]]
         if not todo:
             continue
-        res = run_cell(cell, todo, Path(args.models_root), config_raw, args.verify, lambda s: print(s, flush=True))
+        res = run_cell(cell, todo, Path(args.models_root), config_raw, args.verify, lambda s: print(s, flush=True),
+                       sim_noise=args.sim_noise)
         res["results"] = {**have["results"], **res["results"]}
         path.write_text(json.dumps(res), encoding="utf-8")
         print(f"{cell_id(cell)}: {len(todo)} candidates in {res['seconds']} s", flush=True)
@@ -307,6 +344,16 @@ def cmd_agg(args) -> int:
             ps = {s: round(v, 4) for s, v in r[w]["per_seed"].items()}
             ds_ = {s: round(v, 4) for s, v in r[w]["seed_delta"].items()}
             print(f"   {w}: mean {r[w]['mean']:.4f} macro {r[w]['macro']:.4f} per seed {ps} delta per seed {ds_}")
+    if args.turnover:
+        print("turnover recall (pooled over cells: matched / true H<->A changes; predicted changes)")
+        for n in names:
+            parts = []
+            for w in worlds:
+                t = [m[n]["turn"] for (ww, _), by in table.items() if ww == w for m in by.values()
+                     if n in m and "turn" in m[n]]
+                nt, mt, npd = (sum(x[k] for x in t) for k in ("n_true", "matched", "n_pred")) if t else (0, 0, 0)
+                parts.append(f"{w}: {mt}/{nt} = {mt / max(nt, 1):.3f} (pred {npd})")
+            print(f"  {n:<40}" + "   ".join(parts))
     if args.strata:
         for w in worlds:
             for n in dict.fromkeys([base, args.strata]):
@@ -333,7 +380,10 @@ def main(argv=None) -> int:
     r.add_argument("--bench-dir", default=str(DEFAULT_BENCH))
     r.add_argument("--config", default=None)
     r.add_argument("--shard", default="0/1")
+    r.add_argument("--n-pff", type=int, default=20, help="PFF matches of the 4-fold world (Issue #55: 56)")
     r.add_argument("--verify", action="store_true")
+    r.add_argument("--sim-noise", choices=("none", "low", "medium", "high"), default="none",
+                   help="Issue #65: simulated Smart Tagging noise level (none = no tags)")
     a = sub.add_parser("agg")
     a.add_argument("--out-dirs", nargs="+", required=True)
     a.add_argument("--baseline", default=None)
@@ -342,6 +392,7 @@ def main(argv=None) -> int:
     a.add_argument("--detail", nargs="*", default=None)
     a.add_argument("--strata", default=None, help="candidate whose pooled strata are printed next to the baseline")
     a.add_argument("--json", default=None)
+    a.add_argument("--turnover", action="store_true", help="pooled turnover recall per candidate and world")
     args = ap.parse_args(argv)
     return cmd_run(args) if args.cmd == "run" else cmd_agg(args)
 
