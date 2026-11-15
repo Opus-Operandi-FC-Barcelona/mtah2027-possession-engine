@@ -463,7 +463,8 @@ def run_core(
         keep_features: bool = False, specialists: Any = None,
         homography: np.ndarray | None = None, durations: Any = None,
         players_speed_native: np.ndarray | None = None,
-        ball_source: np.ndarray | None = None) -> CoreResult:
+        ball_source: np.ndarray | None = None,
+        soft_evidence: tuple | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -523,6 +524,16 @@ def run_core(
         lp = temper_injected(em.log_probs, ball_source, float(VisionParams.from_config(cfg).injected_emission_scale))
         if lp is not em.log_probs:
             em = dataclasses.replace(em, log_probs=lp)
+    if soft_evidence is not None:   # Issue #67: detections as a tilt of the H/A odds (off: weight 0)
+        vp = VisionParams.from_config(cfg)
+        if vp.soft_evidence_weight:
+            from mtah2027.vision.soft_evidence import apply_soft_evidence, soft_tilt
+
+            ev_frames, ev_xy, ev_conf = soft_evidence
+            tilt = soft_tilt(len(em.log_probs), players_xy, team_of_slot, ev_frames, ev_xy, ev_conf,
+                             weight=vp.soft_evidence_weight, scale_m=vp.soft_evidence_scale_m,
+                             hold_frames=vp.soft_evidence_hold_frames)
+            em = dataclasses.replace(em, log_probs=apply_soft_evidence(em.log_probs, tilt))
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))

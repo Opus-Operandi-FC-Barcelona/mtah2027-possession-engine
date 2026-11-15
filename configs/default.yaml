@@ -512,6 +512,10 @@ vision:
   tracklet_max_residual_m: 1.0
   tracklet_max_link_frames: 10
   injected_emission_scale: 1.0
+  # Issue #67 (off): detections as soft evidence on the H/A emission (nats at confidence 1); 0 = off.
+  soft_evidence_weight: 0.0
+  soft_evidence_scale_m: 3.0
+  soft_evidence_hold_frames: 5
 
 # Issue #10 -- broadcast (TV) tracking synchronised to the tactical clock by continuous blocks; its ball fills
 # the tactical holes (ball_source 4).  OFF by default until validated locally on the real broadcast files.
