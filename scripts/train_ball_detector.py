@@ -35,6 +35,7 @@ def main(argv=None) -> int:
     ap.add_argument("--fraction", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--val-every", type=int, default=4, help="in-training validation uses every k-th val image")
+    ap.add_argument("--data", default=None, help="ready data.yaml (e.g. from refine_ball_labels.py)")
     ap.add_argument("--lr0", type=float, default=0.0007)
     args = ap.parse_args(argv)
 
@@ -47,12 +48,12 @@ def main(argv=None) -> int:
     (ds / "data_train.yaml").write_text(
         f"path: {ds.as_posix()}\ntrain: images/train\nval: val_subset.txt\nnames:\n  0: ball\n")
     model = YOLO(args.weights)
-    model.train(data=str(ds / "data_train.yaml"), imgsz=args.imgsz, epochs=args.epochs, time=args.hours,
+    model.train(data=args.data or str(ds / "data_train.yaml"), imgsz=args.imgsz, epochs=args.epochs, time=args.hours,
                 batch=args.batch, workers=min(4, args.workers), patience=args.patience, seed=args.seed,
                 deterministic=True, project=str(project), name=args.name, exist_ok=True, single_cls=True,
                 fraction=args.fraction, device=0, cache=False, plots=False,
                 # a 4-5 px ball: no shrinking, mild colour jitter, flips are safe, mosaic only for variety
-                scale=0.25, mosaic=0.5, close_mosaic=3, mixup=0.0, degrees=0.0, translate=0.1,
+                scale=0.25, mosaic=0.0, close_mosaic=0, mixup=0.0, degrees=0.0, translate=0.1,
                 fliplr=0.5, flipud=0.0, hsv_h=0.01, hsv_s=0.4, hsv_v=0.3, cos_lr=True, amp=True, optimizer="AdamW", lr0=args.lr0,
                 warmup_epochs=1.0)
     best = project / args.name / "weights" / "best.pt"

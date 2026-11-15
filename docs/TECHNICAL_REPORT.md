@@ -1497,6 +1497,67 @@ so even a small simulated gain would not have justified enabling it.  `vision.en
 Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
+## Milestone 11: remaining margin on the tactical video
+
+### Self-supervised ball detector on the GPU (Issue #68; aggregates only, not adopted, OFF)
+
+Question: can a detector fine-tuned on the match video itself (labels from the automatic tracking, no manual labels)
+reach the ~0.3 m top-candidate accuracy that #63's simulation says the possession model needs?
+
+Pipeline (all local; separate vision environment outside OneDrive: Python 3.11, torch 2.6.0+cu124, torchvision 0.21.0+cu124,
+ultralytics 8.4.212 (AGPL-3.0, optional), opencv 5.0.0.93; pins in `requirements-vision.txt`, RTX 3060 12 GB):
+
+1. `scripts/build_ball_dataset.py` (`vision/ball_dataset.py`): eligible frames = graded, ATD ball visible, usable homography,
+   projection inside the image (91 247).  Temporal split: 2-min blocks, every 5th block validation, 10 s guard band (train
+   frames near validation blocks dropped).  One frame in 4: 17 639 train positives (640x640 JPEG, the ball at a uniformly random
+   position of the window) + 1 579 ball-free crops; 4 500 validation frames x 2 lossless crops: `atd` (window around the ATD ball
+   plus a random offset <= 3 m, the ceiling) and `prior` (search point that does NOT use the ball: interpolation of a simulated gap
+   whose length is drawn from the real tracking gaps, pulled to the pressure centroid as in `attention_crops`; the ball is inside
+   the window in 70.5 % of them).  749 validation frames are within 2 s of a tracking gap.  25 min to build.
+2. Label quality (aggregate check): the ATD ground projection is not pixel-aligned with the ball seen in the video (the ball is
+   above the ground plane and the tracking has latency/noise); a first fine-tune on the raw ATD pixels did not learn at all
+   (classification loss flat at the trivial value, mAP50 ~0.02; about 1.4 h of GPU discarded).  `scripts/refine_ball_labels.py`
+   therefore relabels by agreement of two independent algorithmic sources: the public roboflow `football-ball-detection.pt`
+   (YOLOv8x, run locally as teacher) must have a candidate of confidence >= 0.4 within 40 px of the ATD pixel; the label is the teacher
+   box.  70.1 % of the positives agree (12 361 kept; median teacher-ATD distance 9.8 px, p90 28 px; the vertical bias is
+   systematic: teacher median 3.3 px above the ATD point).  Validation labels/metrics stay ATD-based.
+3. Training: yolov8s (COCO weights), imgsz 960, batch 16, AdamW lr 7e-4, no mosaic, 12 epochs = 75.5 min (7.5 min/epoch once the
+   machine was not CPU-starved).  The weights are not committed (`*.pt` is gitignored); they are reproduced by the three scripts.
+   mAP against the ATD boxes is uninformative (stays <= 0.01 because of the ATD offset), so epochs were judged by the metre metrics.
+
+Result on the validation blocks (top-confidence candidate vs the ATD ball, pitch metres via H^-1; `reports/issue68_detector_profile.json`):
+
+| detector / crops | within 0.3 / 0.5 / 1 / 2 / 5 m | median / p90 (m) | FP per crop (>5 m) | with detection |
+|---|---|---|---|---|
+| `sv_ball640` teacher, `atd` crops (4 500) | 14.1 / 26.0 / 44.2 / 60.4 / 75.6 % | 1.20 / 14.0 | 1.55 | 98.1 % |
+| fine-tuned s960, `atd` crops | 14.6 / 27.0 / 46.3 / 63.2 / 78.5 % | 1.00 / 8.5 | 0.22 | 92.4 % |
+| fine-tuned s960, `atd` near-gap (749) | 17.1 / 27.8 / 44.7 / 56.9 / 79.8 % | 1.12 / 6.8 | 0.23 | 93.9 % |
+| `sv_ball640` teacher, `prior` crops containing the ball (3 171) | 15.2 / 27.6 / 45.4 / 61.1 / 76.4 % | 1.14 / 14.3 | 1.48 | 97.5 % |
+| fine-tuned s960, `prior` crops | 15.8 / 28.5 / 47.6 / 64.2 / 79.8 % | 0.94 / 7.2 | 0.20 | 92.0 % |
+| fine-tuned s960, `prior` near-gap (494) | 17.4 / 27.9 / 46.4 / 58.3 / 82.4 % | 1.06 / 5.6 | 0.20 | 93.7 % |
+
+Inference at imgsz 1280 is no better (prior: 16.0 / 28.9 / 48.0 / 64.5 / 80.5 %, FP 0.31).  Crops centred on a prior that does not use the
+ball behave like the ceiling crops (the detector is robust to the search point as long as the ball is inside the window, 70.5 % here).
+The detector confidence is not informative: the share of correct top candidates is the same at every confidence gate (conf >= 0.7 still
+keeps 88 % of the frames, with 30 % within 0.5 m).  Top-candidate error histogram (bins <= 0.15 / 0.3 / 0.5 / 1 / 2 / 5 / 10 / >10 m, atd
+crops): 5.6 / 9.0 / 12.5 / 19.3 / 16.8 / 15.3 / 5.8 / 15.6 %.
+
+Cost: 30.2 crops/s on the RTX 3060 at imgsz 960 (teacher 15 crops/s while sharing the GPU).  The plan of #63 (one crop every 5 frames of the
+64 079 hidden graded frames = 12 687 crops) takes 7 min of GPU inference plus decoding; every hidden frame 35 min.  Decoding the tactical video
+runs at ~200 frames/s.
+
+**Conclusion: not adopted, no change to the submission route** (default pipeline and synthetic SHA unchanged; `vision.enabled` stays `false`).
+Self-supervised fine-tuning removes most false positives (1.5 -> 0.2 per crop) and shifts 1-2 points at every radius, but the top candidate is within 0.3 m in
+only ~15 % of the frames (the #63 simulation needs "most"), and the error profile (about 50 % within 1 m, 16 % beyond 10 m) is a clear
+improvement over #58/#63 only in the tail.  The ceiling is set by the labels: the ATD ground projection and an image ball (aerial, above the
+ground plane) differ by ~0.5-1 m, so a metre-accurate evaluation against the ATD needs a height model (`vision/aerial_filter.py`) that is not
+used here.  The profile is exported for the simulation of #69.  `ft_ball.FineTunedBallDetector` (same interface as the other detectors, GPU, lazy
+torch/ultralytics import) is available for running over the gap frames.
+
+Reproduce (vision venv): `build_ball_dataset.py --data-dir <data> --out <cache>/ds`, `refine_ball_labels.py --ds <cache>/ds --out <cache>/ds_ref --teacher
+<football-ball-detection.pt>`, `train_ball_detector.py --ds <cache>/ds --data <cache>/ds_ref/data.yaml --weights yolov8s.pt --imgsz 960 --epochs 12 --hours 1.7`,
+`eval_ball_detector.py --ds <cache>/ds --model ft=<last.pt>:960 --model sv=<teacher.pt>:640 --json reports/issue68_detector_profile.json`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
