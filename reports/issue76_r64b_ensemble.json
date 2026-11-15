@@ -1,0 +1,102 @@
+{
+  "issue": 76,
+  "title": "R64B two-seed ensemble versus the production two-seed ensemble",
+  "data": "external matches only: IDSSE 7-match LOMO B'(33) and B'(1), eval seeds 0-2; A = first 20 PFF matches (4-fold), eval seed 0",
+  "reference": "V50s: #72 two-seed ensemble (training seeds 0+1) with #73 integration (visible_weight 0.5, emission_scale 0.8)",
+  "variant": "R64B2: R64B networks (#64 carrier/swarm input, boundary weight x2 within +-75 frames), training seeds 0 (from #74) and 1 (new), same V50s integration",
+  "reference_recheck_b33_seed0": 0.7448763,
+  "rule": "B'(33) seed-mean delta >= +0.010 and no seed < -0.003; B'(1) drop <= 0.010; A drop <= 0.030",
+  "summary": {
+    "V50s": {
+      "b1": {
+        "mean": 0.6840648134966548,
+        "delta": 0.0,
+        "per_seed_delta": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0
+        }
+      },
+      "b33": {
+        "mean": 0.7390816455084709,
+        "delta": 0.0,
+        "per_seed_delta": {
+          "0": 0.0,
+          "1": 0.0,
+          "2": 0.0
+        }
+      },
+      "pff": {
+        "mean": 0.6597087293648876,
+        "delta": 0.0,
+        "per_seed_delta": {
+          "0": 0.0
+        }
+      }
+    },
+    "R64B2": {
+      "b1": {
+        "mean": 0.6965543637604413,
+        "delta": 0.012489550263786509,
+        "per_seed_delta": {
+          "0": 0.017616604869136743,
+          "1": 0.005555564283160508,
+          "2": 0.014296481639061942
+        }
+      },
+      "b33": {
+        "mean": 0.7487515547696307,
+        "delta": 0.009669909261159848,
+        "per_seed_delta": {
+          "0": 0.006242931029373566,
+          "1": 0.011014384396726085,
+          "2": 0.011752412357379893
+        }
+      },
+      "pff": {
+        "mean": 0.6664540907803711,
+        "delta": 0.006745361415483542,
+        "per_seed_delta": {
+          "0": 0.006745361415483542
+        }
+      }
+    }
+  },
+  "possessions_predicted_true": {
+    "V50s": {
+      "pff": "5767/7069",
+      "b1": "7037/9183",
+      "b33": "7423/9183"
+    },
+    "R64B2": {
+      "pff": "6135/7069",
+      "b1": "7393/9183",
+      "b33": "7688/9183"
+    }
+  },
+  "turnover_recall_visible_hidden": {
+    "V50s": {
+      "pff": "0.518/0.453",
+      "b1": "0.640/0.375",
+      "b33": "0.640/0.380"
+    },
+    "R64B2": {
+      "pff": "0.548/0.496",
+      "b1": "0.656/0.430",
+      "b33": "0.664/0.423"
+    }
+  },
+  "spurious_turnovers": {
+    "V50s": {
+      "pff": 2482,
+      "b1": 2585,
+      "b33": 2477
+    },
+    "R64B2": {
+      "pff": 2699,
+      "b1": 2706,
+      "b33": 2569
+    }
+  },
+  "verdict": "NOT ADOPTED: B'(33) +0.00967 < +0.010 (seeds +0.0062/+0.0110/+0.0118); guards met (B'(1) +0.0125, A +0.0067)"
+}
