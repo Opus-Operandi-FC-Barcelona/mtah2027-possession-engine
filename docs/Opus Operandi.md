@@ -221,6 +221,7 @@ Nine further ideas were each built in a separate branch and measured under the s
 | #61 | Boundary snap to the touch / restart frame | +0.0002 | off |
 | #62 | Expected-spellF1 (minimum Bayes risk) decoding | 0.000 ... -0.001 | off |
 | #63 | Pre-trained football ball model (roboflow/sports + supervision) on the real video | top hit within 2 m in 60 %, median 1.1 m; simulated -0.074 | off |
+| #64 | Implicit carrier + 22v22 pressure micro-geometry features for the hidden-ball specialist | B'(33) +0.0002; B'(1) +0.0023; A +0.0003 / +0.0014 | off |
 
 The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
 remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.
