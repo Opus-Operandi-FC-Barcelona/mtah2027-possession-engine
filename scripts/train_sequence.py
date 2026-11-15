@@ -8,6 +8,10 @@ Issue #71 (``--mixture``).  ``--exclude`` leaves a match out (leave-one-match-ou
 training matches for a dev check (never an evaluation cell).
 
     python scripts/train_sequence.py --data-dir D --out M/lomo/idsse_J03WMX.npz --exclude idsse_J03WMX
+
+Issue #74 (both off by default, the #72 network is reproduced): ``--extra-dir`` appends the carrier / swarm
+columns of Issue #64 (``sequence_data.py build --ref-dir``) to the input; ``--boundary-weight`` multiplies the
+emission loss of the frames within ``--boundary-window`` frames of a true direct H<->A change.
 """
 # ruff: noqa: E501
 from __future__ import annotations
@@ -71,14 +75,17 @@ def world_of(stem: str) -> str:
     return "pff" if stem.startswith("pff_") else ("idsse1" if "__a1_" in stem else "idsse33")
 
 
-def load_variants(data_dir: Path, exclude, val_matches):
+def load_variants(data_dir: Path, exclude, val_matches, extra_dir: Path | None = None):
     tr, va = [], []
     for p in sorted(data_dir.glob("*.npz")):
         match = p.stem.split("__")[0]
         if match == exclude:
             continue
         z = np.load(p)
-        item = {"x": z["x"], "y": z["y"], "vis": z["vis"], "blocks": z["blocks"], "world": world_of(p.stem),
+        x = z["x"]
+        if extra_dir is not None:
+            x = np.concatenate([x, np.load(extra_dir / p.name)["x"]], axis=1)
+        item = {"x": x, "y": z["y"], "vis": z["vis"], "blocks": z["blocks"], "world": world_of(p.stem),
                 "match": match}
         (va if match in val_matches else tr).append(item)
     return tr, va
@@ -99,8 +106,8 @@ def windows_sampler(variants, mixture, win, rng):
     return one
 
 
-def batch(sample, bs, win, mean, std, device, hw):
-    xs, ys, ts = [], [], []
+def batch(sample, bs, win, mean, std, device, hw, bw=0):
+    xs, ys, ts, bs_ = [], [], [], []
     for _ in range(bs):
         v, s = sample()
         x = (v["x"][s].astype(np.float32) - mean) / std
@@ -113,8 +120,9 @@ def batch(sample, bs, win, mean, std, device, hw):
         xs.append(np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0))
         ys.append(y)
         ts.append(t)
+        bs_.append(turnover_targets(np.where(y == 3, 9, y), bw) > 0 if bw else np.zeros(win, bool))
     return (torch.from_numpy(np.stack(xs)).to(device), torch.from_numpy(np.stack(ys)).to(device),
-            torch.from_numpy(np.stack(ts)).to(device))
+            torch.from_numpy(np.stack(ts)).to(device), torch.from_numpy(np.stack(bs_)).to(device))
 
 
 def main(argv=None) -> int:
@@ -133,11 +141,19 @@ def main(argv=None) -> int:
     ap.add_argument("--turn-weight", type=float, default=6.0)
     ap.add_argument("--half-window", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--extra-dir", default=None, help="Issue #74: carrier / swarm columns appended to the input")
+    ap.add_argument("--boundary-weight", type=float, default=1.0, help="Issue #74: emission loss weight near a change")
+    ap.add_argument("--boundary-window", type=int, default=75, help="frames either side of a true H<->A change")
     args = ap.parse_args(argv)
+    torch.set_num_threads(2)
 
     data_dir = Path(args.data_dir)
     names = json.loads((data_dir / "names.json").read_text(encoding="utf-8"))
-    tr, va = load_variants(data_dir, args.exclude, args.val)
+    extra_dir = Path(args.extra_dir) if args.extra_dir else None
+    if extra_dir is not None:
+        names = names + json.loads((extra_dir / "names.json").read_text(encoding="utf-8"))
+    tr, va = load_variants(data_dir, args.exclude, args.val, extra_dir)
+    bw = args.boundary_window if args.boundary_weight != 1.0 else 0
     mixture = dict(zip(("idsse33", "idsse1", "pff"), args.mixture))
     rng = np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
@@ -154,10 +170,14 @@ def main(argv=None) -> int:
     t0 = time.perf_counter()
     for step in range(args.steps):
         model.train()
-        x, y, t = batch(sample, args.batch, args.window, mean, std, device, args.half_window)
+        x, y, t, nb = batch(sample, args.batch, args.window, mean, std, device, args.half_window, bw)
         le, lt = model(x)
         m = y < 3
-        loss_e = F.cross_entropy(le[m], y[m])
+        if bw:
+            wgt = 1.0 + (args.boundary_weight - 1.0) * nb[m].float()
+            loss_e = (F.cross_entropy(le[m], y[m], reduction="none") * wgt).mean()
+        else:
+            loss_e = F.cross_entropy(le[m], y[m])
         loss_t = F.cross_entropy(lt[m], t[m], weight=tw)
         loss = loss_e + loss_t
         opt.zero_grad()
@@ -170,7 +190,8 @@ def main(argv=None) -> int:
                   f"({time.perf_counter() - t0:.0f} s)", flush=True)
     sm = model.export(mean, std, names, DILATIONS)
     sm.meta.update({"steps": args.steps, "exclude": args.exclude, "mixture": list(args.mixture),
-                    "seed": args.seed, "n_variants": len(tr)})
+                    "seed": args.seed, "n_variants": len(tr),
+                    "extra": bool(extra_dir), "boundary_weight": args.boundary_weight})
     sm.save(args.out)
     if va:
         sv = windows_sampler(va, {"pff": 1.0, "idsse33": 1.0, "idsse1": 1.0}, args.window,
@@ -180,7 +201,7 @@ def main(argv=None) -> int:
         with torch.no_grad():
             for _ in range(60):
                 v, s = sv()
-                x, y, t = batch(lambda: (v, s), 1, args.window, mean, std, device, args.half_window)
+                x, y, t, _ = batch(lambda: (v, s), 1, args.window, mean, std, device, args.half_window)
                 le, lt = model(x)
                 m = y < 3
                 accs.append((le.argmax(-1)[m] == y[m]).float().mean().item())

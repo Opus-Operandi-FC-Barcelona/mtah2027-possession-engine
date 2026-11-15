@@ -81,6 +81,17 @@ def turnover_targets(codes: np.ndarray, half_window: int = 5) -> np.ndarray:
     return y
 
 
+EXTRA_NAMES = tuple(f"sw:{k}" for k in ("swarm_home", "swarm_away", "carrier_vx_home", "carrier_vx_away",
+                                         "carrier_x_home", "carrier_x_away", "min_interteam_dist",
+                                         "duel_density_3m")) + ("diff:swarm", "diff:carrier_vx", "diff:carrier_x")
+
+
+def extra_names(feature_names: Sequence[str]) -> list[str]:
+    """Issue #74: the carrier / swarm columns (Issue #64) among ``feature_names`` (not part of the specialists'
+    feature matrix: the pipeline computes them from the front end when a model asks for them)."""
+    return [k for k in feature_names if k in EXTRA_NAMES]
+
+
 def select_columns(names: Sequence[str]) -> list[str]:
     """Feature names fed to the network (all but the ``ctx:`` columns)."""
     return [k for k in names if not k.startswith(FEATURE_DROP_PREFIX)]
@@ -101,6 +112,9 @@ class SequenceModel:
         self.meta = dict(meta or {})
         self.feature_names: list[str] = list(self.meta["feature_names"])
         self.dilations: list[int] = [int(d) for d in self.meta["dilations"]]
+
+    def extra_names(self) -> list[str]:
+        return extra_names(self.feature_names)
 
     # -------------------------------------------------------------------------------------------
     def _conv3(self, h: np.ndarray, w: np.ndarray, b: np.ndarray, d: int) -> np.ndarray:
@@ -182,6 +196,9 @@ class SequenceEnsemble:
             raise ValueError("an ensemble needs at least one member")
         self.members = list(members)
         self.meta = dict(meta or {})
+
+    def extra_names(self) -> list[str]:
+        return sorted({k for m in self.members for k in m.extra_names()})
 
     def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
                 ) -> tuple[np.ndarray, np.ndarray]:

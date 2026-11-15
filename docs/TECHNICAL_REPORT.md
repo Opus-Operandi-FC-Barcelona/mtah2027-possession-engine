@@ -1866,6 +1866,42 @@ blindness test OK (spellF1 0.751), format and SHA OK; the degraded-external KPI 
 anything): spellF1 0.700 [0.512, 0.887], macroF1 0.898.  Fallback chain: `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` (#72) with `visible_weight: 0.0`, `emission_scale: 0.5`;
 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b` (pre-#72) with `sequence_model.enabled: false`.
 
+### Sequence-model retraining with carrier/swarm features and boundary-weighted loss (Issue #74)
+
+Two retraining ideas for the TCN of #72, both OFF by default in code and not adopted. R64 adds the eleven carrier / swarm
+columns of #64 (`sw:*` and the three home-minus-away `diff:*`, not part of the specialists' feature matrix by default) to the
+network input; RB multiplies the emission loss by 2 within +-75 frames (3 s) of a true direct H<->A change; R64B does both.
+Same LOMO folds, external data, #71 mixture, architecture and training seed 0 as the #72 network (`--extra-dir`,
+`--boundary-weight` of `scripts/train_sequence.py`; `scripts/sequence_data.py build --ref-dir` writes the extra columns and
+checks that the degradation reproduces the stored sequences). At run time the pipeline appends the extra columns to the
+feature matrix only if a model asks for them (`sequence_model.extra_names`, `specialist_features.carrier_swarm_columns`),
+so the committed models and the default pipeline are untouched.
+
+Production changed to a two-seed ensemble with V50s integration (#73) after the issue was written, so (preregistration
+clarification on the issue) the variants were integrated exactly as V50s (`visible_weight` 0.5, `emission_scale` 0.8) and
+compared with the production setting using the #72 training-seed-0 networks alone as reference (B'(33) 0.7363, B'(1) 0.6759,
+A 0.6552). External matches only (IDSSE LOMO B' cells, eval seeds 0/1/2; A = first 20 PFF).
+
+| variant | B'(33) delta (seeds 0/1/2) | B'(1) delta (seeds 0/1/2) | A delta |
+|---|---|---|---|
+| R64 | +0.0038 (-0.0006/+0.0030/+0.0090) | +0.0130 (+0.0167/+0.0091/+0.0133) | +0.0007 |
+| RB | +0.0049 (+0.0007/+0.0062/+0.0079) | +0.0104 (+0.0109/+0.0085/+0.0117) | +0.0029 |
+| **R64B** | **+0.0089 (+0.0038/+0.0127/+0.0101)** | +0.0178 (+0.0229/+0.0126/+0.0180) | +0.0067 |
+
+R64B was chosen on B'(33) seed 0 only (+0.0038 vs +0.0007 and -0.0006). H<->A turnover recall (25 frames, pooled), ball
+visible / hidden at the true change, reference -> R64B: B'(33) 0.641 / 0.371 -> 0.660 / 0.432; B'(1) 0.631 / 0.368 ->
+0.654 / 0.431; A 0.520 / 0.451 -> 0.546 / 0.499 (R64: 0.641 / 0.381, 0.637 / 0.386, 0.524 / 0.449; RB: 0.660 / 0.399,
+0.657 / 0.415, 0.552 / 0.488). Possessions predicted (true): B'(33) 7473 -> 7759 (9183), B'(1) 7075 -> 7465 (9183), A 5798 ->
+6186 (7069), i.e. the boundary weight reduces the under-segmentation (RB 7689 / 7444 / 6158, R64 7488 / 7068 / 5786) at the
+price of more spurious turnovers (B'(33) 2513 -> 2643). Aggregates in `reports/issue74_sequence_retrain.json`.
+
+Verdict against the unchanged rule: NOT ADOPTED. R64B fails the first criterion, B'(33) +0.0089 < +0.010 (it misses by 0.0011;
+no eval seed is below -0.003, B'(1) and A are up). The boundary weight carries most of the gain (RB alone +0.0049, R64 alone
++0.0038), the two are roughly additive,. Production
+stays the #72/#73 two-seed ensemble (V50s); `models/sequence_tcn.json`, the configuration, the default pipeline and the
+synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are unchanged. Future work: a boundary
+weight combined with a second training seed of R64B, and tuning of the weight (x2 was the only value tried).
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
