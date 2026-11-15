@@ -48,6 +48,11 @@ class EmissionParams:
     w_phase: float = 0.3
     w_phase_alive: float = 0.0       # Issue #43: D logit lowered where the ball is hidden in a live phase
     w_long_ball: float = 0.0         # Issue #49: same for hidden-ball frames inside Long Ball / Ball in the Box phases
+    w_phase_hidden: float = 0.0      # Issue #65: extra phase-prior weight on the H-vs-A log-odds of hidden-ball frames
+    phase_hidden_min_s: float = 0.0  # ... only in hidden runs of at least this many seconds (0 = every hidden frame)
+    auto_calibrate_phase_hidden: bool = False   # Issue #65: label-free estimate of w_phase_hidden (learned route)
+    phase_hidden_cap: float = 2.5
+    phase_hidden_min_frames: int = 250
     w_owner: float = 4.0
     owner_channels: tuple = ("owner", "owning_team", "ball_owner", "possession", "possessor", "team",
                              "teamid", "team_id", "ballowner")
@@ -155,6 +160,44 @@ def _carry_events(values: np.ndarray, tau_frames: float, backward: bool) -> tupl
 def alive_prior_mask(phase_alive: np.ndarray, ball_visible: np.ndarray) -> np.ndarray:
     """1.0 where the ball is hidden and a live Smart Tagging phase covers the frame (Issue #43), else 0.0."""
     return (np.asarray(phase_alive, dtype=bool) & ~np.asarray(ball_visible, dtype=bool)).astype(np.float64)
+
+
+def hidden_run_mask(ball_visible: np.ndarray, min_frames: int) -> np.ndarray:
+    """[N] bool: hidden-ball frames belonging to a run of at least ``min_frames`` consecutive hidden frames
+    (``min_frames <= 1``: every hidden frame).  Issue #65."""
+    hid = ~np.asarray(ball_visible, dtype=bool)
+    if min_frames <= 1 or not hid.any():
+        return hid
+    edges = np.diff(np.concatenate(([0], hid.astype(np.int8), [0])))
+    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    out = np.zeros(len(hid), dtype=bool)
+    for a, b in zip(starts, ends):
+        if b - a >= min_frames:
+            out[a:b] = True
+    return out
+
+
+def auto_phase_hidden_weight(phase: np.ndarray, a_label: np.ndarray, visible: np.ndarray, *,
+                             params: EmissionParams | None = None) -> tuple[float, dict]:
+    """Label-free weight of the phase prior on hidden-ball frames (Issue #65).
+
+    On the visible frames where Specialist A is ultra-confident (``a_label`` in {0 H, 1 A}) and a phase prior exists,
+    ``q`` is the ``|phase|``-weighted share of frames whose prior sign names the same team.  The prior enters the
+    log-odds as ``(w_phase + w) * phase``, so ``w = clip(logit(q) - w_phase, 0, phase_hidden_cap)``.  Fewer than
+    ``phase_hidden_min_frames`` usable frames give 0 (nothing is invented).  No ground truth is used."""
+    p = params or EmissionParams.from_config()
+    lab = np.asarray(a_label)
+    ph = np.nan_to_num(np.asarray(phase, dtype=np.float64))
+    ok = np.asarray(visible, bool) & ((lab == 0) | (lab == 1)) & (ph != 0.0)
+    info = {"n_usable": int(ok.sum())}
+    if ok.sum() < p.phase_hidden_min_frames:
+        return 0.0, info
+    wt = np.abs(ph[ok])
+    match = ((ph[ok] > 0) == (lab[ok] == 0)).astype(np.float64)
+    q = (float((wt * match).sum()) + 0.5) / (float(wt.sum()) + 1.0)
+    info["agreement"] = round(q, 4)
+    w = float(np.clip(np.log(q) - np.log1p(-q) - p.w_phase, 0.0, p.phase_hidden_cap))
+    return round(w, 4), info
 
 
 def _carry(evidence: np.ndarray, valid: np.ndarray, p: EmissionParams, fps: float) -> np.ndarray:

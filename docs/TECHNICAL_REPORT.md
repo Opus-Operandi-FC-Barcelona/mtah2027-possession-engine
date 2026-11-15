@@ -999,6 +999,7 @@ on BAR-ATH only label-free aggregates (#58, #63).  Each experiment lives in its 
 | #61 | boundary snap to touch / restart | +0.0002 | within seed noise (~0.002) | not adopted, OFF |
 | #62 | expected-spellF1 (MBR) decoding | 0.0000 to -0.0007 | - | not adopted, OFF |
 | #63 | supervision + roboflow/sports ball model | -0.074 (simulated, 50 % recovery) | real video: top hit within 2 m 60 %, median 1.12 m, 1.18 false positives / frame | not adopted, OFF |
+| #65 | Smart Tagging phase prior on the H-vs-A odds of hidden frames (0.8 / 1.5 / 2.5 / auto, with and without cue) | +0.0009 (medium, best) to -0.0073 (high, 2.5) | B'(1) -0.001 to -0.021; A -0.007 to -0.034; turnover recall falls | not adopted, OFF |
 
 Outcome: nothing is adopted and the submission is unchanged (SHA256 `cac8927c2adc1b1a...`).  The positive cells (#61 +0.0002,
 and #44 +0.009 of Milestone 9) do not add up to the bar: every decoder-side change targets the same missed turnovers, which come
@@ -1337,6 +1338,57 @@ measured aggregates do not support.
 
 Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1`), then `agg --out-dir D`.
+
+### Phase prior on the H-vs-A odds of hidden-ball frames (Issue #65; not adopted, OFF)
+
+*Hypothesis.*  #43 only lowered the `D` logit under a live phase; the dominant error on hidden frames is the *team* of the
+possession (turnover recall 0.51 at B'(33)), and the Smart Tagging phase prior (`w_phase = 0.3`, `phase_prior_home` in
+[-1, 1]) is weak.  Giving it more weight only where the ball is hidden, and only on the `H`-vs-`A` log-odds, cannot touch the
+`D` decision.
+
+*Code* (learned route, `specialist_fusion.apply_priors`; default off, outputs and the synthetic SHA unchanged):
+`heuristic_emissions.w_phase_hidden` adds `w * phase_prior_home` to `z = log(pH / pA)` on hidden-ball frames (optionally only
+inside hidden runs of at least `phase_hidden_min_s`, `hidden_run_mask`); `p_dead = sigmoid(zd)` is exactly unchanged.
+`auto_calibrate_phase_hidden: true` replaces the weight by a label-free estimate (`auto_phase_hidden_weight`): on the visible
+frames where Specialist A is ultra-confident, `q` is the `|phase|`-weighted agreement of the prior sign with A's team, and
+`w = clip(logit(q) - w_phase, 0, phase_hidden_cap = 2.5)` (0 with fewer than 250 usable frames); logged as
+`report["phase_hidden"]` (weight, usable frames, agreement; aggregates only).  `scripts/decoder_sweep.py run --sim-noise
+{medium,high}` simulates the tags of #43 per cell (seed = cell seed) and candidates accept `"config": {"section.key": v}`
+overrides.  Tests: `tests/test_65_hidden_phase_prior.py`.
+
+*Protocol* (Milestone 10, same models and harness as Item 8; tags simulated as in #43 / #49, no BAR-ATH data): B'(33) seeds
+0-2, B'(1) seeds 0-2, A = PFF 4-fold (20 matches) and 8 unseen PFF.  Fixed beforehand: `w_phase_hidden` in {0.8, 1.5, 2.5, auto},
+each with and without `transition_matrix.phase_cue`.  Baseline = same tags, weight 0.  Without tags the harness reproduces
+the Milestone 10 baselines exactly (B'(33) 0.6693, B'(1) 0.6017, A 0.5263 / 0.5263).
+
+spellF1 (d = difference to the same-tag baseline; B'(33) seed deltas 0 / 1 / 2):
+
+| noise | variant | B'(33) | d (seeds) | B'(1) d | A 4-fold d | A unseen d |
+|---|---|---|---|---|---|---|
+| medium | baseline | 0.6610 | | 0.5942 | 0.5161 | 0.5193 |
+| medium | cue only | 0.6610 | +0.0000 | +0.0003 | +0.0001 | +0.0001 |
+| medium | 0.8 | 0.6619 | +0.0009 (+0.0023 / -0.0016 / +0.0019) | -0.0010 | -0.0069 | -0.0071 |
+| medium | 1.5 | 0.6609 | -0.0000 (+0.0009 / -0.0030 / +0.0021) | -0.0041 | -0.0102 | -0.0103 |
+| medium | 2.5 | 0.6585 | -0.0025 (-0.0023 / -0.0055 / +0.0004) | -0.0099 | -0.0163 | -0.0180 |
+| medium | auto | 0.6585 | -0.0025 (same as 2.5: the estimate sits at the cap) | -0.0099 | -0.0161 | -0.0180 |
+| high | baseline | 0.6589 | | 0.5917 | 0.5131 | 0.5174 |
+| high | cue only | 0.6591 | +0.0002 | -0.0002 | -0.0003 | +0.0003 |
+| high | 0.8 | 0.6577 | -0.0012 (-0.0012 / -0.0005 / -0.0018) | -0.0034 | -0.0129 | -0.0019 |
+| high | 1.5 | 0.6569 | -0.0020 (-0.0016 / -0.0022 / -0.0022) | -0.0106 | -0.0213 | -0.0104 |
+| high | 2.5 | 0.6516 | -0.0073 (-0.0087 / -0.0085 / -0.0047) | -0.0214 | -0.0336 | -0.0239 |
+| high | auto | 0.6525 | -0.0064 (-0.0072 / -0.0076 / -0.0044) | -0.0181 | -0.0309 | -0.0219 |
+
+The `+ phase_cue` rows differ from the rows above by at most 0.0005 in any world (the cue is neutral, as in #43).  Turnover recall (true `H<->A` changes matched, pooled; baseline at medium / high B'(33) 0.505 / 0.507,
+B'(1) 0.408, PFF 0.347, unseen 0.373): it falls with the weight in every world (B'(33) 0.503 / 0.501 / 0.497 at 0.8 / 1.5 / 2.5,
+PFF 0.328 / 0.315 / 0.309, unseen 0.362 / 0.352 / 0.332), i.e. the extra phase prior recovers none of the missed turnovers.
+
+**Decision: not adopted** (`w_phase_hidden: 0.0`, `phase_hidden_min_s: 0.0`, `auto_calibrate_phase_hidden: false`).  The rule
+(B'(33) >= +0.010 at medium **and** high with no seed below -0.003; B'(1) not down > 0.01; A not down > 0.03) fails: the best
+B'(33) cell is +0.0009 (medium, 0.8) and every weight is negative at high noise; at 2.5 / auto B'(1) is down 0.010-0.021 and A
+down 0.016-0.034.  The phases are coarse (the sampled tags jitter 3-6 s and 25-40 % are missing), and where the prior is
+wrong it overrules the specialist's turnover evidence, so the `H<->A` boundaries get later and fewer.  The calibration is
+agreement on *visible* frames, where the ball already decides the team, so it overestimates the value on hidden frames and
+lands on the cap at medium noise.  Code, tests and the harness options stay; the real match was not touched.
 
 ## 6. Limitations (honest list)
 

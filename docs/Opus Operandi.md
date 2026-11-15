@@ -221,6 +221,7 @@ Nine further ideas were each built in a separate branch and measured under the s
 | #61 | Boundary snap to the touch / restart frame | +0.0002 | off |
 | #62 | Expected-spellF1 (minimum Bayes risk) decoding | 0.000 ... -0.001 | off |
 | #63 | Pre-trained football ball model (roboflow/sports + supervision) on the real video | top hit within 2 m in 60 %, median 1.1 m; simulated -0.074 | off |
+| #65 | Smart Tagging phase prior on the H-vs-A odds of hidden-ball frames (fixed 0.8-2.5 and label-free auto) | B'(33) +0.0009 at best, -0.0073 at high noise; A down to -0.034 | off |
 
 The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
 remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.

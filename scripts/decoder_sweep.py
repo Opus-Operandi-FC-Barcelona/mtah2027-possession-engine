@@ -59,6 +59,15 @@ def candidate_config(raw: dict, route: dict) -> dict:
     return cfg
 
 
+def apply_config(raw: dict, overrides: dict) -> dict:
+    """``raw`` with top-level ``section.key`` overrides (Issue #65: ``"config"`` of a candidate)."""
+    cfg = copy.deepcopy(raw)
+    for dotted, value in (overrides or {}).items():
+        section, _, key = dotted.partition(".")
+        cfg.setdefault(section, {})[key] = value
+    return cfg
+
+
 def cells_for(world: str, bench: Path, seeds, n_pff: int = 20, n_unseen: int = 8) -> list[dict]:
     if world in ("b33", "b1"):
         files = sorted(bench.glob("idsse_*.npz"))
@@ -189,7 +198,7 @@ class CellCache:
         self.sf.build_feature_matrix, self.sf.member_probabilities = self.orig[2], self.orig[3]
 
 
-def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool, log) -> dict:
+def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool, log, sim_noise: str = "none") -> dict:
     from eval_external import score
 
     from mtah2027.models.specialist_c import turnover_recall
@@ -198,6 +207,12 @@ def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool
 
     players, team, ball, fps, pitch, periods, gt = load_cell_data(cell, config_raw)
     visible = np.isfinite(ball).all(axis=1)
+    smart = None
+    if sim_noise != "none":      # Issue #65: simulated Smart Tagging (as #43 / #49), seed = the cell seed
+        from mtah2027.io.smart_tagging_sim import NOISE_LEVELS, simulate_smart_tagging
+
+        smart = simulate_smart_tagging(gt, periods, fps, noise=NOISE_LEVELS[sim_noise], seed=cell["seed"],
+                                       n_frames=len(gt))
     n_tracked = ds.tracked_counts(players)
     store: dict = {}
     out: dict = {"cell": {k: v for k, v in cell.items() if k != "path"}, "results": {}}
@@ -206,10 +221,11 @@ def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool
     cache.install()
     try:
         for ci, cand in enumerate(cands):
-            cfg = candidate_config(config_raw, cand.get("route", {}))
+            cfg = candidate_config(apply_config(config_raw, cand.get("config")), cand.get("route", {}))
             spec = build_specialists(cand, cell, root, store, config_raw)
             core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
-                            log=lambda m: None, specialists=spec, durations=spec.durations)
+                            log=lambda m: None, specialists=spec, durations=spec.durations,
+                            smart_tagging=smart)
             row = score(gt, core.codes)
             row["turn"] = turnover_recall(gt, core.codes)     # Issue #57: true H<->A changes matched
             row["strata"] = ds.stratum_counts(gt, core.codes, n_tracked, visible)
@@ -217,7 +233,8 @@ def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool
             if verify and ci == 0:
                 cache.uninstall()
                 ref = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
-                               log=lambda m: None, specialists=spec, durations=spec.durations)
+                               log=lambda m: None, specialists=spec, durations=spec.durations,
+                               smart_tagging=smart)
                 cache.install()
                 out["verified"] = bool(np.array_equal(ref.codes, core.codes))
                 log(f"  verify {cell_id(cell)}: cached == uncached -> {out['verified']}")
@@ -247,7 +264,8 @@ def cmd_run(args) -> int:
         todo = [c for c in cands if c["name"] not in have["results"]]
         if not todo:
             continue
-        res = run_cell(cell, todo, Path(args.models_root), config_raw, args.verify, lambda s: print(s, flush=True))
+        res = run_cell(cell, todo, Path(args.models_root), config_raw, args.verify, lambda s: print(s, flush=True),
+                       sim_noise=args.sim_noise)
         res["results"] = {**have["results"], **res["results"]}
         path.write_text(json.dumps(res), encoding="utf-8")
         print(f"{cell_id(cell)}: {len(todo)} candidates in {res['seconds']} s", flush=True)
@@ -364,6 +382,8 @@ def main(argv=None) -> int:
     r.add_argument("--shard", default="0/1")
     r.add_argument("--n-pff", type=int, default=20, help="PFF matches of the 4-fold world (Issue #55: 56)")
     r.add_argument("--verify", action="store_true")
+    r.add_argument("--sim-noise", choices=("none", "low", "medium", "high"), default="none",
+                   help="Issue #65: simulated Smart Tagging noise level (none = no tags)")
     a = sub.add_parser("agg")
     a.add_argument("--out-dirs", nargs="+", required=True)
     a.add_argument("--baseline", default=None)
