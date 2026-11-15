@@ -1,0 +1,14 @@
+# Optional GPU vision environment of Issue #68 (NOT needed for the submission, NOT part of requirements.txt).
+# Separate venv outside OneDrive, Python 3.11, CUDA 12.4 wheels:
+#   py -3.11 -m venv C:/Users/<me>/vision-venv
+#   pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements-vision.txt
+# Licences: ultralytics is AGPL-3.0 (optional extra, already documented); torch BSD-3; opencv Apache-2.0.
+ultralytics==8.4.212
+ultralytics-thop==2.2.5
+opencv-python==5.0.0.93
+numpy==2.4.6
+pandas==3.1.1
+scipy==1.17.1
+PyYAML==6.0.3
+pillow==13.0.0

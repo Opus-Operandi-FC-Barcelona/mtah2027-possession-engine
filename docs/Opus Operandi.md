@@ -228,7 +228,24 @@ Twelve further ideas (#55-#66) were each built in a separate branch and measured
 The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
 remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.
 
-## 8. Reproduction
+## 8. Milestone 11: sequence model (adopted) and the video detector (not adopted)
+
+Six items (#67-#72), measured on external matches only (B'(33) / B'(1) / A, same protocol; adopt at >= +0.010 with no seed below -0.003).
+
+| Issue | Change | Result | Decision |
+|---|---|---|---|
+| #67 | Oracle ceiling of the hidden ball, error decomposition | correcting only the visible frames is worth more than the hidden ones | diagnostic |
+| #68 | Self-supervised ball detector fine-tuned on the tactical video (GPU) | top candidate within 0.3 m in about 15 %; confidence uninformative | not adopted |
+| #69 | Integration of the detector | not wired: accuracy far below the ~0.2 m needed | not adopted |
+| #70 | Research on other value sources | notes and aggregate probes | nothing adopted |
+| #71 | Label-free world selection | no variant adopted | defaults unchanged |
+| #72 | Non-causal TCN (8 residual blocks, receptive field about +-20 s) over the specialists' features; probabilities replace the hidden-ball emissions (E100), mean of two training seeds | B'(33) +0.0130 (seeds +0.0142 / +0.0114 / +0.0133), B'(1) +0.0394, A +0.0735 | **adopted** |
+
+Final submission after Milestone 11: SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` (two further runs identical; Python 3.13.14, Windows 11; `validate_submission.py` valid;
+273 possessions, mean 12.5 s, `D` 45.5 % of graded play frames).  Fallback = the submission before #72, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, reproduced with
+`sequence_model.enabled: false` in `configs/default.yaml` and the same command as above.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 11.
+
+## 9. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate

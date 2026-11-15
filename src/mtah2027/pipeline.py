@@ -463,7 +463,8 @@ def run_core(
         keep_features: bool = False, specialists: Any = None,
         homography: np.ndarray | None = None, durations: Any = None,
         players_speed_native: np.ndarray | None = None,
-        ball_source: np.ndarray | None = None) -> CoreResult:
+        ball_source: np.ndarray | None = None,
+        soft_evidence: tuple | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -517,12 +518,35 @@ def run_core(
         if cfg_route is not cfg:
             cfg = cfg_route
             em = heuristic_emissions(fe, fps, cfg, st)
+    seq_out = None      # Issue #72: sequence model (TCN) outputs (learned route only; off by default)
+    seq_params = None
+    if learned is not None and getattr(specialists, "seq", None) is not None:
+        from mtah2027.models.sequence_model import SequenceParams
+
+        seq_params = SequenceParams.from_config(cfg)
+        if seq_params.enabled and seq_params.mode != "off" and learned.features is not None:
+            seq_out = st.run("sequence_model", lambda: specialists.seq.predict(
+                learned.features.x, learned.features.names, play_blocks))
+    if seq_out is not None and seq_params.use_emissions:
+        from mtah2027.models.sequence_model import mix_hidden_emissions
+
+        em = dataclasses.replace(em, log_probs=mix_hidden_emissions(em.log_probs, seq_out[0], visible, seq_params))
     if ball_source is not None:    # Issue #66: temper the emissions of frames whose ball was injected (off: 1.0)
         from mtah2027.vision.tracklet_gate import temper_injected
 
         lp = temper_injected(em.log_probs, ball_source, float(VisionParams.from_config(cfg).injected_emission_scale))
         if lp is not em.log_probs:
             em = dataclasses.replace(em, log_probs=lp)
+    if soft_evidence is not None:   # Issue #67: detections as a tilt of the H/A odds (off: weight 0)
+        vp = VisionParams.from_config(cfg)
+        if vp.soft_evidence_weight:
+            from mtah2027.vision.soft_evidence import apply_soft_evidence, soft_tilt
+
+            ev_frames, ev_xy, ev_conf = soft_evidence
+            tilt = soft_tilt(len(em.log_probs), players_xy, team_of_slot, ev_frames, ev_xy, ev_conf,
+                             weight=vp.soft_evidence_weight, scale_m=vp.soft_evidence_scale_m,
+                             hold_frames=vp.soft_evidence_hold_frames)
+            em = dataclasses.replace(em, log_probs=apply_soft_evidence(em.log_probs, tilt))
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
@@ -542,7 +566,13 @@ def run_core(
                 fe.rules_report.update({"calibrated_weight": round(w_cal, 4), "calibration_n": n_cal})
 
     gate_probs = None     # Issue #57: Specialist C turnover gate (learned route only)
-    if TransitionParams.from_config(cfg).learned_gate_mode != "off":
+    tp_base = TransitionParams.from_config(cfg)
+    if seq_out is not None and seq_params.use_turnover:      # Issue #72: the TCN turnover head is the gate
+        from mtah2027.models.sequence_model import gate_probabilities, with_gate
+
+        gate_probs = gate_probabilities(seq_out[1])
+        tp_base = with_gate(tp_base, seq_params)
+    elif tp_base.learned_gate_mode != "off":
         if learned is None or learned.features is None:
             st.skip("learned_gate", "no learned route / feature matrix")
         else:
@@ -567,7 +597,7 @@ def run_core(
             ball_visible=visible, dead_score=dead_score, ball_out=sig.ball_out if sig is not None else None,
             restart_frames=restart_frames, restart_teams=restart_teams, restart_weights=restart_weights,
             fps=fps,
-            params=tp or TransitionParams.from_config(cfg),
+            params=tp or tp_base,
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
@@ -602,7 +632,7 @@ def run_core(
     if mp.enabled and learned is not None:     # variants of the learned route only
         def _mbr():
             runs = []
-            tp0 = TransitionParams.from_config(cfg)
+            tp0 = tp_base
             for scale, shift in zip(mp.scales, mp.ha_occluded_shifts):
                 lp = np.round(em.log_probs * scale, 6)
                 lt = (log_trans if shift == 0.0 else

@@ -1497,6 +1497,336 @@ so even a small simulated gain would not have justified enabling it.  `vision.en
 Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
+## Milestone 11: remaining margin in tactical video
+
+### Oracle ceiling of the hidden-ball value, accuracy curve, error decomposition and soft evidence (Issue #67; diagnostic, everything OFF)
+
+Question: how much spellF1 is left in the hidden-ball frames, as an upper bound for any video ball detector, and how accurate
+and clean must a detector be to reach +0.010?  External data only (never BAR-ATH): B'(33) = 7 IDSSE leave-one-match-out with the
+calibrated degrader at `dead_affinity` 33 (seeds 0-2), guard B'(1) (seed 0), production specialist route (`lomo_gap` models,
+default config), official metric.  `scripts/oracle_ceiling.py` extends the machinery of #63 / #66; the `none` rows reproduce the
+references exactly (B'(33) 0.6693 = 0.6709 / 0.6675 / 0.6695, B'(1) 0.6019).  Hidden frame = graded frame without ball in the
+degraded match; "restored" frames are written through the same `inject_points` as the real chain (cadence `k`: one point
+every `vision.every_k` = 5 frames of each gap, interpolated in between) or at every hidden frame (cadence `all`).  Coverage is
+nested per seed.  Run time: 69 scenarios on each seed-0 cell, 16 key rows on seeds 1-2; B'(1) has 13 key rows (seed 0); the 4
+refinement rows (sigma 0.2 / false positives 2 and 5 %) and all soft rows are seed 0 only (stated per row).
+
+**1. Oracle (true ball restored in the hidden frames).**  B'(33), d = spellF1 minus `none`:
+
+| coverage | cadence k=5: spellF1 | d | macroF1 d | per seed d (0 / 1 / 2) | every frame: spellF1 | d | per seed d |
+|---|---|---|---|---|---|---|---|
+| 100 % | 0.7104 | +0.0410 | +0.0188 | +0.0392 / +0.0406 / +0.0434 | 0.7154 | +0.0460 | +0.0452 / +0.0451 / +0.0478 |
+| 75 % (seed 0) | 0.7067 | +0.0358 | +0.0171 | | 0.7166 | +0.0457 | |
+| 50 % | 0.6977 | +0.0283 | +0.0155 | +0.0262 / +0.0278 / +0.0310 | 0.7123 | +0.0430 | +0.0430 / +0.0409 / +0.0450 |
+| 25 % | 0.6846 | +0.0153 | +0.0096 | +0.0143 / +0.0118 / +0.0198 | 0.7074 (seed 0) | +0.0365 | |
+
+B'(1) (seed 0, guard): 100 % k +0.1085, every frame +0.1128; 50 % k +0.0701, every frame +0.1071; 25 % k +0.0336.  So a perfect
+detector would be worth +0.041 to +0.046 on B'(33) (about 0.04 above the noise of spellF1) and +0.11 on B'(1), where the holes
+are mostly live-ball.  The cadence costs little at 100 % (-0.005) but matters at low coverage (the interpolation fills 49 % of the
+hidden frames at 25 % / k against 99.8 % at every frame).  Even with the true ball in every hidden frame the score stays
+0.715: the hidden frames are not where most of the spellF1 is lost (item 3).
+
+**2. Accuracy curve (true ball + isotropic Gaussian error sigma + false positives uniform 5-30 m away, injected as the ball,
+cadence k).**  B'(33) d; cells with 3 seeds give the mean, the others are seed 0 only (`s0`):
+
+| sigma | fp 0 %, cov 100 | fp 0 %, cov 50 | fp 10 %, cov 100 | fp 10 %, cov 50 | fp 25 %, cov 100 | fp 25 %, cov 50 |
+|---|---|---|---|---|---|---|
+| 0.1 m | +0.0229 | +0.0251 | -0.0188 (s0) | -0.0070 (s0) | -0.0607 (s0) | -0.0450 (s0) |
+| 0.3 m | -0.0119 (s0) | -0.0026 | -0.0407 (s0) | -0.0279 (s0) | -0.0711 (s0) | -0.0576 (s0) |
+| 0.5 m | -0.0320 | -0.0235 | -0.0528 (s0) | -0.0462 (s0) | -0.0790 (s0) | -0.0690 (s0) |
+| 1 m | -0.0648 (s0) | -0.0533 | -0.0745 | -0.0632 | -0.0986 (s0) | -0.0796 (s0) |
+| 2 m | -0.0922 (s0) | -0.0866 | -0.1017 (s0) | -0.0911 (s0) | -0.1172 (s0) | -0.0993 |
+
+Refinement (cov 50 %, seed 0): sigma 0.2 m, fp 0 -> +0.0113; sigma 0.1 m, fp 2 % -> +0.0151; sigma 0.1 m, fp 5 % -> +0.0061;
+sigma 0.2 m, fp 2 % -> +0.0020.  B'(1) guard (seed 0): sigma 0.5 m, fp 0, cov 100 +0.0317; sigma 0.3 m, fp 0, cov 50 +0.0471;
+sigma 1 m + fp 10 % at 50 % -0.0061 (at 100 % -0.0254).
+
+**Crossing +0.010 on B'(33): a detector has to put the ball within about 0.2 m (1 sigma) in the covered frames AND have fewer than
+about 2-3 % false positives; 50 % coverage is enough (the loss with sigma is steeper than the gain from coverage).**  The
+measured `sv_ball640` (41 % within 1 m, 24 % beyond 5 m or missing) sits in the sigma >= 1 m, fp ~ 20 % region of the table,
+between -0.06 and -0.10, consistent with #63 (-0.074).  Accuracy is not the whole story: a 0.5 m error with no false positives
+already loses -0.024 (50 %), because the injected ball feeds the ball-present specialist, which was trained on tracking-precision
+positions and reads contact / carrier geometry at sub-metre scale.
+
+**3. Error decomposition of the current route on B'(33)** (mean of 21 cells; official `possession_metrics` functions; hidden =
+graded frames without ball, 41 % of the graded frames).  "fix hidden / fix visible" = spellF1 if the prediction were replaced by
+the truth in the hidden (resp. visible) graded frames (not additive, a bound on where the loss lives):
+
+| | B'(33) | B'(1) (7 cells, seed 0) |
+|---|---|---|
+| spellF1 now | 0.6693 | 0.6019 |
+| fix hidden frames only | 0.7574 (+0.088) | 0.8367 (+0.235) |
+| fix visible frames only | 0.9215 (+0.252) | 0.7774 (+0.176) |
+| frame accuracy hidden / visible | 0.936 / 0.929 | 0.841 / 0.952 |
+| recall of H / A in hidden frames | 0.756 / 0.727 | 0.758 / 0.767 |
+| recall of H / A in visible frames | 0.913 / 0.914 | 0.922 / 0.917 |
+| recall of D in hidden / visible | 0.983 / 0.981 | 0.949 / 0.986 |
+| possessions: truth / predicted | 437 / 350 | 437 / 313 |
+
+In B'(33) the hidden holes sit largely in dead-ball stretches (`dead_affinity` 33), so most of what the current route loses is
+in frames where the ball IS visible.  Fate of the 437 true possessions at IoU 0.5 (B'(33); in brackets those mostly in hidden
+frames): matched 268 (23), merged into a predicted spell that also covers a neighbour 50 (10), boundary error 37 (8), split into
+>= 2 predicted spells 3 (1), no same-team overlap (missed) 80 (26).  Possession count errors are almost all merges / misses
+(the route predicts 350 spells against 437), not splits: it under-segments.  H<->A turnovers (matched within +-1 s): 336 true,
+174 matched, 161 missed (39 of them in hidden frames), 75 spurious; stops (to D): 99 true, 17 missed, 16 spurious; restarts
+(from D): 99 true, 17 missed, 16 spurious.  Median absolute latency of the matched boundaries: 1.4 frames for H<->A and for stops,
+0.9 for restarts, i.e. boundary timing is not the problem; the missing turnovers are.  With the oracle ball in every hidden
+frame (`orc100_all`) hidden-frame accuracy rises 0.936 -> 0.982, matched possessions 268 -> 293, missed turnovers in hidden
+frames 39 -> 21, but missed turnovers in visible frames stay at about 121 (total missed 161 -> 142) and spellF1 stops at
+0.715.  On B'(1) the picture is the opposite (live-ball holes: 158 of the 336 turnovers are in hidden frames, 120 of the 196 missed
+ones; fixing the hidden frames would give +0.235, the oracle ball +0.113).
+
+**4. Soft evidence** (`vision.soft_evidence_weight`, default 0 = off; `src/mtah2027/vision/soft_evidence.py`, wired in
+`run_core(..., soft_evidence=(frames, xy, conf))`).  The detection does not become the ball (the ball features stay empty); it
+only tilts the H / A emission by `weight * conf * tanh((d_A - d_H) / 3 m)` nats (d = distance of the detection to the nearest
+player of each team, applied within 5 frames of the detection; D untouched).  Same detections and error models as item 2, conf = 1,
+seed 0, B'(33) d:
+
+| detections | w = 1 | w = 2 | w = 4 |
+|---|---|---|---|
+| perfect, cov 100 | +0.0014 | -0.0020 | -0.0192 |
+| perfect, cov 50 | +0.0017 | -0.0007 | -0.0141 |
+| sigma 0.5 m, fp 10 %, cov 100 | +0.0029 | -0.0029 | -0.0203 |
+| sigma 0.5 m, fp 10 %, cov 50 | +0.0031 | -0.0007 | -0.0149 |
+| sigma 1 m, fp 10 %, cov 50 | +0.0025 | -0.0019 | -0.0168 |
+| sigma 2 m, fp 25 %, cov 100 | +0.0015 | -0.0030 | -0.0241 |
+| sigma 2 m, fp 25 %, cov 50 | +0.0024 | -0.0039 | -0.0205 |
+
+(sigma 0.3 m rows equal sigma 0 within 0.0005.)  B'(1) (seed 0): w = 1, perfect, cov 100 +0.0050; sigma 1 m, fp 10 %, cov 50 +0.0030.
+Soft evidence is far more tolerant of detector error than hard injection (it never loses more than 0.004 at w <= 2 with 2 m / 25 %
+false positives, where injection loses 0.10), but it also gains nothing: the best row is +0.0031, because a nearest-team tilt only
+repeats what the specialists already infer from the player geometry.  It is not a route to +0.010.
+
+**Conclusions.**  (a) The ceiling of a perfect hidden-ball detector is +0.041 (k = 5) to +0.046 (every frame) on B'(33) and +0.11 on
+B'(1); 25 % coverage already gives +0.015.  (b) Reaching +0.010 needs a median error <= ~0.2 m and < ~3 % false positives; a
+detector of the `sv_ball640` class (1 m, ~20 % far) cannot, and gating (#66) cannot fix that without a much more precise detector.
+(c) The main spellF1 losses of the current route on B'(33) are under-segmentation (350 predicted spells against 437) and missed
+H<->A turnovers in frames where the ball is visible (about 120 of 336 per match), not boundary latency and not the hidden-ball
+frames; the oracle leaves 0.715.  On B'(1)-like holes (live-ball occlusions) the video would matter much more.  (d) Soft evidence is
+safe but worth about +0.002.  Nothing is enabled: `vision.soft_evidence_weight` stays 0.0; the synthetic SHA256 is unchanged
+(2a31a913...).
+
+Reproduce: `python scripts/oracle_ceiling.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D` (and `--world b1
+--seeds 0 --rows <list>`), then `agg --out-dir D [D2 ...] --json reports/issue67_oracle_ceiling.json`.
+
+### Self-supervised ball detector on the GPU (Issue #68; aggregates only, not adopted, OFF)
+
+Question: can a detector fine-tuned on the match video itself (labels from the automatic tracking, no manual labels)
+reach the ~0.3 m top-candidate accuracy that #63's simulation says the possession model needs?
+
+Pipeline (all local; separate vision environment outside OneDrive: Python 3.11, torch 2.6.0+cu124, torchvision 0.21.0+cu124,
+ultralytics 8.4.212 (AGPL-3.0, optional), opencv 5.0.0.93; pins in `requirements-vision.txt`, RTX 3060 12 GB):
+
+1. `scripts/build_ball_dataset.py` (`vision/ball_dataset.py`): eligible frames = graded, ATD ball visible, usable homography,
+   projection inside the image (91 247).  Temporal split: 2-min blocks, every 5th block validation, 10 s guard band (train
+   frames near validation blocks dropped).  One frame in 4: 17 639 train positives (640x640 JPEG, the ball at a uniformly random
+   position of the window) + 1 579 ball-free crops; 4 500 validation frames x 2 lossless crops: `atd` (window around the ATD ball
+   plus a random offset <= 3 m, the ceiling) and `prior` (search point that does NOT use the ball: interpolation of a simulated gap
+   whose length is drawn from the real tracking gaps, pulled to the pressure centroid as in `attention_crops`; the ball is inside
+   the window in 70.5 % of them).  749 validation frames are within 2 s of a tracking gap.  25 min to build.
+2. Label quality (aggregate check): the ATD ground projection is not pixel-aligned with the ball seen in the video (the ball is
+   above the ground plane and the tracking has latency/noise); a first fine-tune on the raw ATD pixels did not learn at all
+   (classification loss flat at the trivial value, mAP50 ~0.02; about 1.4 h of GPU discarded).  `scripts/refine_ball_labels.py`
+   therefore relabels by agreement of two independent algorithmic sources: the public roboflow `football-ball-detection.pt`
+   (YOLOv8x, run locally as teacher) must have a candidate of confidence >= 0.4 within 40 px of the ATD pixel; the label is the teacher
+   box.  70.1 % of the positives agree (12 361 kept; median teacher-ATD distance 9.8 px, p90 28 px; the vertical bias is
+   systematic: teacher median 3.3 px above the ATD point).  Validation labels/metrics stay ATD-based.
+3. Training: yolov8s (COCO weights), imgsz 960, batch 16, AdamW lr 7e-4, no mosaic, 12 epochs = 75.5 min (7.5 min/epoch once the
+   machine was not CPU-starved).  The weights are not committed (`*.pt` is gitignored); they are reproduced by the three scripts.
+   mAP against the ATD boxes is uninformative (stays <= 0.01 because of the ATD offset), so epochs were judged by the metre metrics.
+
+Result on the validation blocks (top-confidence candidate vs the ATD ball, pitch metres via H^-1; `reports/issue68_detector_profile.json`):
+
+| detector / crops | within 0.3 / 0.5 / 1 / 2 / 5 m | median / p90 (m) | FP per crop (>5 m) | with detection |
+|---|---|---|---|---|
+| `sv_ball640` teacher, `atd` crops (4 500) | 14.1 / 26.0 / 44.2 / 60.4 / 75.6 % | 1.20 / 14.0 | 1.55 | 98.1 % |
+| fine-tuned s960, `atd` crops | 14.6 / 27.0 / 46.3 / 63.2 / 78.5 % | 1.00 / 8.5 | 0.22 | 92.4 % |
+| fine-tuned s960, `atd` near-gap (749) | 17.1 / 27.8 / 44.7 / 56.9 / 79.8 % | 1.12 / 6.8 | 0.23 | 93.9 % |
+| `sv_ball640` teacher, `prior` crops containing the ball (3 171) | 15.2 / 27.6 / 45.4 / 61.1 / 76.4 % | 1.14 / 14.3 | 1.48 | 97.5 % |
+| fine-tuned s960, `prior` crops | 15.8 / 28.5 / 47.6 / 64.2 / 79.8 % | 0.94 / 7.2 | 0.20 | 92.0 % |
+| fine-tuned s960, `prior` near-gap (494) | 17.4 / 27.9 / 46.4 / 58.3 / 82.4 % | 1.06 / 5.6 | 0.20 | 93.7 % |
+
+Inference at imgsz 1280 is no better (prior: 16.0 / 28.9 / 48.0 / 64.5 / 80.5 %, FP 0.31).  Crops centred on a prior that does not use the
+ball behave like the ceiling crops (the detector is robust to the search point as long as the ball is inside the window, 70.5 % here).
+The detector confidence is not informative: the share of correct top candidates is the same at every confidence gate (conf >= 0.7 still
+keeps 88 % of the frames, with 30 % within 0.5 m).  Top-candidate error histogram (bins <= 0.15 / 0.3 / 0.5 / 1 / 2 / 5 / 10 / >10 m, atd
+crops): 5.6 / 9.0 / 12.5 / 19.3 / 16.8 / 15.3 / 5.8 / 15.6 %.
+
+Cost: 30.2 crops/s on the RTX 3060 at imgsz 960 (teacher 15 crops/s while sharing the GPU).  The plan of #63 (one crop every 5 frames of the
+64 079 hidden graded frames = 12 687 crops) takes 7 min of GPU inference plus decoding; every hidden frame 35 min.  Decoding the tactical video
+runs at ~200 frames/s.
+
+**Conclusion: not adopted, no change to the submission route** (default pipeline and synthetic SHA unchanged; `vision.enabled` stays `false`).
+Self-supervised fine-tuning removes most false positives (1.5 -> 0.2 per crop) and shifts 1-2 points at every radius, but the top candidate is within 0.3 m in
+only ~15 % of the frames (the #63 simulation needs "most"), and the error profile (about 50 % within 1 m, 16 % beyond 10 m) is a clear
+improvement over #58/#63 only in the tail.  The ceiling is set by the labels: the ATD ground projection and an image ball (aerial, above the
+ground plane) differ by ~0.5-1 m, so a metre-accurate evaluation against the ATD needs a height model (`vision/aerial_filter.py`) that is not
+used here.  The profile is exported for the simulation of #69.  `ft_ball.FineTunedBallDetector` (same interface as the other detectors, GPU, lazy
+torch/ultralytics import) is available for running over the gap frames.
+
+Reproduce (vision venv): `build_ball_dataset.py --data-dir <data> --out <cache>/ds`, `refine_ball_labels.py --ds <cache>/ds --out <cache>/ds_ref --teacher
+<football-ball-detection.pt>`, `train_ball_detector.py --ds <cache>/ds --data <cache>/ds_ref/data.yaml --weights yolov8s.pt --imgsz 960 --epochs 12 --hours 1.7`,
+`eval_ball_detector.py --ds <cache>/ds --model ft=<last.pt>:960 --model sv=<teacher.pt>:640 --json reports/issue68_detector_profile.json`.
+
+### Integration decision for the self-supervised ball detector (Issue #69; decision only, not adopted, nothing wired)
+
+Plan of #69: simulate the value of the #68 detector in B'(33) / B'(1) with its measured error profile (hard injection, tracklet filter of #66, soft
+evidence of #67) and wire it behind `vision.*` only if a variant met the adoption rule (B'(33) >= +0.010, no seed below -0.003, B'(1) and A guards).
+
+Decision: **not adopted, no code and no change to the submission route.**  The measured profile of the fine-tuned detector (#68) has the top
+candidate within 0.3 m of the tracking ball in only ~15 % of the frames (about 50 % within 1 m, 16 % beyond 10 m), while the oracle ceiling of #67 and the
+simulation of #63 / #66 need about 0.2 m accuracy before the injected ball helps more than it hurts; the detector confidence is uninformative (the
+share of correct candidates does not rise with the confidence gate), so a gate cannot select the good detections.  Hard injection at this accuracy
+was already negative in the #63 / #66 simulations, and the tracklet filter of #66 discards most of the points.  Running the simulation would only
+re-confirm a value known to be below the rule, and the real run (GPU decoding of the tactical video) adds cost, an AGPL-3.0 dependency
+(ultralytics) and a model file that cannot be committed.  `vision.enabled` stays `false`; the sequence model of #72 is the milestone's adopted change.
+
+### Label-free world selection by adversarial validation (Issue #71; nothing adopted, defaults unchanged)
+
+`src/mtah2027/validation/world_selection.py`, `scripts/world_selection.py` (`features`, `fit`, `rescore`), `reports/issue71_domain_fit.json`,
+`reports/issue71_world_selection.json`.  Aggregates only for the real match; its feature matrix stays in the git-ignored `cache/`.
+
+*Domain classifier.*  Rows are the hidden-ball graded frames (every 5th of BAR-ATH, every 10th of the external matches).  32 features
+without any ball coordinate: tracked counts, median / mean / p80 player speed and slow-player shares, team spreads and spectral areas,
+line advance, velocity coherence, centrality, and gap structure (gap length, time since / until the ball was seen).  One gradient-boosting
+classifier per external world (balanced class mass, 5 folds grouped by match / one-minute block, out-of-fold probabilities), BAR-ATH against
+(a) the 7 IDSSE matches degraded at `dead_affinity` 33, (b) the same at 1, (c) the 64 PFF matches with their real occlusions:
+
+| world | AUC vs BAR-ATH | main features (held-out AUC drop; median BAR-ATH vs world) |
+|---|---|---|
+| IDSSE degraded, aff 33 | 0.989 | median player speed over 1 s (0.151; 0.98 vs 1.41 m/s), mean centroid speed, gap length (28.9 vs 42.4 s), p80 speed, share of players < 0.5 m/s (0.26 vs 0.06) |
+| IDSSE degraded, aff 1 | 0.988 | median speed (0.118; 0.98 vs 1.81 m/s), slow share (0.26 vs 0.05), p80 speed |
+| PFF real occlusions | 0.994 | slow share < 0.5 m/s (0.26 vs 0.09), median speed (0.98 vs 1.38 m/s), gap length (28.9 vs 24.1 s) |
+
+None of the three worlds is a good copy: all are separated almost perfectly, and what separates them is the same quantity found in #70, the
+share of slow players (a stopped game) in the hidden frames.  PFF is the closest on that axis (smd +0.69 vs +1.38 for aff 33 and +1.55 for aff 1).
+
+*Density ratios and mixture.*  `p_real / p_world = P / (1 - P)` (probabilities clipped to [0.01, 0.99]; AUC this high makes the ratios
+coarse).  EM over the BAR-ATH frames for the mixture `sum_w pi_w p_w` that minimises KL(p_real || p_mix): **pi = (0.320, 0.204, 0.476)** for
+(IDSSE aff 33, IDSSE aff 1, PFF), block-bootstrap 90 % interval (0.18-0.45, 0.12-0.31, 0.38-0.56).  The share of BAR-ATH frames whose
+estimated density is highest in each world is 0.61 / 0.14 / 0.25, so the mixture is weakly identified; the only robust statement is that
+PFF deserves a weight comparable to the degraded IDSSE world, not the zero it has in B'(33).  Match weights inside a world: mean frame
+density ratio per match (capped at p99), effective number of matches 6.5 / 6.2 / 60.9 (frames 2.8k / 2.1k / 98.9k).
+
+*Preregistration* (comment on #71, before any re-score): weighted metric M = sum_w pi_w sum_m v_m spellF1(w, m) over B'(33), B'(1) and A (the
+first 20 PFF matches, 4-fold), mean of seeds 0-2 (single-seed worlds use seed 0); adopt only if M >= +0.010 vs production, no seed below
+-0.003, B'(1) not down by more than 0.010 and A not down by more than 0.030.
+
+*Re-score* (existing per-cell results of #44 / #55 / #57, no retraining; the production cells reproduce 0.6693 / 0.6017 / 0.5263):
+
+| variant | B'(33) | B'(1) | A (20 PFF) | A (8 unseen) | M | delta M (seeds 0 / 1 / 2) |
+|---|---|---|---|---|---|---|
+| production | 0.6693 | 0.6017 | 0.5263 | 0.5263 | 0.5879 | - |
+| #55, 56 PFF in training | 0.6578 | 0.5948 | 0.5497 | 0.5559 | 0.5938 | **+0.0058** (+0.0081 / +0.0037 / +0.0058) |
+| #57 hard gate, C trained on IDSSE | 0.6633 | 0.5991 | 0.5374 | 0.5413 | 0.5902 | +0.0023 (+0.0017 / +0.0031 / +0.0021) |
+| #57 hard gate, C trained on IDSSE + PFF | 0.6620 | 0.5996 | 0.5374 | 0.5421 | 0.5901 | +0.0022 (+0.0018 / +0.0025 / +0.0024) |
+| training degrader aff 1 (legacy `mixed`) | 0.6512 | 0.6047 | 0.5231 | 0.5257 | 0.5809 | -0.0071 (-0.0086 / -0.0067 / -0.0058) |
+
+Sensitivity (M of a pure world, mean of seeds; production / #55 / hard-IDSSE / legacy): aff 33 0.6679 / 0.6559 / 0.6621 / 0.6494, aff 1
+0.6032 / 0.5978 / 0.5982 / 0.6067, PFF 0.5276 / 0.5503 / 0.5385 / 0.5237.  The sign of #55 and of the hard gate flips with the PFF weight
+(break-even near 0.30 for both, with the other two worlds in their fitted proportion); #55 would need about 0.6 to reach +0.010, the hard gate
+never does.
+
+Decision: **no variant meets the rule** (best, #55, +0.0058 < +0.010; its guards pass: B'(1) -0.0069, A +0.0235; the legacy degrader fails
+on two criteria).  Defaults, `configs/default.yaml`, `models/` and the synthetic SHA256 are unchanged.  What the item adds is the decision
+rule for the future: a candidate that gains in PFF and loses in B'(33) is worth a re-run only if the weighted M moves by >= +0.010; the
+weight of PFF in M is estimated, not known, and BAR-ATH has no labels to check it against.
+
+### Sequence model (Issue #72; ADOPTED: E100 hidden-ball emissions, two-seed ensemble, ON by default)
+
+`src/mtah2027/models/sequence_model.py` (NumPy inference, `sequence_model` config section, `SpecialistSet.seq`), `scripts/sequence_data.py`
+(dense training sequences), `scripts/train_sequence.py` (PyTorch, GPU venv), `scripts/sequence_eval.py` (cells + turnover recall),
+`reports/issue72_sequence_model.json` (aggregates), `tests/test_72_sequence_model.py`.  Nothing from BAR-ATH was used to train, tune or select.
+
+*Model.*  Non-causal dilated TCN (8 residual blocks, dilations 1..128, 64 channels, receptive field about +-20 s, 0.2 M parameters) over the
+per-frame feature matrix of the specialists (the columns without the hand-made `ctx:` windows), with two heads: H/A/D emission logits and a
+turnover head (none / H->A / A->H within +-5 frames, the targets of Specialist C).  Trained with window sampling (2048 frames, 6000 steps, about
+3 minutes on an RTX 3060) on degraded external matches: IDSSE with the calibrated degrader at `dead_affinity` 33 (2 training seeds) and 1 (1 seed),
+home/away swapped copies, and PFF matches 20..55 (never in the A cells or the 8 unseen), sampled with the #71 world mixture (0.32 / 0.20 / 0.48).
+Leave-one-match-out for the 7 IDSSE cells; one all-data model for A.  Training seeds (101..) are never evaluation seeds.  The weights are exported
+to `.npz` and run in NumPy (parity with torch 1e-6); the run-time pipeline needs no torch.  Two modes (the adopted default is `emissions`, see *Adoption* below):
+`emissions` (hidden-ball frames only: `log p = (1 - w) log p_prod + w * 0.5 * log p_seq`) and `turnover` (the turnover head replaces the touch rule as
+the H<->A opening through the #57 gate: `hard` / `max` / `blend`).
+
+*Preregistration* (comment on #72, before any score): fixed grid E50, E100 (emission weight 0.5 / 1.0), T-hard, T-max, T-blend, E50+T-max; variant
+chosen on B'(33) seed 0 only; rule B'(33) >= +0.010 with no seed below -0.003, B'(1) not down by more than 0.010, A not down by more than 0.030.
+
+*Result* (production re-run in the same cells: 0.6693 / 0.6017 / 0.5263; spellF1, mean over 7 matches; delta per eval seed 0 / 1 / 2):
+
+| variant | B'(33) | delta B'(33) (seeds) | B'(1) | delta B'(1) | A (20 PFF) | delta A |
+|---|---|---|---|---|---|---|
+| production | 0.6693 | - | 0.6017 | - | 0.5263 | - |
+| E50 | 0.6788 | +0.0095 (+0.0102 / +0.0089 / +0.0094) | 0.6267 | +0.0250 | 0.5678 | +0.0415 |
+| **E100** | **0.6799** | **+0.0106 (+0.0118 / +0.0087 / +0.0113)** | 0.6389 | +0.0372 | 0.5929 | +0.0666 |
+| T-hard | 0.6738 | +0.0044 (+0.0021 / +0.0037 / +0.0074) | 0.6043 | +0.0026 | 0.5436 | +0.0173 |
+| T-max | 0.6701 | +0.0008 | 0.6018 | +0.0001 | 0.5300 | +0.0038 |
+| T-blend | 0.6713 | +0.0020 | 0.6019 | +0.0002 | 0.5344 | +0.0082 |
+| E50+T-max | 0.6797 | +0.0104 (+0.0113 / +0.0092 / +0.0106) | 0.6278 | +0.0261 | 0.5719 | +0.0457 |
+
+Second training seed of the networks (E50 / E100 only, same cells): E100 B'(33) 0.6814 (+0.0121; +0.0114 / +0.0124 / +0.0126), B'(1) +0.0383, A +0.0736;
+E50 +0.0087 / +0.0269 / +0.0420.  macroF1 moves the same way (E100: +0.0055 B'(33), +0.0167 B'(1), +0.0175 A).
+
+*Turnover recall* (true direct H<->A changes matched by a predicted change of the same direction within 25 frames, pooled over cells; the stratum is the
+ball visibility at the true change; predicted changes in brackets):
+
+| variant | B'(33) visible | B'(33) hidden | B'(1) visible | B'(1) hidden | A visible | A hidden |
+|---|---|---|---|---|---|---|
+| production | 0.569 (6297) | 0.231 | 0.564 (5485) | 0.227 | 0.461 (4976) | 0.288 |
+| E100 | 0.570 (6539) | 0.348 | 0.568 (6051) | 0.344 | 0.495 (5499) | 0.407 |
+| T-hard | 0.565 (6246) | 0.259 | 0.555 (5489) | 0.253 | 0.460 (4860) | 0.324 |
+| T-max | 0.571 (6346) | 0.249 | 0.563 (5537) | 0.243 | 0.469 (5098) | 0.310 |
+
+Possessions predicted / true (B'(33)): production 7342 / 9183, E100 7481, T-hard 7286.
+
+*Reading.*  The sequence model works where the hidden-ball emissions are the problem: with the learned emissions on hidden frames, hidden-frame turnover
+recall rises from 0.23 to 0.35 (B' worlds) and from 0.29 to 0.41 (real occlusions) and the route predicts more possessions (7481 vs 7342 of 9183).  The
+second mode, the detector that opens the H<->A transition on all frames, does not reach the visible-ball turnovers (recall 0.57 whatever the gate),
+so the infra-segmentation of the visible frames found in #67 is not fixed by it; its small gains (T-hard +0.0044 B'(33), +0.0173 A) are below the rule.
+The variant selected on seed 0 of B'(33) is E100 (+0.0118).
+
+*Verdict.*  E100 meets the preregistered rule on both training seeds (B'(33) +0.0106 / +0.0121 with every eval seed above +0.0087, B'(1) up, A up), by a
+small margin on B'(33) (the rule is +0.010) and with the integration weight chosen on the same cells as the verdict (a fixed 6-variant grid, selection on
+seed 0).  The evaluation branch shipped it OFF; the owner then adopted it with a two-seed ensemble (see *Adoption* below).
+
+Reproduce (GPU venv for training, the main venv for the rest): `python scripts/sequence_data.py build --out-dir D`, `python scripts/train_sequence.py --data-dir D
+--out M/lomo/<match>.npz --exclude <match> --steps 6000` (and `--out M/full.npz` without `--exclude`), `python scripts/sequence_eval.py run --world b33|b1|pff
+--seeds 0 1 2 --models-root <lomo models of #44> --seq-root M --out-dir R`, then `agg --out-dirs R/b33 R/b1 R/pff`.
+
+*Adoption (production model).*  Owner decision after the evaluation above.  Preregistered on #72 before any ensemble score existed: the production
+model is the mean of the softmax probabilities of the training-seed-0 and training-seed-1 all-data models if the ensemble meets the same rule on
+every eval seed, else the seed-0 model alone.  Same cells (7 IDSSE leave-one-match-out matches at `dead_affinity` 33 / 1, eval seeds 0/1/2; A = first
+20 PFF matches), E100, ensemble of the two leave-one-match-out models of each cell:
+
+| variant | B'(33) delta (seeds 0/1/2) | B'(1) delta | A delta |
+|---|---|---|---|
+| production route | 0.6693 | 0.6017 | 0.5263 |
+| E100 seed-0 model (float32 run) | +0.0106 (+0.0118/+0.0087/+0.0113) | +0.0372 | +0.0666 |
+| E100 seed-0 model (float64 inference of the shipped loader) | +0.0106 (identical) | +0.0372 | +0.0666 |
+| E100 seed-1 model | +0.0121 (+0.0114/+0.0124/+0.0126) | +0.0383 | +0.0736 |
+| **E100 ensemble (seeds 0 + 1), shipped** | **+0.0130 (+0.0142/+0.0114/+0.0133)** | **+0.0394** | **+0.0735** |
+
+The ensemble meets the rule on every eval seed (B'(33) >= +0.010, none below -0.003, B'(1) and A up), so the ensemble is the production model.  The
+weight and the variant were chosen on the same external cells (thin margin); BAR-ATH was not used for any choice.  `models/sequence_tcn.json`
+(3.4 MB, JSON, float32 weights stored as shortest-repr decimals so loading returns the exact trained values; metadata: seeds, data, variant) is trained on
+all external data (no match left out).  `sequence_model.enabled: true, mode: emissions, emission_weight: 1.0` in `configs/default.yaml`;
+`resolve_specialists` attaches the file (logged and skipped if absent or unreadable, then the route is the pre-#72 one).
+
+*Cross-machine determinism.*  Inference is pure NumPy in float64 on the exact float32 weights, the emission and turnover probabilities of every member
+are rounded to 6 decimals, averaged, rounded again, and the mixed hidden-ball `log_probs` are rounded to 6 decimals like the rest of the pipeline, so BLAS
+differences (~1e-12) cannot reach the decoder (test in `tests/test_72_sequence_model.py`).
+
+*Fallback.*  The submission produced before #72 (SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced exactly with
+`sequence_model.enabled: false` (the pre-#72 route; flag off in `configs/default.yaml` or in a copy passed through `--config`).  The synthetic
+SHA256 changes from `2a31a913...` to `4224d1ca7c5d300d3637a5f2439ba692a4e951de002e170865714d3c6ed8bf3d` because the synthetic run uses the committed specialists.
+
+*Release after Milestone 11.*  Command: `python scripts/generate_submission.py --data-dir data --team "Opus Operandi"` (`--specialists auto` loads the
+committed models; `models/sequence_tcn.json` is attached because `sequence_model.enabled: true`).  New submission SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`, identical in three runs,
+`validate_submission.py` valid (Python 3.13.14, Windows 11; Python 3.11 in CI).  Label-free aggregates on the provided match: 273 possessions (266 before #72), mean
+12.5 s, `D` 45.5 % of the graded play frames (47.5 % before), 4 206 frames differ from the previous file (2.7 % of the graded frames).  KPI alarms: sanity OK
+(273 possessions, 12.5 s, D 46.5 % of graded, H 62.6 % of alive), blindness test OK (spellF1 0.765), format and SHA OK; the degraded-external KPI
+warns for the heuristic comparator route only (spellF1 0.271), not for the submission route.  Public 5 minutes (pipeline check only, not used to choose
+anything): spellF1 0.578 [0.422, 0.756], macroF1 0.873.  Previous submission (fallback, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced with `sequence_model.enabled: false`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
