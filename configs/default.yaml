@@ -333,6 +333,7 @@ specialist_features:
   context_windows: [50, 100]
   gk_context: false             # Issue #56: goalkeeper depth + change over +-gk_span frames (off = adopted set)
   gk_span: 150
+  carrier_swarm: false          # Issue #64: implicit carrier + 22v22 pressure micro-geometry (off = adopted set)
 
 # Issues #20-#22 -- shared gradient-boosting settings of the learned specialists (LightGBM with a scikit-learn
 # HistGradientBoosting fallback).  Generic priors; tuned on external matches only (leave-one-match-out).

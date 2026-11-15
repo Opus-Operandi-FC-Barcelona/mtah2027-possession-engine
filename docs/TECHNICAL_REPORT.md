@@ -999,6 +999,7 @@ on BAR-ATH only label-free aggregates (#58, #63).  Each experiment lives in its 
 | #61 | boundary snap to touch / restart | +0.0002 | within seed noise (~0.002) | not adopted, OFF |
 | #62 | expected-spellF1 (MBR) decoding | 0.0000 to -0.0007 | - | not adopted, OFF |
 | #63 | supervision + roboflow/sports ball model | -0.074 (simulated, 50 % recovery) | real video: top hit within 2 m 60 %, median 1.12 m, 1.18 false positives / frame | not adopted, OFF |
+| #64 | implicit carrier + 22v22 pressure micro-geometry features | +0.0002 | B'(1) +0.0023; A +0.0003 / +0.0014; turnover recall 0.518 (unchanged) | not adopted, OFF |
 
 Outcome: nothing is adopted and the submission is unchanged (SHA256 `cac8927c2adc1b1a...`).  The positive cells (#61 +0.0002,
 and #44 +0.009 of Milestone 9) do not add up to the bar: every decoder-side change targets the same missed turnovers, which come
@@ -1337,6 +1338,34 @@ measured aggregates do not support.
 
 Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1`), then `agg --out-dir D`.
+
+### Implicit carrier and 22-v-22 pressure micro-geometry for the hidden-ball specialist (Issue #64; not adopted, OFF)
+
+*Hypothesis.*  Without the ball, the team that has it is the one whose moving player is being converged on by the rivals.
+`features/carrier_swarm.py`, block `specialist_features.carrier_swarm` (default **false**; off = identical feature matrix and
+synthetic SHA256).  Per team, outfield players only (dynamic goalkeepers excluded): `swarm_score` = max over the moving
+(`|v| >= 1.5 m/s`) outfield players of the sum over outfield rivals within 3.5 m of `exp(-d_ij / 2.0) * max(closing_speed_ij, 0)`;
+`carrier_x` / `carrier_vx` of the argmax player; team-independent `min_interteam_dist` and `duel_density_3m` (home-away outfield
+pairs below 3.0 m); `diff:` (home minus away) of swarm / carrier columns; `ctx:` windows (50 / 100, as `context_windows`) of all of
+them.  Vectorised in 4096-frame chunks, NaN-safe, deterministic (`tests/test_64_carrier_swarm_features.py`, hand-built scenes).
+
+*Protocol* as Item 8: training rows rebuilt with the flag on (IDSSE calibrated degrader `dead_affinity` 33 + first 20 PFF at
+0.5), 7 LOMO models, 4 PFF folds and the all-data model (unseen PFF); `scripts/decoder_sweep.py`, default decoder.  Baseline
+= the cached default (reproduces 0.6693 / 0.6017 / 0.5263 / 0.5263 as in #56).
+
+| | default | carrier_swarm | delta |
+|---|---|---|---|
+| B'(33) mean (seeds 0 / 1 / 2) | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6695 (0.6685 / 0.6665 / 0.6734) | **+0.0002** (-0.0024 / -0.0010 / +0.0039) |
+| B'(33) macroF1 | 0.9206 | 0.9209 | +0.0003 |
+| B'(1) guard | 0.6017 | 0.6040 | +0.0023 |
+| A, first 20 PFF, 4-fold | 0.5263 | 0.5266 | +0.0003 |
+| A, 8 unseen PFF | 0.5263 | 0.5277 | +0.0014 |
+
+Turnover recall (`agg --turnover`, B'(33) pooled, 7053 true H<->A changes): 0.518 (3653 matched, 6332 predicted); the default is
+0.520 in #56, i.e. unchanged: the missed turnovers do not become visible through the pressure geometry either.
+
+**Rejected**: B'(33) +0.0002 against the +0.010 bar (the seed spread alone is -0.0024 .. +0.0039).  Guards pass but are moot.
+`configs/default.yaml` and `models/specialists*.json` unchanged; the flag stays false.
 
 ## 6. Limitations (honest list)
 

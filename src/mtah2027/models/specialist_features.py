@@ -61,6 +61,11 @@ CONTEXT_SIGNALS = (
 # added as ``ctx:`` columns when ``gk_context`` is on (off = the adopted feature set).
 GK_SIGNALS = ("cp:gk_xy_home_x", "cp:gk_xy_away_x")
 
+# Issue #64: carrier / swarm micro-geometry (features/carrier_swarm.py); signals that get ``ctx:`` windows
+SWARM_SIGNALS = ("sw:swarm_home", "sw:swarm_away", "sw:carrier_vx_home", "sw:carrier_vx_away",
+                 "sw:carrier_x_home", "sw:carrier_x_away", "sw:min_interteam_dist", "sw:duel_density_3m",
+                 "diff:swarm", "diff:carrier_vx", "diff:carrier_x")
+
 COUNT_COLUMNS = ("cp:n_field_home", "cp:n_field_away", "diff:n_field", "sig:n_active")
 
 
@@ -70,6 +75,8 @@ class FeatureParams:
     # Issue #56 -- goalkeeper depth and its +-gk_span (6 s) change as context columns (off = adopted).
     gk_context: bool = False
     gk_span: int = 150
+    # Issue #64 -- implicit carrier and 22v22 pressure micro-geometry (off = adopted feature set).
+    carrier_swarm: bool = False
     # Issue #42 -- invariance to player dropout (all off = the adopted feature set).
     neutralise_counts: bool = False       # count-like columns (n_field_*, diff:n_field, n_active) set to 0
     shape_min_field: int = 0              # team shape is NaN below this many outfield players
@@ -218,6 +225,23 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
         cx, cnames = context_features(x, names, play_blocks, (fp.gk_span,), signals=GK_SIGNALS)
         x = np.concatenate([x, cx], axis=1)
         names = names + cnames
+    if fp.carrier_swarm:
+        from mtah2027.features.carrier_swarm import NAMES as SW_NAMES
+        from mtah2027.features.carrier_swarm import carrier_swarm
+
+        sw = carrier_swarm(fe.pxy, fe.team, fe.pvel)
+        scols = [sw[k] for k in SW_NAMES]
+        snames = [f"sw:{k}" for k in SW_NAMES]
+        for base in ("swarm", "carrier_vx", "carrier_x"):
+            scols.append((sw[f"{base}_home"] - sw[f"{base}_away"]).astype(np.float32))
+            snames.append(f"diff:{base}")
+        sx = np.stack(scols, axis=1).astype(np.float32)
+        x = np.concatenate([x, sx], axis=1)
+        names = names + snames
+        if fp.context_windows:
+            cx, cnames = context_features(x, names, play_blocks, fp.context_windows, signals=SWARM_SIGNALS)
+            x = np.concatenate([x, cx], axis=1)
+            names = names + cnames
     return FeatureMatrix(x=x, names=names)
 
 
