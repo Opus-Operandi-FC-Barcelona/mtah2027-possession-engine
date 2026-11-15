@@ -464,6 +464,9 @@ def recover_ball(ball_xy: np.ndarray, players_xy: np.ndarray, homographies: Homo
         st["status"] = "no cache"
         return VisionResult(ball_before, src, st)
     frames, xy, _ = select_detections(ds, ball_before, fps=fps, pitch=pitch, params=p)
+    if p.tracklet_gate:                                     # Issue #66 (off by default)
+        from mtah2027.vision.tracklet_gate import gate_points
+        frames, xy = gate_points(frames, xy, fps=fps, params=p)
     ball, source = inject_points(ball_before, frames, xy, fps=fps, params=p)
     st = vision_stats(ball_before, source, plan, ds, play_blocks, len(frames), time.perf_counter() - t0,
                       max_frames)
