@@ -615,6 +615,31 @@ mimics the competition ATD (B').  Not run (would be a selection on the same B' w
 (about 0.18 per match).  `configs/default.yaml` and `models/specialists.json` are unchanged; `train_cv_models.py --full` and
 `decoder_sweep.py --n-pff / unseen_<variant>.json` stay as tools.
 
+**Issue #60 (seed bagging of the specialists; not adopted).**
+Same world, same training rows (IDSSE calibrated degrader `dead_affinity` 33 + the first 20 PFF at weight 0.5, training pickle
+fixed), two extra LightGBM seeds (1, 2; `deterministic=True`, `num_threads=1`; the seed-0 models are the first member), one model per
+LOMO fold (7 IDSSE), per PFF fold (4) and the all-data model for the unseen PFF.  The bag is a `--model-variant` style ensemble
+manifest (`format: ensemble`, `mode: linear`, equal weights; `specialist_fusion.save_bag_manifest`): class probabilities are averaged
+per frame before the soft priors, floor, scaling and 1e-6 quantisation, so it is deterministic.  Tools: `train_cv_models.py --seed
+N [--full]`, `train_specialists.py --seed N`, `train_specialists(seed=...)`; evaluation with `scripts/decoder_sweep.py` (the baseline
+reproduces 0.6693 / 0.6017 / 0.5263 / 0.5263 exactly).  spellF1:
+
+| | default (seed 0) | bag of 3 | delta | seed 1 alone | seed 2 alone |
+|---|---|---|---|---|---|
+| B'(33) mean (degradation seeds 0 / 1 / 2) | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6680 (0.6694 / 0.6667 / 0.6680) | **-0.0013** (-0.0015 / -0.0008 / -0.0015) | 0.6681 | 0.6676 |
+| B'(33) macroF1 | 0.9206 | 0.9207 | +0.0001 | 0.9201 | 0.9206 |
+| B'(1) guard | 0.6017 | 0.6005 | -0.0012 | 0.5999 | 0.5977 |
+| A, first 20 PFF, 4-fold | 0.5263 | 0.5263 | -0.0000 | 0.5258 | 0.5246 |
+| A, 8 unseen PFF | 0.5263 | 0.5266 | +0.0003 | 0.5260 | 0.5287 |
+
+The single extra seeds are within -0.0020 of the default on B'(33), i.e. the seed-to-seed spread is about 0.001-0.002, an order of
+magnitude below the +0.010 bar, and averaging three members removes none of the gap to the default (the members agree on the frames
+that decide the spells; the residual error is bias of the training world, not variance of the booster).  **Rejected**: B'(33) is
+-0.0013 (rule: mean >= +0.010; the "no seed below -0.003" condition holds but is moot), guards pass (B'(1) -0.0012, A +-0.000).  Not run: the
+bag over degradation seeds (a second training pickle with another degrader seed), planned only if the seed bag showed >= +0.005.
+`configs/default.yaml` and `models/specialists*.json` are unchanged; no `specialists_bag.json` is committed (the submission and the
+synthetic SHA256 do not change).
+
 ### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
 
 *Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players
