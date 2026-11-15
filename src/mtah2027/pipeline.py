@@ -54,6 +54,13 @@ from mtah2027.features.ball_kinematics import BallKinParams, compute_ball_kinema
 from mtah2027.features.ball_memory import BallMemoryParams, compute_ball_memory
 from mtah2027.features.collective_physics import CollectivePhysicsParams, compute_collective_physics
 from mtah2027.features.dead_ball_signals import DeadBallParams, compute_dead_ball_signals
+from mtah2027.features.player_possession import (
+    PlayerPossessionParams,
+    apply_emission_tilt,
+    compute_player_possession,
+    emission_tilt,
+    opening_masks,
+)
 from mtah2027.features.restart_rules import (
     RestartRuleParams,
     apply_team_rules,
@@ -74,6 +81,7 @@ from mtah2027.models.heuristic_emissions import (
     resolve_owner_team,
     touch_signal,
 )
+from mtah2027.postprocessing.boundary_refine import BoundaryRefineParams, refine_boundaries
 from mtah2027.postprocessing.boundary_snap import BoundarySnapParams, snap_boundaries
 from mtah2027.postprocessing.spell_optimizer import SpellParams, optimize_spells
 from mtah2027.postprocessing.submission_contract import enforce_submission_contract
@@ -560,6 +568,16 @@ def run_core(
                              weight=vp.soft_evidence_weight, scale_m=vp.soft_evidence_scale_m,
                              hold_frames=vp.soft_evidence_hold_frames)
             em = dataclasses.replace(em, log_probs=apply_soft_evidence(em.log_probs, tilt))
+    pposs = None          # Issue #80: per-player possession zones (off by default)
+    ppp = PlayerPossessionParams.from_config(cfg)
+    if ppp.enabled and bk is not None:
+        def _player_possession():
+            return compute_player_possession(bk.d_home, bk.d_away, bk.touch_score, visible, fe.is_aerial,
+                                             fps=fps, params=ppp)
+
+        pposs = st.run("player_possession", _player_possession)
+        if pposs is not None and ppp.usage in ("emission", "both"):
+            em = dataclasses.replace(em, log_probs=apply_emission_tilt(em.log_probs, emission_tilt(pposs, ppp)))
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
@@ -615,6 +633,11 @@ def run_core(
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
             transitions=fe.transitions, gate_probs=gate_probs)
+        if pposs is not None and ppp.usage in ("transition", "both"):    # Issue #80: control passes to the other team
+            to_h, to_a = opening_masks(pposs, ppp)
+            ha_open = (tp or tp_base).ha_open
+            lt[:, H, A] = np.where(to_a, np.maximum(lt[:, H, A], ha_open), lt[:, H, A])
+            lt[:, A, H] = np.where(to_h, np.maximum(lt[:, A, H], ha_open), lt[:, A, H])
         if crf_ha is not None:        # Issue #78 (C2): learned H<->A transition scores
             from mtah2027.models.sequence_crf import override_ha_transitions
 
@@ -705,6 +728,18 @@ def run_core(
         if res is not None:
             codes, snap_stats = res
 
+    # 10c. split decoded possessions at turnover-head peaks (Issue #79, off by default) -------------
+    brp = BoundaryRefineParams.from_config(cfg)
+    refine_stats: dict = {}
+    if brp.enabled:
+        if seq_out is None:
+            st.skip("boundary_refine", "no sequence-model turnover head (learned route with the TCN only)")
+        else:
+            res = st.run("boundary_refine", lambda: refine_boundaries(
+                codes, play_blocks=play_blocks, turnover_prob=seq_out[1], log_probs=em.log_probs, fps=fps, params=brp))
+            if res is not None:
+                codes, refine_stats = res
+
     diagnostics = {
         "stages": st.info, "n_frames": int(n), "n_slots": int(players_xy.shape[1]),
         "ball_visible_share": float(visible.mean()) if n else 0.0,
@@ -717,7 +752,7 @@ def run_core(
         "emission_source": emission_source, "restart_rules": fe.rules_report,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
-        "optimizer": opt_stats, "boundary_snap": snap_stats, "mbr": mbr_info,
+        "optimizer": opt_stats, "boundary_snap": snap_stats, "boundary_refine": refine_stats, "mbr": mbr_info,
     }
     if keep_features:
         feats.update({"dead_score": dead_score, "visible": visible, "log_probs": em.log_probs,

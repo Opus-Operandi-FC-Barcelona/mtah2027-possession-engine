@@ -2031,6 +2031,114 @@ The code stays in the repository OFF by default; production, `models/sequence_tc
 synthetic SHA256 are unchanged. Aggregates in `reports/issue78_sequence_crf.json`. Future work: train the CRF jointly with
 the decoder's transition structure (or decode with the CRF transitions alone) so that switch costs are not counted twice.
 
+### Post-decoding boundary refinement (Issue #79)
+
+ASRF-style refinement (Ishikawa et al., WACV 2021): after the Viterbi and the spell optimiser, inside every decoded H / A
+possession the TCN turnover head of #72 (`seq_out[1]`, H -> A / A -> H within +-5 frames) is searched for a local peak
+>= `peak_threshold`; if the emission log-odds of the other team averaged over the next `window_s` seconds are >= `margin`,
+the possession is split there and the remainder relabelled up to the next decoded boundary or until the same windowed
+evidence flips back. Implemented in `postprocessing/boundary_refine.py` (config section `boundary_refine`, OFF by default,
+applied in `run_core` after the boundary snap; read at top level because `route_overrides.specialists` does not hold it).
+Fixed a priori and outside the grid: pieces >= 0.5 s, peak = local maximum over +-5 frames. Preregistered grid (12 cells):
+peak threshold {0.5, 0.7, 0.9} x window {1 s, 2 s} x margin {0.5, 1.0}; no retraining; `scripts/boundary_refine_eval.py`
+(on top of `decoder_modules_eval.py`). Selection on B'(33) eval seed 0 only (comment on #79 before any held-out score);
+adoption on seeds 1-2: mean B'(33) delta >= +0.010, no seed < -0.003, B'(1) delta >= 0, A delta >= 0. External data only.
+
+*Selection.* `ship` reproduces 0.7448763. Nine cells decode identically to `ship`; the three with window 1 s and margin 0.5
+(any threshold) change 1 of 7 matches (+2 possessions) and score 0.7445881. Selected by the preregistered tie rule (best
+score, grid order): peak 0.5, window 1 s, margin 1.0 (= `ship` on seed 0). Diagnosis (one match): 2789 / 2641 head frames
+>= 0.5, 134 peak candidates inside a decoded possession of the matching direction, none with windowed evidence >= 0.5
+log-odds for the other team: the V50s emissions already agree with the decoded team, so the Viterbi is not missing changes
+that the emissions can see; the missed ones are those the network itself does not see.
+
+| selected cell vs `ship` | B'(33) seed 1 / 2 | mean seeds 1-2 | 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| delta spellF1 | +0.0006 / +0.0002 | **+0.0004** | +0.0003 | +0.0001 | +0.0002 |
+
+The refinement changes 5 of 55 held-out matches. Possessions predicted (true), selected vs `ship`: B'(33) 7427 vs 7423 (9183),
+B'(1) 4689 vs 4687 (6122), A 5769 vs 5767 (7069). Spurious turnovers: unchanged (2477, 1736, 2482). H<->A recall (visible /
+hidden): B'(33) 0.641 / 0.380 vs 0.640 / 0.380, B'(1) 0.630 / 0.378 vs 0.629 / 0.378, A 0.519 / 0.454 vs 0.518 / 0.453.
+Aggregates in `reports/issue79_boundary_refinement.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (+0.0004) is far below +0.010 (the guards pass: no seed
+below -0.003, B'(1) and A deltas >= 0). The turnover head and the emissions are the same information as the decoder already
+uses, so splitting with them recovers only a handful of possessions. Defaults, shipped route and the synthetic SHA256 are
+unchanged; the code stays OFF.
+
+### Per-player possession zones (Issue #80; not adopted, OFF)
+
+The challenge counts a possession change only when the opponent gains *controlled* possession. `features/player_possession.py`
+(vectorised NumPy, no loop over frames) derives a per-frame controlling team on ball-visible, non-aerial frames: a team is in the
+possession zone when its closest player is within R of the ball; when both teams are inside (duel rule) nobody gains control;
+control is confirmed when the same team is alone in the zone for C seconds (gaps of up to 3 frames bridged) or when two
+consecutive touches (`touch_score >= 0.7`, at most 3 s apart) belong to the same team. Usage: (a) emission, `0.5 * logit(0.8)`
+added to the H-vs-A log-odds of the V50s mix on frames with confirmed control; (b) transition, H<->A opened to `ha_open` within
++-7 frames of a change of confirmed controller (towards the team that gains control); (c) both. Config section `player_possession`
+(`enabled: false`); the switches are read from the top-level section, which the shipped route (`route_overrides.specialists`)
+does not override, and every one of the 12 cells changes the decoded labels (7/7 seed-0 cells each). Preregistered grid:
+R in {1.0, 1.5} m x C in {0.4, 0.8} s x usage in {emission, transition, both}. Reference: production as shipped (B'(33) seed 0
+0.7448763, reproduced). `scripts/player_possession_eval.py` reuses the memoised emissions of `decoder_modules_eval.py` (#77).
+External matches only; selection on B'(33) eval seed 0 (commented on the issue before any held-out score).
+
+*Selection (B'(33) seed 0 spellF1).* Emission cells 0.7386-0.7413 (all below ship: the controlling-team tilt over-weights
+short-lived zone occupancy and adds spurious flips), both cells 0.7386-0.7410, transition cells 0.7443-0.7450.
+**R = 1.5 m, C = 0.8 s, transition opening 0.7450** (ship 0.7449) selected.
+
+*Held-out.* Selected vs `ship`:
+
+| | B'(33) seed 1 / 2 | B'(33) mean (seeds 1-2) | B'(33) 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| delta spellF1 | -0.0005 / -0.0001 | **-0.0003** | -0.0001 | -0.0000 | -0.0003 |
+
+Absolute (selected / `ship`): B'(33) seeds 1-2 0.7359 / 0.7362, B'(1) 0.6846 / 0.6846, A 0.6594 / 0.6597. Possessions predicted
+(true), selected vs ship: B'(33) 7432 vs 7423 (9183), B'(1) 4687 vs 4687 (6122), A 5773 vs 5767 (7069). Spurious turnovers
+(25 frames): B'(33) 2482 vs 2477, B'(1) 1734 vs 1736, A 2488 vs 2482. H<->A recall (visible / hidden): B'(33) 0.642 / 0.379 vs
+0.640 / 0.380, B'(1) 0.630 / 0.378 vs 0.629 / 0.378, A 0.519 / 0.453 vs 0.518 / 0.453. Aggregates in
+`reports/issue80_player_possession.json`. Runtime of the signal on a full-length match (199,319 frames): 0.01 s.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta (-0.0003) is far below +0.010 and the B'(1) and A deltas are not >= 0. The
+rule-based control signal is already implied by what the network and the touch gate see (the learned turnover gate of #72 opens
+H<->A at the same touches), so it adds almost no information: the number of possessions barely moves (+9 on B'(33)) and recall
+does not improve. The code stays OFF; defaults, the shipped route and the synthetic SHA256 are unchanged
+(`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`).
+
+### Boundary-regression and segment-level losses (Issue #81; not adopted, OFF)
+
+Issue #74/#76 showed that weighting the emission loss near true H<->A changes is consistently positive but small.  Issue #81 acts on
+boundaries and segments directly, without extra branches at inference.  Two training-only losses were added to
+`scripts/train_sequence.py` (flags off by default, the #72 network and `models/sequence_tcn.json` are unchanged and the exported
+weight format is the same): `--boundary-loss W`, a single-channel boundary head on the TCN hidden state trained with binary
+cross-entropy (`pos_weight` 5) against a Gaussian-smoothed target (sigma 5 frames, max over events) around the true direct H<->A
+changes (a `D` between the two teams is not a change); the head is not exported.  `--segment-loss W`, a CDF-based segment loss
+(arXiv 2604.01859): in sliding windows (128 frames, stride 64) the L1 distance over time between the cumulative predicted and the
+cumulative true class distribution, divided by 25 frames, so a boundary placed `d` frames away costs about `d / 25`.
+
+Preregistered variants (training seed 0, 6000 steps, same LOMO folds, data, #71 mixture, architecture and inputs as #72, integrated as
+V50s): L1 = boundary loss 0.5; L2 = boundary 0.5 + segment 0.5; L3 = L2 + the #74 boundary weight x2.  Selection on B'(33) eval seed 0
+only, single-seed variants against the shipped two-seed production (0.7448763):
+
+| variant | B'(33) seed 0 | delta | possessions (true 3061) | H<->A recall visible / hidden | spurious |
+|---|---|---|---|---|---|
+| production V50s | 0.7449 | - | 2480 | 0.643 / 0.406 | 806 |
+| L1 | 0.7420 | -0.0028 | 2515 | 0.651 / 0.382 | 839 |
+| **L2** | **0.7454** | **+0.0005** | 2524 | 0.660 / 0.376 | 838 |
+| L3 | 0.7416 | -0.0032 | 2574 | 0.668 / 0.394 | 872 |
+
+L2 was selected and then trained with a second training seed (7 LOMO nets plus the all-data nets for seeds 0 and 1); the two-seed L2
+(V50s) was evaluated against production on the held-out eval seeds:
+
+| | B'(33) | delta (seeds 0/1/2) | B'(1) | delta (seeds 0/1/2) | A (20 PFF) | delta |
+|---|---|---|---|---|---|---|
+| production V50s | 0.7391 | - | 0.6841 | - | 0.6597 | - |
+| L2 two-seed | 0.7444 | +0.0053 (+0.0024/+0.0074/+0.0062) | 0.6865 | +0.0025 (+0.0002/+0.0019/+0.0053) | 0.6631 | +0.0034 |
+
+Rule: B'(33) seeds 1-2 mean delta +0.0068 < +0.010 (no seed below -0.003; B'(1) seeds 1-2 +0.0036 >= 0 and A +0.0034 >= 0, no bank
+down): **NOT ADOPTED**.  Possessions predicted (true): B'(33) 7423 -> 7444 (9183), B'(1) 7037 -> 7044 (9183), A 5767 -> 5763 (7069);
+H<->A recall visible / hidden: B'(33) 0.640/0.380 -> 0.648/0.375, B'(1) 0.640/0.375 -> 0.645/0.373, A 0.518/0.453 -> 0.525/0.462;
+spurious turnovers 2477 -> 2470, 2585 -> 2587, 2482 -> 2446.  The gain is smaller than the boundary-weighted loss of #74/#76
+(R64B2 +0.0097) and positive everywhere, but below the preregistered +0.010.  Production, `models/sequence_tcn.json`, the configuration
+and the synthetic SHA256 (`b89670c5...`) are unchanged.  Aggregates: `reports/issue81_segment_boundary_loss.json`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

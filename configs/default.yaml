@@ -183,6 +183,20 @@ sequence_model:
   half_window: 5
   crf_transition: false         # Issue #78 (C2): learned H<->A transitions replace the production ones (needs a CRF-trained model)
 
+# Issue #80 -- per-player possession zones with duel and control rules (features/player_possession.py).  Measured on the
+# external benchmarks and left OFF unless the adoption rule is met (docs/TECHNICAL_REPORT.md).
+player_possession:
+  enabled: false
+  usage: "emission"             # emission | transition | both
+  radius_m: 1.5                 # possession zone radius R
+  confirm_s: 0.8                # control confirmed after C s of the same team alone in the zone (or two same-team touches)
+  emission_weight: 0.5          # weight of the log-odds of the controlling team added to the H/A emissions
+  confidence: 0.8               # P behind that log-odds (fixed a priori)
+  touch_min_score: 0.7
+  touch_pair_max_s: 3.0
+  bridge_frames: 3
+  opening_halfwidth: 7          # frames around a change of confirmed control where H<->A opens to ha_open
+
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:
   log_init: [-0.6931, -0.6931, -3.0]   # log-prior of the first frame of a block: H, A, D
@@ -232,6 +246,17 @@ boundary_snap:
   window_frames: 12
   snap_ha: true
   snap_restart: true
+
+# Issue #79 -- post-decoding boundary refinement with the TCN turnover head (ASRF-style): inside each decoded H / A
+# possession, split at a turnover-head peak when the emissions of the following window favour the other team.
+# Off: not adopted unless the #79 rule is met.  Read at top level (not overridden in route_overrides).
+boundary_refine:
+  enabled: false
+  peak_threshold: 0.7
+  window_s: 2.0
+  margin: 1.0
+  min_piece_s: 0.5
+  peak_window_frames: 5
 
 # Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
 # Generic priors; to be tuned on external matches only.
