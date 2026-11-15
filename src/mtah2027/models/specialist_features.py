@@ -57,12 +57,19 @@ CONTEXT_SIGNALS = (
     "sig:dead_score")
 
 
+# Issue #56: goalkeeper depth of each team (orientation-normalised x, Issue #17); its +-gk_span change is
+# added as ``ctx:`` columns when ``gk_context`` is on (off = the adopted feature set).
+GK_SIGNALS = ("cp:gk_xy_home_x", "cp:gk_xy_away_x")
+
 COUNT_COLUMNS = ("cp:n_field_home", "cp:n_field_away", "diff:n_field", "sig:n_active")
 
 
 @dataclass(frozen=True)
 class FeatureParams:
     context_windows: tuple = (50, 100)    # frames; empty = no context features
+    # Issue #56 -- goalkeeper depth and its +-gk_span (6 s) change as context columns (off = adopted).
+    gk_context: bool = False
+    gk_span: int = 150
     # Issue #42 -- invariance to player dropout (all off = the adopted feature set).
     neutralise_counts: bool = False       # count-like columns (n_field_*, diff:n_field, n_active) set to 0
     shape_min_field: int = 0              # team shape is NaN below this many outfield players
@@ -117,14 +124,15 @@ def robust_physics(phys, fp: FeatureParams, fps: float = FPS, config_path=None):
 
 
 def context_features(x: np.ndarray, names: list[str], blocks: Sequence[tuple[int, int]] | None,
-                     windows: Sequence[int]) -> tuple[np.ndarray, list[str]]:
+                     windows: Sequence[int], signals: Sequence[str] | None = None
+                     ) -> tuple[np.ndarray, list[str]]:
     """``ctx:`` columns of the feature matrix ``x`` (see the module docstring).
 
     Every graded block is processed on its own, so no window crosses a block / half boundary; frames
     outside the blocks are NaN.  ``blocks=None`` treats the whole array as one block."""
     n = len(x)
     spans = [(0, n - 1)] if blocks is None else [(int(a), int(b)) for a, b in blocks]
-    sel = [(k, names.index(k)) for k in CONTEXT_SIGNALS if k in names]
+    sel = [(k, names.index(k)) for k in (CONTEXT_SIGNALS if signals is None else signals) if k in names]
     cols, out_names = [], []
     for key, j in sel:
         for w in windows:
@@ -204,6 +212,10 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
                 x[:, names.index(key)] = 0.0
     if fp.context_windows:
         cx, cnames = context_features(x, names, play_blocks, fp.context_windows)
+        x = np.concatenate([x, cx], axis=1)
+        names = names + cnames
+    if fp.gk_context:
+        cx, cnames = context_features(x, names, play_blocks, (fp.gk_span,), signals=GK_SIGNALS)
         x = np.concatenate([x, cx], axis=1)
         names = names + cnames
     return FeatureMatrix(x=x, names=names)

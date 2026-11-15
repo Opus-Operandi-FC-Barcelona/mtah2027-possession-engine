@@ -994,6 +994,39 @@ label-free aggregates of `apply_team_rules` (`diagnostics["restart_rules"]`: res
 tracking agreement) and of the calibration (`calibrated_weight`, `long_ball.weight`), which are printed with the other
 diagnostics and contain no per-frame data.
 
+### Multi-scale context windows and goalkeeper depth for the hidden-ball specialist (Issue #56; B' / A, not adopted)
+
+*Hypothesis.*  After a turnover while the ball is hidden the team shape and the goalkeepers (the recovering team's keeper steps up
+8-15 m in 5-8 s, the other drops) need 6-10 s to settle, so context windows of 25 / 75 / 175 / 250 frames (instead of 50 / 100) and
+the goalkeeper depth could expose it.  *Code* (`models/specialist_features.py`, all behind `specialist_features`, default unchanged):
+`context_windows` accepts any window list; `gk_context: true` adds, for the orientation-normalised keeper depth of each team
+(`cp:gk_xy_home_x` / `cp:gk_xy_away_x`, Issue #17 goalkeeper identification) the centred mean and the change
+`mean(t..t+W) - mean(t-W..t)` with `W = gk_span` (150 frames = 6 s); block-local, NaN-safe, vectorised, deterministic
+(`tests/test_56_multiscale_gk_context.py`).
+
+*Protocol* as Item 8 (Issue #44): 7 IDSSE leave-one-match-out with the calibrated degrader at `dead_affinity` 33 (B'(33), seeds 0 / 1 / 2),
+B'(1) and A (20 PFF, 4 folds) as guards; training rows rebuilt for every variant with the current default recipe (calibrated degrader
+affinity 33, IDSSE + PFF 0.5, `pff_max_matches` 20); models from `scripts/train_cv_models.py`, evaluation with `scripts/decoder_sweep.py`
+(default decoder).  The default baseline was recomputed with the same harness and reproduces the reported numbers exactly.
+
+| variant | B'(33) mean (seeds 0 / 1 / 2) | vs default (per seed) | B'(1) | A 4-fold (20) |
+|---|---|---|---|---|
+| default (windows 50 / 100) | 0.6693 (0.6709 / 0.6675 / 0.6695), macro 0.9206 | | 0.6017 | 0.5263 |
+| windows only (25, 75, 175, 250) | 0.6670 (0.6642 / 0.6649 / 0.6718) | -0.0023 (-0.0067 / -0.0026 / +0.0023) | 0.6012 (-0.0005) | 0.5304 (+0.0041) |
+| goalkeeper only (windows 50 / 100 + GK +-6 s) | 0.6674 (0.6654 / 0.6631 / 0.6736) | -0.0019 (-0.0055 / -0.0044 / +0.0041) | 0.6012 (-0.0005) | 0.5242 (-0.0021) |
+| both | 0.6668 (0.6694 / 0.6597 / 0.6712) | -0.0025 (-0.0015 / -0.0078 / +0.0017) | 0.6019 (+0.0002) | 0.5252 (-0.0011) |
+
+*Hidden-turnover diagnostic* (`dropout_strata`, B'(33) pooled over the three seeds, share of the true `H<->A` changes -- 7053 in
+the strata < 20 and >= 20 players -- that the decoded sequence misses): default 48.0 %, windows 48.5 %, goalkeeper 48.7 %, both 48.4 %.
+Recall of the turnovers is therefore unchanged (52.0 / 51.5 / 51.3 / 51.6 %): the slow settling of the shape and of the keepers is
+already captured by the existing 50 / 100-frame context, or is too noisy per frame to separate a turnover from the normal
+reorganisation of the block.
+
+**Decision: not adopted** (needed +0.010 on B'(33) with no seed below -0.003).  Every variant is slightly *below* the default on B'(33)
+(-0.0019 to -0.0025, with at least one seed below -0.003 in every variant; only seed 2 gains),
+so the defaults stay (`context_windows: [50, 100]`, `gk_context: false`).  The code stays available, OFF.  The all-data
+model of each variant (unseen-PFF guard) was not trained because the primary criterion already fails.
+
 ### Reproducibility of the learned route (Issue #52)
 
 RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
