@@ -102,7 +102,8 @@ def model_path(root: Path, cell: dict, variant: str) -> Path:
         return root / f"lomo_{variant}" / f"{cell['match']}.json"
     if cell["world"] == "pff":
         return root / f"pff_{variant}" / f"fold{cell['fold']}.json"
-    return REPO_ROOT / "models" / f"specialists_{variant}.json"
+    own = root / f"unseen_{variant}.json"      # Issue #60: candidate all-data model (else the committed one)
+    return own if own.is_file() else REPO_ROOT / "models" / f"specialists_{variant}.json"
 
 
 def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_raw: dict):
