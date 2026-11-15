@@ -18,11 +18,27 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 needs_lgbm = pytest.mark.skipif(not fc.lightgbm_available(), reason="lightgbm not installed")
 
 
-def test_default_config_is_off_and_valid():
+def test_default_config_is_e100_and_valid():
     p = sq.SequenceParams.from_config()
-    assert p.enabled is False and p.mode == "off"
-    assert not p.use_emissions and not p.use_turnover
-    assert load_section("sequence_model")["enabled"] is False
+    assert p.enabled is True and p.mode == "emissions" and p.emission_weight == 1.0
+    assert p.use_emissions and not p.use_turnover
+    assert load_section("sequence_model")["enabled"] is True
+
+
+def test_committed_model_is_a_two_seed_ensemble_and_attaches_only_when_enabled():
+    from mtah2027.models import specialist_fusion as sf
+
+    model = sq.load_sequence_json(REPO_ROOT / "models" / "sequence_tcn.json")
+    assert isinstance(model, sq.SequenceEnsemble) and len(model.members) == 2
+    assert [m.meta["seed"] for m in model.members] == [0, 1] and model.meta["training_seeds"] == [0, 1]
+    assert all(len(m.feature_names) == 122 and m.meta["exclude"] is None for m in model.members)
+    base = sf.SpecialistSet(a=None, b=None, fusion=None)
+    on = sf.attach_sequence_model(base, REPO_ROOT / "models")
+    assert isinstance(on.seq, sq.SequenceEnsemble)
+    off_cfg = {"sequence_model": {"enabled": False, "mode": "emissions"}}
+    assert sf.attach_sequence_model(base, REPO_ROOT / "models", off_cfg).seq is None
+    msgs = []
+    assert sf.attach_sequence_model(base, REPO_ROOT / "nowhere", None, msgs.append).seq is None and msgs
 
 
 def test_params_validation(tmp_path):
@@ -146,8 +162,9 @@ def test_pipeline_off_is_inert_and_modes_run(synthetic_kin, external_like_dir):
         return pipeline.run_core(td.players_xy, td.team_of_slot, ball, play_blocks=blocks, fps=td.fps,
                                  log=lambda s: None, specialists=specs, config_path=config)
 
-    plain = run(raw, base)
-    off = run(raw, with_seq)
+    off_cfg = cfg(enabled=False, mode="off")
+    plain = run(off_cfg, base)
+    off = run(off_cfg, with_seq)
     assert "sequence_model" not in off.diagnostics["stages"]                  # off: the stage does not even run
     assert np.array_equal(off.codes, plain.codes)
     em = run(cfg(enabled=True, mode="emissions", emission_weight=1.0), with_seq)
@@ -158,3 +175,40 @@ def test_pipeline_off_is_inert_and_modes_run(synthetic_kin, external_like_dir):
     both = run(cfg(enabled=True, mode="both"), with_seq)
     assert both.codes.shape == plain.codes.shape
     assert np.array_equal(run(cfg(enabled=True, mode="turnover"), base).codes, plain.codes)   # no model: inert
+
+
+def _toy(names, seed=0):
+    return sq.random_model(names, channels=8, dilations=(1, 2, 4), seed=seed)
+
+
+def test_json_round_trip_is_exact_and_loader_picks_ensemble(tmp_path):
+    names = [f"f{i}" for i in range(6)]
+    m0, m1 = _toy(names, 0), _toy(names, 1)
+    p = sq.save_sequence_json(sq.SequenceEnsemble([m0, m1], {"note": "toy"}), tmp_path / "m.json")
+    ens = sq.load_sequence_json(p)
+    assert isinstance(ens, sq.SequenceEnsemble) and len(ens.members) == 2
+    for a, b in zip((m0, m1), ens.members):
+        assert a.w.keys() == b.w.keys()
+        assert all(np.array_equal(a.w[k], b.w[k]) and b.w[k].dtype == np.float32 for k in a.w)
+    single = sq.load_sequence_json(sq.save_sequence_json(m0, tmp_path / "s.json"))
+    assert isinstance(single, sq.SequenceModel) and np.array_equal(single.w["w_in"], m0.w["w_in"])
+    x = np.random.default_rng(0).normal(size=(200, 6))
+    pe, pt = ens.predict(x, names, [(0, 199)])
+    want = np.round((m0.predict(x, names, [(0, 199)])[0] + m1.predict(x, names, [(0, 199)])[0]) / 2, 6)
+    assert np.allclose(pe, want, atol=1e-6) and np.allclose(pe.sum(axis=1), 1.0, atol=2e-6)
+    assert np.isfinite(pt).all()
+
+
+def test_predictions_are_float64_and_quantised_against_blas_noise():
+    names = [f"f{i}" for i in range(6)]
+    m = _toy(names)
+    x = np.random.default_rng(1).normal(size=(300, 6))
+    pe, pt = m.predict(x, names, [(0, 299)])
+    assert pe.dtype == np.float64 and np.array_equal(pe, np.round(pe, 6)) and np.array_equal(pt, np.round(pt, 6))
+    z = m.standardise(x, names)
+    assert z.dtype == np.float64
+    # a 1e-11 perturbation (what a different BLAS does) must not change the quantised output
+    noisy = _toy(names)
+    noisy._d = {k: v * (1.0 + 1e-13) for k, v in noisy._d.items()}
+    pe2, _ = noisy.predict(x, names, [(0, 299)])
+    assert np.array_equal(pe, pe2)

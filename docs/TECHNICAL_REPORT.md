@@ -1499,7 +1499,7 @@ Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --see
 
 ## Milestone 11
 
-### Sequence model (Issue #72; rule met on external matches, shipped OFF, defaults and synthetic SHA256 unchanged)
+### Sequence model (Issue #72; ADOPTED: E100 hidden-ball emissions, two-seed ensemble, ON by default)
 
 `src/mtah2027/models/sequence_model.py` (NumPy inference, `sequence_model` config section, `SpecialistSet.seq`), `scripts/sequence_data.py`
 (dense training sequences), `scripts/train_sequence.py` (PyTorch, GPU venv), `scripts/sequence_eval.py` (cells + turnover recall),
@@ -1560,6 +1560,33 @@ Synthetic SHA256 of the default route is unchanged (`2a31a913...`).
 Reproduce (GPU venv for training, the main venv for the rest): `python scripts/sequence_data.py build --out-dir D`, `python scripts/train_sequence.py --data-dir D
 --out M/lomo/<match>.npz --exclude <match> --steps 6000` (and `--out M/full.npz` without `--exclude`), `python scripts/sequence_eval.py run --world b33|b1|pff
 --seeds 0 1 2 --models-root <lomo models of #44> --seq-root M --out-dir R`, then `agg --out-dirs R/b33 R/b1 R/pff`.
+
+*Adoption (production model).*  Owner decision after the evaluation above.  Preregistered on #72 before any ensemble score existed: the production
+model is the mean of the softmax probabilities of the training-seed-0 and training-seed-1 all-data models if the ensemble meets the same rule on
+every eval seed, else the seed-0 model alone.  Same cells (7 IDSSE leave-one-match-out matches at `dead_affinity` 33 / 1, eval seeds 0/1/2; A = first
+20 PFF matches), E100, ensemble of the two leave-one-match-out models of each cell:
+
+| variant | B'(33) delta (seeds 0/1/2) | B'(1) delta | A delta |
+|---|---|---|---|
+| production route | 0.6693 | 0.6017 | 0.5263 |
+| E100 seed-0 model (float32 run) | +0.0106 (+0.0118/+0.0087/+0.0113) | +0.0372 | +0.0666 |
+| E100 seed-0 model (float64 inference of the shipped loader) | +0.0106 (identical) | +0.0372 | +0.0666 |
+| E100 seed-1 model | +0.0121 (+0.0114/+0.0124/+0.0126) | +0.0383 | +0.0736 |
+| **E100 ensemble (seeds 0 + 1), shipped** | **+0.0130 (+0.0142/+0.0114/+0.0133)** | **+0.0394** | **+0.0735** |
+
+The ensemble meets the rule on every eval seed (B'(33) >= +0.010, none below -0.003, B'(1) and A up), so the ensemble is the production model.  The
+weight and the variant were chosen on the same external cells (thin margin); BAR-ATH was not used for any choice.  `models/sequence_tcn.json`
+(3.4 MB, JSON, float32 weights stored as shortest-repr decimals so loading returns the exact trained values; metadata: seeds, data, variant) is trained on
+all external data (no match left out).  `sequence_model.enabled: true, mode: emissions, emission_weight: 1.0` in `configs/default.yaml`;
+`resolve_specialists` attaches the file (logged and skipped if absent or unreadable, then the route is the pre-#72 one).
+
+*Cross-machine determinism.*  Inference is pure NumPy in float64 on the exact float32 weights, the emission and turnover probabilities of every member
+are rounded to 6 decimals, averaged, rounded again, and the mixed hidden-ball `log_probs` are rounded to 6 decimals like the rest of the pipeline, so BLAS
+differences (~1e-12) cannot reach the decoder (test in `tests/test_72_sequence_model.py`).
+
+*Fallback.*  The submission produced before #72 (SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced exactly with
+`sequence_model.enabled: false` (the pre-#72 route; flag off in `configs/default.yaml` or in a copy passed through `--config`).  The synthetic
+SHA256 changes from `2a31a913...` to `4224d1ca7c5d300d3637a5f2439ba692a4e951de002e170865714d3c6ed8bf3d` because the synthetic run uses the committed specialists.
 
 ## 6. Limitations (honest list)
 

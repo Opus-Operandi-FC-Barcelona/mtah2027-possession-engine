@@ -32,6 +32,8 @@ from mtah2027.config import load_section, params_from_mapping
 MODEL_FORMAT = 1
 MODES = ("off", "emissions", "turnover", "both")
 GATE_MODES = ("hard", "max", "blend")
+PROB_DECIMALS = 6                      # emission / turnover probabilities are quantised before they are mixed
+JSON_FORMAT = 1
 FEATURE_DROP_PREFIX = "ctx:"          # hand-made context windows: the network sees the context itself
 
 
@@ -93,7 +95,8 @@ class SequenceModel:
     """Fitted TCN (weights as NumPy arrays)."""
 
     def __init__(self, weights: dict, meta: dict | None = None):
-        self.w = {k: np.asarray(v, dtype=np.float32) for k, v in weights.items()}
+        self.w = {k: np.asarray(v, dtype=np.float32) for k, v in weights.items()}     # as trained / stored
+        self._d = {k: v.astype(np.float64) for k, v in self.w.items()}                # exact float32 values, float64 maths
         self.meta = dict(meta or {})
         self.feature_names: list[str] = list(self.meta["feature_names"])
         self.dilations: list[int] = [int(d) for d in self.meta["dilations"]]
@@ -102,22 +105,23 @@ class SequenceModel:
     def _conv3(self, h: np.ndarray, w: np.ndarray, b: np.ndarray, d: int) -> np.ndarray:
         """``y[t] = sum_k h[t + (k - 1) d] @ w[k] + b`` with zero padding (``w[3, C, C]``)."""
         n = len(h)
-        pad = np.zeros((n + 2 * d, h.shape[1]), np.float32)
+        pad = np.zeros((n + 2 * d, h.shape[1]), np.float64)
         pad[d:d + n] = h
         return pad[:n] @ w[0] + pad[d:d + n] @ w[1] + pad[2 * d:2 * d + n] @ w[2] + b
 
     def forward(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """``(emission_logits[N, 3], turnover_logits[N, 3])`` of one standardised block ``x[N, F]``."""
-        h = x.astype(np.float32) @ self.w["w_in"] + self.w["b_in"]
+        w = self._d
+        h = x.astype(np.float64) @ w["w_in"] + w["b_in"]
         for i, d in enumerate(self.dilations):
-            r = np.maximum(self._conv3(h, self.w[f"w1_{i}"], self.w[f"b1_{i}"], d), 0.0)
-            h = h + r @ self.w[f"w2_{i}"] + self.w[f"b2_{i}"]
-        return h @ self.w["w_e"] + self.w["b_e"], h @ self.w["w_t"] + self.w["b_t"]
+            r = np.maximum(self._conv3(h, w[f"w1_{i}"], w[f"b1_{i}"], d), 0.0)
+            h = h + r @ w[f"w2_{i}"] + w[f"b2_{i}"]
+        return h @ w["w_e"] + w["b_e"], h @ w["w_t"] + w["b_t"]
 
     def standardise(self, x: np.ndarray, names: Sequence[str]) -> np.ndarray:
         idx = [list(names).index(k) for k in self.feature_names]
-        z = (x[:, idx].astype(np.float32) - self.w["mean"]) / self.w["std"]
-        return np.nan_to_num(z, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        z = (x[:, idx].astype(np.float32).astype(np.float64) - self._d["mean"]) / self._d["std"]
+        return np.nan_to_num(z, nan=0.0, posinf=0.0, neginf=0.0)
 
     def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
                 ) -> tuple[np.ndarray, np.ndarray]:
@@ -133,8 +137,9 @@ class SequenceModel:
             if b < a:
                 continue
             le, lt = self.forward(z[a:b + 1])
-            pe[a:b + 1] = _softmax(le.astype(np.float64))
-            pt[a:b + 1] = _softmax(lt.astype(np.float64))
+            # float64 maths, then quantised: BLAS differences between machines (1e-12) cannot reach the decoder
+            pe[a:b + 1] = np.round(_softmax(le), PROB_DECIMALS)
+            pt[a:b + 1] = np.round(_softmax(lt), PROB_DECIMALS)
         return pe, pt
 
     # -------------------------------------------------------------------------------------------
@@ -145,6 +150,20 @@ class SequenceModel:
                  **self.w)
         return out
 
+    def to_json_dict(self) -> dict:
+        """Weights as shortest-repr float32 decimals: ``np.float32(float(v)) == v`` for every stored value."""
+        weights = {k: {"shape": list(v.shape), "values": [float(str(x)) for x in v.ravel()]}
+                   for k, v in sorted(self.w.items())}
+        return {"meta": {"format": MODEL_FORMAT, **self.meta}, "weights": weights}
+
+    @classmethod
+    def from_json_dict(cls, d: dict) -> "SequenceModel":
+        meta = dict(d["meta"])
+        if meta.get("format") != MODEL_FORMAT:
+            raise ValueError(f"unsupported sequence model format {meta.get('format')!r}")
+        w = {k: np.asarray(v["values"], dtype=np.float32).reshape(v["shape"]) for k, v in d["weights"].items()}
+        return cls(w, meta)
+
     @classmethod
     def load(cls, path: str | Path) -> "SequenceModel":
         z = np.load(path, allow_pickle=False)
@@ -152,6 +171,47 @@ class SequenceModel:
         if meta.get("format") != MODEL_FORMAT:
             raise ValueError(f"unsupported sequence model format {meta.get('format')!r}")
         return cls({k: z[k] for k in z.files if k != "__meta__"}, meta)
+
+
+class SequenceEnsemble:
+    """Mean of the (quantised) softmax probabilities of several TCNs, e.g. different training seeds."""
+
+    def __init__(self, members: Sequence[SequenceModel], meta: dict | None = None):
+        if not members:
+            raise ValueError("an ensemble needs at least one member")
+        self.members = list(members)
+        self.meta = dict(meta or {})
+
+    def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
+                ) -> tuple[np.ndarray, np.ndarray]:
+        outs = [m.predict(x, names, blocks) for m in self.members]
+        pe = np.round(np.mean([o[0] for o in outs], axis=0), PROB_DECIMALS)
+        pt = np.round(np.mean([o[1] for o in outs], axis=0), PROB_DECIMALS)
+        return pe, pt
+
+    def to_json_dict(self) -> dict:
+        return {"format": JSON_FORMAT, "kind": "tcn_mean_softmax", "meta": self.meta,
+                "members": [m.to_json_dict() for m in self.members]}
+
+
+def save_sequence_json(model, path: str | Path, meta: dict | None = None) -> Path:
+    """Write a model or ensemble as JSON (``models/sequence_tcn.json``)."""
+    ens = model if isinstance(model, SequenceEnsemble) else SequenceEnsemble([model], {**model.meta, **(meta or {})})
+    if meta and ens is model:
+        ens.meta.update(meta)
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(ens.to_json_dict(), sort_keys=True, separators=(",", ":")) + chr(10),
+                   encoding="utf-8", newline=chr(10))
+    return out
+
+
+def load_sequence_json(path: str | Path) -> "SequenceModel | SequenceEnsemble":
+    d = json.loads(Path(path).read_text(encoding="utf-8"))
+    if d.get("format") != JSON_FORMAT or d.get("kind") != "tcn_mean_softmax":
+        raise ValueError("unsupported sequence model JSON")
+    members = [SequenceModel.from_json_dict(m) for m in d["members"]]
+    return members[0] if len(members) == 1 else SequenceEnsemble(members, d.get("meta", {}))
 
 
 def random_model(feature_names: Sequence[str], *, channels: int = 8, dilations: Sequence[int] = (1, 2, 4),

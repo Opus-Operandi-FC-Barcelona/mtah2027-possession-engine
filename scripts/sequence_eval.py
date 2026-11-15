@@ -38,6 +38,10 @@ VARIANTS: dict[str, dict | None] = {
     "base": None,
     "E50": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 0.5},
     "E100": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0},
+    # production-model choice: the same E100 with the float64 inference of the JSON loader (E100f64) and with the
+    # mean of the softmax probabilities of the training-seed-0 and -1 models (E100ens; two --seq-root values)
+    "E100f64": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0},
+    "E100ens": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0},
     "T-hard": {SEQ + "enabled": True, SEQ + "mode": "turnover", SEQ + "turnover_gate_mode": "hard",
                SEQ + "turnover_threshold": 0.5},
     "T-max": {SEQ + "enabled": True, SEQ + "mode": "turnover", SEQ + "turnover_gate_mode": "max"},
@@ -72,18 +76,20 @@ def turnover_strata(gt, pred, hidden, tol: int = 25) -> dict:
 
 
 def seq_path(root: Path, cell: dict) -> Path:
+    root = Path(root)
     if cell["world"] in ("b33", "b1"):
         return root / "lomo" / f"{cell['match']}.npz"
     return root / "full.npz"
 
 
-def run_cell(cell, models_root, seq_root, config_raw, variants):
-    from mtah2027.models.sequence_model import SequenceModel
+def run_cell(cell, models_root, seq_roots, config_raw, variants):
+    from mtah2027.models.sequence_model import SequenceEnsemble, SequenceModel
     from mtah2027.pipeline import run_core
 
     players, team, ball, fps, pitch, periods, gt = ds.load_cell_data(cell, config_raw)
     visible = np.isfinite(ball).all(axis=1)
-    seq = SequenceModel.load(seq_path(seq_root, cell))
+    members = [SequenceModel.load(seq_path(r, cell)) for r in seq_roots]
+    seq = members[0] if len(members) == 1 else SequenceEnsemble(members)
     spec = ds.build_specialists({"name": "base"}, cell, models_root, {}, config_raw)
     out = {"cell": {k: v for k, v in cell.items() if k != "path"}, "results": {}}
     t0 = time.perf_counter()
@@ -122,7 +128,7 @@ def cmd_run(a) -> int:
         todo = [n for n in names if n not in have["results"]]
         if not todo:
             continue
-        res = run_cell(cell, Path(a.models_root), Path(a.seq_root), config_raw, todo)
+        res = run_cell(cell, Path(a.models_root), [Path(r) for r in a.seq_root], config_raw, todo)
         res["results"] = {**have["results"], **res["results"]}
         path.write_text(json.dumps(res), encoding="utf-8")
         print(f"{ds.cell_id(cell)}: {len(todo)} variants in {res['seconds']} s", flush=True)
@@ -181,7 +187,7 @@ def main(argv=None) -> int:
     r.add_argument("--world", choices=("b33", "b1", "pff"), required=True)
     r.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     r.add_argument("--models-root", required=True)
-    r.add_argument("--seq-root", required=True)
+    r.add_argument("--seq-root", required=True, nargs="+", help="one TCN root, or several (mean of softmax)")
     r.add_argument("--out-dir", required=True)
     r.add_argument("--bench-dir", default=str(ds.DEFAULT_BENCH))
     r.add_argument("--shard", default="0/1")

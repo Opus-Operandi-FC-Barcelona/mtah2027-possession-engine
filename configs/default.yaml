@@ -167,12 +167,13 @@ specialist_c:
   pff_weight: 0.5
 
 # Issue #72 -- sequence model (TCN over the specialists' feature matrix); trained on external matches only
-# (scripts/train_sequence.py), NumPy inference.  Evaluated and NOT adopted: OFF.  mode: emissions (hidden-ball frames
-# only) | turnover (opens the H<->A transition through the learned-gate mechanism of #57) | both.
+# (scripts/train_sequence.py), NumPy inference from models/sequence_tcn.json (mean softmax of two training seeds).
+# ADOPTED (E100): hidden-ball emissions, weight 1.0.  Fallback = the pre-#72 route: enabled: false (SHA256 cac8927c...).
+# mode: emissions (hidden-ball frames only) | turnover (opens the H<->A transition through #57's gate) | both.
 sequence_model:
-  enabled: false
-  mode: "off"
-  emission_weight: 0.5
+  enabled: true
+  mode: "emissions"
+  emission_weight: 1.0
   emission_scale: 0.5
   prob_floor: 0.001
   turnover_gate_mode: "max"     # hard | max | blend

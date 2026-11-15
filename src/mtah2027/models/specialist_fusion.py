@@ -383,6 +383,31 @@ def load_specialists(path: str | Path = DEFAULT_MODEL_PATH, config_path=None) ->
     return SpecialistSet.from_dict(data, config_path)
 
 
+SEQUENCE_MODEL_FILE = "sequence_tcn.json"
+
+
+def attach_sequence_model(spec: SpecialistSet, model_dir: str | Path, config_path=None,
+                          log: Callable[[str], None] | None = None) -> SpecialistSet:
+    """Issue #72: attach ``models/sequence_tcn.json`` when ``sequence_model.enabled``; any problem is logged and
+    the route continues without it (the pipeline then simply does not run the stage)."""
+    say = log or (lambda m: None)
+    from mtah2027.models.sequence_model import SequenceParams, load_sequence_json
+
+    try:
+        params = SequenceParams.from_config(config_path)
+    except Exception as exc:  # noqa: BLE001
+        say(f"sequence model: bad configuration ({type(exc).__name__}: {exc})")
+        return spec
+    if not (params.enabled and params.mode != "off"):
+        return spec
+    file = Path(model_dir) / SEQUENCE_MODEL_FILE
+    try:
+        return dataclasses.replace(spec, seq=load_sequence_json(file))
+    except Exception as exc:  # noqa: BLE001 - progressive fallback
+        say(f"sequence model: unavailable ({file.name}: {type(exc).__name__}: {exc})")
+        return spec
+
+
 def find_bench_dir(explicit: str | Path | None = None) -> Path | None:
     """External benchmark cache directory: explicit argument, ``$MTAH_BENCH_DIR`` or the sibling repo."""
     candidates = [explicit, os.environ.get(BENCH_ENV),
@@ -419,7 +444,7 @@ def resolve_specialists(mode: str = "auto", *, bench_dir: str | Path | None = No
     def from_file() -> SpecialistSet | None:
         if path.is_file():
             try:
-                return load_specialists(path, config_path)
+                return attach_sequence_model(load_specialists(path, config_path), path.parent, config_path, say)
             except Exception as exc:  # noqa: BLE001 - progressive fallback
                 if strict:
                     raise
