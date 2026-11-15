@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Issue #71: world selection helpers on synthetic data."""
 from __future__ import annotations
 
@@ -89,3 +90,23 @@ def test_weights_ess_and_weighted_metric():
     scores = {"w1": {"a": 0.5, "b": 0.7}, "w2": {"c": 0.4}}
     m = ws.weighted_metric(scores, {"w1": 0.5, "w2": 0.5}, {"w1": {"a": 0.25, "b": 0.75}, "w2": {"c": 1.0}})
     assert np.isclose(m, 0.5 * (0.25 * 0.5 + 0.75 * 0.7) + 0.5 * 0.4)
+
+
+def test_rescore_helpers_read_cell_files(tmp_path):
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import world_selection as script
+
+    for world, match, seed, idx, f1 in (("b33", "m1", 0, 0, 0.6), ("b1", "m1", 0, 0, 0.5), ("pff", "p1", 0, 0, 0.4),
+                                         ("pff", "p2", 0, 25, 0.9)):
+        cell = {"world": world, "match": match, "seed": seed, "index": idx}
+        (tmp_path / f"{world}__{match}__s{seed}.json").write_text(
+            json.dumps({"cell": cell, "results": {"c": {"spell_f1": f1}}}), encoding="utf-8")
+    cells = script._cells([tmp_path], "c", first_n=20)
+    assert cells[("pff", 0)] == {"p1": 0.4}                      # the 26th PFF match is outside the first 20
+    sc = script._world_scores(cells, 2)                          # seed 2 falls back to the single seed 0 of B'(33)
+    assert sc["idsse33"] == {"m1": 0.6} and sc["idsse1"] == {"m1": 0.5} and sc["pff"] == {"p1": 0.4}
+    assert script._cells([tmp_path], "missing") == {}

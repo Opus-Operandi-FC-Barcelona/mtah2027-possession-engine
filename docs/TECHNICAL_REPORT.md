@@ -1497,6 +1497,59 @@ so even a small simulated gain would not have justified enabling it.  `vision.en
 Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
+## Milestone 11
+
+### Label-free world selection by adversarial validation (Issue #71; nothing adopted, defaults unchanged)
+
+`src/mtah2027/validation/world_selection.py`, `scripts/world_selection.py` (`features`, `fit`, `rescore`), `reports/issue71_domain_fit.json`,
+`reports/issue71_world_selection.json`.  Aggregates only for the real match; its feature matrix stays in the git-ignored `cache/`.
+
+*Domain classifier.*  Rows are the hidden-ball graded frames (every 5th of BAR-ATH, every 10th of the external matches).  32 features
+without any ball coordinate: tracked counts, median / mean / p80 player speed and slow-player shares, team spreads and spectral areas,
+line advance, velocity coherence, centrality, and gap structure (gap length, time since / until the ball was seen).  One gradient-boosting
+classifier per external world (balanced class mass, 5 folds grouped by match / one-minute block, out-of-fold probabilities), BAR-ATH against
+(a) the 7 IDSSE matches degraded at `dead_affinity` 33, (b) the same at 1, (c) the 64 PFF matches with their real occlusions:
+
+| world | AUC vs BAR-ATH | main features (held-out AUC drop; median BAR-ATH vs world) |
+|---|---|---|
+| IDSSE degraded, aff 33 | 0.989 | median player speed over 1 s (0.151; 0.98 vs 1.41 m/s), mean centroid speed, gap length (28.9 vs 42.4 s), p80 speed, share of players < 0.5 m/s (0.26 vs 0.06) |
+| IDSSE degraded, aff 1 | 0.988 | median speed (0.118; 0.98 vs 1.81 m/s), slow share (0.26 vs 0.05), p80 speed |
+| PFF real occlusions | 0.994 | slow share < 0.5 m/s (0.26 vs 0.09), median speed (0.98 vs 1.38 m/s), gap length (28.9 vs 24.1 s) |
+
+None of the three worlds is a good copy: all are separated almost perfectly, and what separates them is the same quantity found in #70, the
+share of slow players (a stopped game) in the hidden frames.  PFF is the closest on that axis (smd +0.69 vs +1.38 for aff 33 and +1.55 for aff 1).
+
+*Density ratios and mixture.*  `p_real / p_world = P / (1 - P)` (probabilities clipped to [0.01, 0.99]; AUC this high makes the ratios
+coarse).  EM over the BAR-ATH frames for the mixture `sum_w pi_w p_w` that minimises KL(p_real || p_mix): **pi = (0.320, 0.204, 0.476)** for
+(IDSSE aff 33, IDSSE aff 1, PFF), block-bootstrap 90 % interval (0.18-0.45, 0.12-0.31, 0.38-0.56).  The share of BAR-ATH frames whose
+estimated density is highest in each world is 0.61 / 0.14 / 0.25, so the mixture is weakly identified; the only robust statement is that
+PFF deserves a weight comparable to the degraded IDSSE world, not the zero it has in B'(33).  Match weights inside a world: mean frame
+density ratio per match (capped at p99), effective number of matches 6.5 / 6.2 / 60.9 (frames 2.8k / 2.1k / 98.9k).
+
+*Preregistration* (comment on #71, before any re-score): weighted metric M = sum_w pi_w sum_m v_m spellF1(w, m) over B'(33), B'(1) and A (the
+first 20 PFF matches, 4-fold), mean of seeds 0-2 (single-seed worlds use seed 0); adopt only if M >= +0.010 vs production, no seed below
+-0.003, B'(1) not down by more than 0.010 and A not down by more than 0.030.
+
+*Re-score* (existing per-cell results of #44 / #55 / #57, no retraining; the production cells reproduce 0.6693 / 0.6017 / 0.5263):
+
+| variant | B'(33) | B'(1) | A (20 PFF) | A (8 unseen) | M | delta M (seeds 0 / 1 / 2) |
+|---|---|---|---|---|---|---|
+| production | 0.6693 | 0.6017 | 0.5263 | 0.5263 | 0.5879 | - |
+| #55, 56 PFF in training | 0.6578 | 0.5948 | 0.5497 | 0.5559 | 0.5938 | **+0.0058** (+0.0081 / +0.0037 / +0.0058) |
+| #57 hard gate, C trained on IDSSE | 0.6633 | 0.5991 | 0.5374 | 0.5413 | 0.5902 | +0.0023 (+0.0017 / +0.0031 / +0.0021) |
+| #57 hard gate, C trained on IDSSE + PFF | 0.6620 | 0.5996 | 0.5374 | 0.5421 | 0.5901 | +0.0022 (+0.0018 / +0.0025 / +0.0024) |
+| training degrader aff 1 (legacy `mixed`) | 0.6512 | 0.6047 | 0.5231 | 0.5257 | 0.5809 | -0.0071 (-0.0086 / -0.0067 / -0.0058) |
+
+Sensitivity (M of a pure world, mean of seeds; production / #55 / hard-IDSSE / legacy): aff 33 0.6679 / 0.6559 / 0.6621 / 0.6494, aff 1
+0.6032 / 0.5978 / 0.5982 / 0.6067, PFF 0.5276 / 0.5503 / 0.5385 / 0.5237.  The sign of #55 and of the hard gate flips with the PFF weight
+(break-even near 0.30 for both, with the other two worlds in their fitted proportion); #55 would need about 0.6 to reach +0.010, the hard gate
+never does.
+
+Decision: **no variant meets the rule** (best, #55, +0.0058 < +0.010; its guards pass: B'(1) -0.0069, A +0.0235; the legacy degrader fails
+on two criteria).  Defaults, `configs/default.yaml`, `models/` and the synthetic SHA256 are unchanged.  What the item adds is the decision
+rule for the future: a candidate that gains in PFF and loses in B'(33) is worth a re-run only if the weighted M moves by >= +0.010; the
+weight of PFF in M is estimated, not known, and BAR-ATH has no labels to check it against.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

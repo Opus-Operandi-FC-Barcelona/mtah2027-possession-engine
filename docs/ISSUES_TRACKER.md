@@ -98,3 +98,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #64 · wave-5 · Micro-geometría 22v22 de presión y portador implícito (no adoptado, desactivado) · `feat/issue-64-carrier-swarm-features`
 - [x] COMPLETADA · #65 · wave-5 · Prior de fase de Smart Tagging en H vs A con balón oculto (no adoptado, desactivado) · `feat/issue-65-hidden-phase-prior`
 - [x] COMPLETADA · #66 · wave-5 · Filtro por tracklets sobre sv_ball640 (simulado; no adoptado, desactivado) · `feat/issue-66-tracklet-gated-vision`
+- [x] COMPLETADA · #71 · wave-5 · Selección de mundo sin etiquetas (validación adversarial, razón de densidades; sin variante adoptada) · `feat/issue-71-world-selection`
