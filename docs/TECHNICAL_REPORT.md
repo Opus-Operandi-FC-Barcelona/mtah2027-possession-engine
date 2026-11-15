@@ -999,6 +999,7 @@ on BAR-ATH only label-free aggregates (#58, #63).  Each experiment lives in its 
 | #61 | boundary snap to touch / restart | +0.0002 | within seed noise (~0.002) | not adopted, OFF |
 | #62 | expected-spellF1 (MBR) decoding | 0.0000 to -0.0007 | - | not adopted, OFF |
 | #63 | supervision + roboflow/sports ball model | -0.074 (simulated, 50 % recovery) | real video: top hit within 2 m 60 %, median 1.12 m, 1.18 false positives / frame | not adopted, OFF |
+| #66 | tracklet gate / emission tempering on the #63 detections | gate 3: -0.0048; gate 5: +0.0005 (simulated, 50 %) | gate keeps 6-25 % of the points; B'(1) gate 3 +0.0089 | not adopted, OFF |
 
 Outcome: nothing is adopted and the submission is unchanged (SHA256 `cac8927c2adc1b1a...`).  The positive cells (#61 +0.0002,
 and #44 +0.009 of Milestone 9) do not add up to the bar: every decoder-side change targets the same missed turnovers, which come
@@ -1337,6 +1338,85 @@ measured aggregates do not support.
 
 Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1`), then `agg --out-dir D`.
+
+### Tracklet-gated vision and emission tempering (Issue #66; not adopted, OFF)
+
+Question left open by #63: if the `sv_ball640` detections are accepted only when they form a smooth run over several
+consecutive crops (or if the specialists are less confident on frames whose ball was injected), is the loss of -0.074 gone
+and does it turn into a gain?  Two OFF switches in the `vision` section (defaults change nothing; synthetic SHA256 unchanged):
+
+- `vision.tracklet_gate` (`src/mtah2027/vision/tracklet_gate.py`, wired in `recover_ball` after `select_detections`): two
+  detections of consecutive planned crops (<= `tracklet_max_link_frames` = 10 frames apart) are linked when the step speed is
+  <= `tracklet_max_speed_mps` (35 m/s, plus 1 m of position slack); a run is kept only if it has >= `tracklet_min_len`
+  detections (3; also tested 5) and every point is within `tracklet_max_residual_m` (1.0 m) of a least-squares fit of the run
+  (constant velocity, quadratic from 6 points); the worst point is dropped and the run re-checked until stable.  Isolated
+  detections never pass.
+- `vision.injected_emission_scale` (default 1.0): multiplies the fused log-emissions by this factor on frames with
+  `ball_source` 2 or 3 (video detection / interpolation); `run_core(..., ball_source=...)` receives the source from the
+  recovered ball.  The tempered rows are rounded to 1e-6.
+
+**Simulator with temporal structure** (`vision/sim_detector.simulate_detections_temporal`, `scripts/simulate_tracklet_gate_value.py`).
+The per-crop marginals are exactly those of #63 (top candidate within 1 / 2 / 5 m 41.0 / 59.7 / 75.7 %, 19.3 % false positive,
+5 % no detection), but the state of consecutive planned crops (every 5 frames of a gap) is a Markov chain whose stationary
+distribution is that mixture.  Assumptions, none measured (the real video was only scored per frame, #63): a true hit is kept
+by the next crop with probability 0.6 (position noise independent per crop, drawn from the 1 / 2 / 5 m bins: the "noise of
+about 1 m that persists over consecutive crops" is the persistence of the *hit*, not of its error); a false positive persists
+with probability 0.2 and, when it does, it is a moving object (a boot, a line mark) that keeps its identity and drifts with 3 m/s
+Gaussian steps, so a persistent false positive looks like a smooth track and passes the gate; a missing detection persists with
+0.3.  Sensitivity variant `pf`: false positives persist with 0.6.  The detection-rate scenarios (25 / 50 / 100 %) then remove
+crops independently, as in #63.  The `iid` row is the #63 generator and reproduces its numbers exactly (B'(33) -0.0744, B'(1)
+-0.0226 at 50 %, same seeds), which also checks that the `ball_source` plumbing with scale 1.0 changes nothing.
+
+Protocol as #63: production specialist route (`lomo_gap` models, default config otherwise), B'(33) seeds 0-2 (7 IDSSE
+matches each) and B'(1) seed 0, spellF1 against the no-injection default (B'(33) 0.6693, B'(1) 0.6019 for seed 0).
+
+B'(33), scenario 50 % (d = spellF1 minus no injection; "kept" = share of the returned points that pass the gate; error after
+gating = median distance to the true ball of the kept points and share of kept points more than 5 m off):
+
+| scenario | spellF1 | d | per seed d (0 / 1 / 2) | hidden frames filled | points kept | kept <= 1 m | kept > 5 m | median error kept |
+|---|---|---|---|---|---|---|---|---|
+| none | 0.6693 | | | 0 % | | | | |
+| #63 iid detector, no gate | 0.5950 | -0.0744 | -0.0694 / -0.0762 / -0.0775 | 76 % | 100 % | 43 % | 20 % | 1.35 m |
+| temporal, no gate | 0.5891 | -0.0803 | -0.0800 / -0.0838 / -0.0771 | 77 % | 100 % | 43 % | 20 % | 1.35 m |
+| temporal, gate 3 | 0.6645 | -0.0048 | -0.0077 / -0.0070 / +0.0003 | 14 % | 25 % | 70 % | 3.0 % | 0.70 m |
+| temporal, gate 5 | 0.6698 | +0.0005 | +0.0012 / -0.0002 / +0.0004 | 3 % | 6 % | 78 % | 0.5 % | 0.63 m |
+| temporal, scale 0.5 | 0.6046 | -0.0647 | -0.0649 / -0.0692 / -0.0600 | 77 % | 100 % | 43 % | 20 % | 1.35 m |
+| temporal, gate 3 + scale 0.5 | 0.6655 | -0.0038 | -0.0059 / -0.0067 / +0.0011 | 14 % | 25 % | 70 % | 3.0 % | 0.70 m |
+| persistent FP, no gate | 0.5954 | -0.0739 | -0.0768 / -0.0780 / -0.0671 | 81 % | 100 % | 43 % | 20 % | 1.34 m |
+| persistent FP, gate 3 | 0.6603 | -0.0090 | -0.0104 / -0.0119 / -0.0046 | 19 % | 32 % | 59 % | 19 % | 0.84 m |
+| persistent FP, gate 5 | 0.6692 | -0.0001 | -0.0005 / -0.0031 / +0.0031 | 5 % | 9 % | 65 % | 16 % | 0.74 m |
+
+Other detection rates (temporal detector):
+
+| scenario | B'(33) d | B'(1) d | points kept (B'(33)) |
+|---|---|---|---|
+| 25 %, no gate | -0.0413 | -0.0102 | 100 % |
+| 25 %, gate 3 | -0.0012 | -0.0008 | 10 % |
+| 25 %, gate 3 + scale 0.5 | -0.0009 | -0.0007 | 10 % |
+| 100 %, no gate | -0.0910 | -0.0328 | 100 % |
+| 100 %, gate 3 | -0.0272 | -0.0004 | 43 % |
+| 100 %, gate 3 + scale 0.5 | -0.0214 | +0.0062 | 43 % |
+
+B'(1) at 50 % (seed 0): no gate -0.0209, gate 3 +0.0089, gate 5 +0.0018, scale 0.5 alone -0.0101, gate 3 + scale 0.5 +0.0106,
+persistent FP gate 3 +0.0028 / gate 5 -0.0030.  It is a guard (one seed): it never drops by more than 0.01 with a gate, but it
+is not the adoption criterion.
+
+**Decision: not adopted.**  Adoption rule: B'(33) mean >= +0.010 with no seed below -0.003, B'(1) not down more than 0.01.
+At 50 % no variant gets near it: the best are gate 5 (+0.0005, one seed at -0.0002) and gate 3 (-0.0048, two seeds below
+-0.003).  The gate does what was hoped: it removes the false positives (kept points more than 5 m off fall from 20 % to 3 %
+and the median error from 1.35 m to 0.70 m; with persistent false positives 19 %, so the gate is only as good as their
+isolation) and the loss of -0.074 shrinks to about -0.005 or 0.  But it does so by discarding 75-94 % of the points, so what
+remains is little information: the hidden-ball gap is still decided by the tracking-free specialists, and the ~0.7 m median
+error of the kept points (hits with ~1 m noise) is not enough to move spellF1 above the no-injection baseline.  Tempering
+the emissions alone (scale 0.5) recovers only 0.015 of the 0.080 lost, because the wrong positions still feed the ball
+features of the specialists; combined with the gate it is within seed noise of the gate alone (+0.001).  The loss is
+monotone in the number of injected points (100 % hurts most).  The real runtime stays what #63 measured (about 4.5 h of CPU
+for `sv_ball640` at one crop every 5 hidden frames, an AGPL-3.0 ultralytics runtime and the weights / dataset-terms caveat),
+so even a small simulated gain would not have justified enabling it.  `vision.enabled` and `vision.tracklet_gate` stay
+`false`, `vision.injected_emission_scale` stays 1.0.
+
+Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
+(and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
 ## 6. Limitations (honest list)
 

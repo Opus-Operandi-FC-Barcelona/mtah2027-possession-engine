@@ -70,3 +70,77 @@ def simulate_detections(truth_xy: np.ndarray, profile: DetectorProfile, *, rate:
     xy = truth + np.stack([r * np.cos(th), r * np.sin(th)], axis=1)
     xy[~returned] = np.nan
     return returned, xy
+
+
+@dataclass(frozen=True)
+class TemporalModel:
+    """Temporal structure of the simulated detector over consecutive planned crops (Issue #66).
+
+    The per-crop marginals are those of the :class:`DetectorProfile` (a Markov chain over *good* = top
+    candidate within 5 m of the ball, *far* = false positive and *none*, with the profile's stationary
+    distribution).  ``persist_good`` / ``persist_far`` / ``persist_none`` are the chances the state of the
+    previous crop (at most ``link_frames`` earlier) is kept.  A persistent false positive is a moving object
+    (a boot, a line mark): it keeps its identity and drifts ``far_speed_mps`` m/s (Gaussian steps).  Position
+    noise of good hits is drawn independently per crop from the profile bins.  These values are assumptions,
+    not measurements: the real video was only scored per frame.
+    """
+
+    persist_good: float = 0.6
+    persist_far: float = 0.2
+    persist_none: float = 0.3
+    far_speed_mps: float = 3.0
+    link_frames: int = 10
+
+
+PERSIST_FP = TemporalModel(persist_far=0.6)      # sensitivity variant: false positives are more persistent
+
+
+def simulate_detections_temporal(truth_xy: np.ndarray, frames: np.ndarray, profile: DetectorProfile,
+                                 model: TemporalModel, *, rate: float, seed: int, fps: float = 25.0
+                                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Like :func:`simulate_detections` but with temporal structure over the sorted crop ``frames``.
+
+    Returns ``(returned[M], xy[M, 2], is_good[M])`` (``is_good``: the draw was a true-ball hit, error <= 5 m).
+    The same marginals per crop; ``rate`` removes crops independently (nested per seed) after the chain.
+    """
+    truth = np.asarray(truth_xy, dtype=np.float64).reshape(-1, 2)
+    fr = np.asarray(frames, dtype=np.int64)
+    m = len(truth)
+    rng = np.random.default_rng(seed)
+    gate, u_state, u_keep = rng.random(m), rng.random(m), rng.random(m)
+    u_cat, u_ang, u_rad = rng.random(m), rng.random(m), rng.random(m)
+    step = rng.standard_normal((m, 2))
+    prob = profile.probabilities()                        # [<=1, 1-2, 2-5, far, none]
+    pi = np.array([prob[:3].sum(), prob[3], prob[4]])     # good, far, none
+    persist = np.array([model.persist_good, model.persist_far, model.persist_none])
+    w = pi * (1.0 - persist)         # redraw weights that keep ``pi`` the stationary distribution
+    cum_w = np.cumsum(w / w.sum())
+    cum_pi = np.cumsum(pi)
+    state = np.zeros(m, dtype=np.int64)
+    far_xy = np.full((m, 2), np.nan)
+    th = 2.0 * np.pi * u_ang
+    for k in range(m):
+        prev = state[k - 1] if k else -1
+        linked = k > 0 and 0 < fr[k] - fr[k - 1] <= model.link_frames
+        kept = linked and u_keep[k] < persist[prev]
+        if kept:
+            state[k] = prev
+        else:
+            state[k] = min(int(np.searchsorted(cum_w if linked else cum_pi, u_state[k], side="right")), 2)
+        if state[k] == 1:
+            if kept:
+                dt = (fr[k] - fr[k - 1]) / fps
+                far_xy[k] = far_xy[k - 1] + step[k] * model.far_speed_mps * dt
+            else:
+                r = 5.0 + u_rad[k] * (float(profile.far_max_m) - 5.0)
+                far_xy[k] = truth[k] + r * np.array([np.cos(th[k]), np.sin(th[k])])
+    good = state == 0
+    sub = np.cumsum(prob[:3] / prob[:3].sum())
+    cat = np.minimum(np.searchsorted(sub, u_cat, side="right"), 2)
+    lo = np.array([b[0] for b in _BINS])
+    hi = np.array([b[1] for b in _BINS])
+    r = lo[cat] + u_rad * (hi[cat] - lo[cat])
+    xy = np.where(good[:, None], truth + np.stack([r * np.cos(th), r * np.sin(th)], axis=1), far_xy)
+    returned = (gate < rate) & (state < 2)
+    xy[~returned] = np.nan
+    return returned, xy, good & returned

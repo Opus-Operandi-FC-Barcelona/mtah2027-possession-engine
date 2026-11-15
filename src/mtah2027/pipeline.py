@@ -462,7 +462,8 @@ def run_core(
         config_path: str | Path | None = None, log: Callable[[str], None] | None = None,
         keep_features: bool = False, specialists: Any = None,
         homography: np.ndarray | None = None, durations: Any = None,
-        players_speed_native: np.ndarray | None = None) -> CoreResult:
+        players_speed_native: np.ndarray | None = None,
+        ball_source: np.ndarray | None = None) -> CoreResult:
     """Features -> emissions -> transitions -> Viterbi per block -> spell optimiser (array level).
 
     ``players_xy[N, S, 2]``, ``ball_xy[N, 2]`` in metres (NaN when missing), ``team_of_slot[S]`` 0 home /
@@ -516,6 +517,12 @@ def run_core(
         if cfg_route is not cfg:
             cfg = cfg_route
             em = heuristic_emissions(fe, fps, cfg, st)
+    if ball_source is not None:    # Issue #66: temper the emissions of frames whose ball was injected (off: 1.0)
+        from mtah2027.vision.tracklet_gate import temper_injected
+
+        lp = temper_injected(em.log_probs, ball_source, float(VisionParams.from_config(cfg).injected_emission_scale))
+        if lp is not em.log_probs:
+            em = dataclasses.replace(em, log_probs=lp)
     if fe.throwins:       # Issue #15: soft prior towards the recovered restart team just after t*
         em = dataclasses.replace(em, log_probs=restart_emission_prior(
             em.log_probs, fe.throwins, fps=fps, params=ThrowInParams.from_config(cfg)))
@@ -819,8 +826,10 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
     play_blocks = [match.half1, match.half2_play]
     dead_blocks = [match.half2_dead] if match.half2_dead[1] >= match.half2_dead[0] else []
     players, ball = _fit_length(td.players_xy, n), _fit_length(td.ball_xy, n)
+    ball_source = None
     if vision is not None and vision.stats.get("status") == "ok":
         ball = vision.ball_xy       # tracking where seen, recovered video points where it was missing
+        ball_source = vision.ball_source
 
     core_diag: dict = {}
     features: dict = {}
@@ -832,7 +841,7 @@ def _decode_loaded(td, smart, match: MatchConfig, cfg_path, st: _Stages, special
             smart_tagging=smart, config_path=cfg_path, log=st.log, specialists=specialists,
             homography=homography, keep_features=keep_features,
             players_speed_native=(_fit_length(td.players_speed, n) if np.isfinite(td.players_speed).any()
-                                  else None))
+                                  else None), ball_source=ball_source)
         codes, core_diag = core.codes, core.diagnostics
         features = core.features
         route = core_diag.get("emission_source", "heuristic")    # "specialists" or "heuristic" (Issue #52)

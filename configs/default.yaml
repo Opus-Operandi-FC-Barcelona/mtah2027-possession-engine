@@ -497,6 +497,15 @@ vision:
   speed_slack_m: 1.5
   interp_max_frames: 25         # frames interpolated between two points (at least one a detection)
   cache_dir: cache/vision
+  # Issue #66 (not adopted, off): keep a detection only inside a smooth run of consecutive crops; temper the
+  # emissions of injected frames (ball_source 2/3).  Defaults change nothing.
+  tracklet_gate: false
+  tracklet_min_len: 3
+  tracklet_max_speed_mps: 35.0
+  tracklet_speed_slack_m: 1.0
+  tracklet_max_residual_m: 1.0
+  tracklet_max_link_frames: 10
+  injected_emission_scale: 1.0
 
 # Issue #10 -- broadcast (TV) tracking synchronised to the tactical clock by continuous blocks; its ball fills
 # the tactical holes (ball_source 4).  OFF by default until validated locally on the real broadcast files.
