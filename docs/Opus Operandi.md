@@ -205,7 +205,27 @@ Provided match, label-free aggregates of the submission (no ground truth involve
 | Runtime (load model, full match) | -- | 17.5 s |
 <!-- END MILESTONE 9 RESULTS -->
 
-## 7. Reproduction
+## 7. Milestone 10: post-freeze experiments
+
+Nine further ideas were each built in a separate branch and measured under the same protocol (B'(33), seeds 0-2, adopt at
+>= +0.010 mean with no seed below -0.003; guards B'(1) and PFF).  None passed, so the submission is unchanged.
+
+| Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |
+|---|---|---|---|
+| #55 | 56 PFF training matches instead of 20 | -0.012 (PFF guard +0.03) | off |
+| #56 | Multi-scale context windows and goalkeeper depth | -0.002 | off |
+| #57 | Learned H<->A turnover gate (third specialist) | -0.001 ... -0.006 (+0.011 / +0.015 on real PFF occlusions) | off |
+| #58 | Classic ball detectors on the real tactical video (aggregates only) | top hit within 2 m in 10 % of frames | vision off |
+| #59 | Latency bias of the boundaries | about 1 frame early, below the 3-frame threshold | no shift |
+| #60 | Bag of three specialist seeds | -0.001 | off |
+| #61 | Boundary snap to the touch / restart frame | +0.0002 | off |
+| #62 | Expected-spellF1 (minimum Bayes risk) decoding | 0.000 ... -0.001 | off |
+| #63 | Pre-trained football ball model (roboflow/sports + supervision) on the real video | top hit within 2 m in 60 %, median 1.1 m; simulated -0.074 | off |
+
+The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
+remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.
+
+## 8. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate

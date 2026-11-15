@@ -590,56 +590,6 @@ the block is stored as `decoder_candidates.issue_44` in `configs/default.yaml` (
 so the second adoption path (correcting D over-prediction under dropout) does not apply.  Spell-utility MBR over the ensemble members was not run
 (the existing MBR of Issue #32 stays off).
 
-**Item 9 (Issue #55): all available PFF matches in training (56 instead of 20; not adopted).**
-Training rows: the 7 IDSSE matches (calibrated degrader, `dead_affinity` 33) plus the first 56 PFF matches by name at weight 0.5
-(`pff_max_matches: 56`); the 8 last PFF matches by name stay out of training (they are the unseen validation set).
-Same harness and models as Item 8 (`scripts/train_cv_models.py`: LOMO over the 7 IDSSE matches, PFF 4-fold over the 56 matches,
-`--full` all-data model scored on the 8 unseen; `scripts/decoder_sweep.py run --n-pff 56`).  The baseline was recomputed with the
-same harness and reproduces Item 8 exactly.  Candidate: spellF1, seeds 0 / 1 / 2.
-
-| | default (20 PFF) | 56 PFF | delta |
-|---|---|---|---|
-| B'(33) mean | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6578 (0.6613 / 0.6514 / 0.6608) | **-0.0115** (-0.0096 / -0.0161 / -0.0087) |
-| B'(33) macroF1 | 0.9206 | 0.9176 | -0.0030 |
-| B'(1) guard | 0.6017 (0.6019 / 0.5991 / 0.6041) | 0.5948 (0.6014 / 0.5905 / 0.5923) | -0.0069 |
-| A, first 20 PFF, 4-fold | 0.5263 (macroF1 0.8636) | 0.5497 (0.8696) | +0.0235 |
-| A, 56 PFF, 4-fold over the 56 | 0.5311 (0.8706) | 0.5560 (0.8773) | +0.0249 |
-| A, 8 unseen PFF | 0.5263 (0.8652) | 0.5559 (0.8722) | +0.0296 |
-
-The 56-match fold is index modulo 4 over the first 56 matches (14 held out per fold, so the first-20 subset keeps its folds); the
-default models never saw matches 21-56, which makes that row conservative for the default.  Rule: B'(33) >= +0.010 and no seed below
--0.003; reject if B'(1) drops > 0.01 or A drops > 0.03.  **Rejected: B'(33) is lower in all three seeds (-0.0115 on average).**  The guards
-pass (B'(1) -0.0069, A improves), so the cause is not a broken model but a shift of the mixture: the PFF rows grow 2.8x at the same
-weight 0.5, so the model fits the world of real, visible-ball occlusions (A +0.025 to +0.030) at the cost of the degraded-IDSSE world that
-mimics the competition ATD (B').  Not run (would be a selection on the same B' world): re-weighting PFF to keep its total mass
-(about 0.18 per match).  `configs/default.yaml` and `models/specialists.json` are unchanged; `train_cv_models.py --full` and
-`decoder_sweep.py --n-pff / unseen_<variant>.json` stay as tools.
-
-**Issue #60 (seed bagging of the specialists; not adopted).**
-Same world, same training rows (IDSSE calibrated degrader `dead_affinity` 33 + the first 20 PFF at weight 0.5, training pickle
-fixed), two extra LightGBM seeds (1, 2; `deterministic=True`, `num_threads=1`; the seed-0 models are the first member), one model per
-LOMO fold (7 IDSSE), per PFF fold (4) and the all-data model for the unseen PFF.  The bag is a `--model-variant` style ensemble
-manifest (`format: ensemble`, `mode: linear`, equal weights; `specialist_fusion.save_bag_manifest`): class probabilities are averaged
-per frame before the soft priors, floor, scaling and 1e-6 quantisation, so it is deterministic.  Tools: `train_cv_models.py --seed
-N [--full]`, `train_specialists.py --seed N`, `train_specialists(seed=...)`; evaluation with `scripts/decoder_sweep.py` (the baseline
-reproduces 0.6693 / 0.6017 / 0.5263 / 0.5263 exactly).  spellF1:
-
-| | default (seed 0) | bag of 3 | delta | seed 1 alone | seed 2 alone |
-|---|---|---|---|---|---|
-| B'(33) mean (degradation seeds 0 / 1 / 2) | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6680 (0.6694 / 0.6667 / 0.6680) | **-0.0013** (-0.0015 / -0.0008 / -0.0015) | 0.6681 | 0.6676 |
-| B'(33) macroF1 | 0.9206 | 0.9207 | +0.0001 | 0.9201 | 0.9206 |
-| B'(1) guard | 0.6017 | 0.6005 | -0.0012 | 0.5999 | 0.5977 |
-| A, first 20 PFF, 4-fold | 0.5263 | 0.5263 | -0.0000 | 0.5258 | 0.5246 |
-| A, 8 unseen PFF | 0.5263 | 0.5266 | +0.0003 | 0.5260 | 0.5287 |
-
-The single extra seeds are within -0.0020 of the default on B'(33), i.e. the seed-to-seed spread is about 0.001-0.002, an order of
-magnitude below the +0.010 bar, and averaging three members removes none of the gap to the default (the members agree on the frames
-that decide the spells; the residual error is bias of the training world, not variance of the booster).  **Rejected**: B'(33) is
--0.0013 (rule: mean >= +0.010; the "no seed below -0.003" condition holds but is moot), guards pass (B'(1) -0.0012, A +-0.000).  Not run: the
-bag over degradation seeds (a second training pickle with another degrader seed), planned only if the seed bag showed >= +0.005.
-`configs/default.yaml` and `models/specialists*.json` are unchanged; no `specialists_bag.json` is committed (the submission and the
-synthetic SHA256 do not change).
-
 ### Invariance to player dropout (Issue #42; B' by stratum, not adopted)
 
 *Context.*  On the competition ATD (aggregates) 14.2-14.9 % of the graded frames have fewer than 20 tracked players
@@ -819,228 +769,6 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
-**Item 9 (Issue #57): Specialist C, a learned H<->A turnover gate (not adopted; code and block kept OFF).**
-`src/mtah2027/models/specialist_c.py`, `scripts/train_specialist_c.py`, config blocks `specialist_c` and
-`transition_matrix.learned_gate_*` (`learned_gate_mode: off`).  C is a LightGBM (`deterministic=True`, `num_threads=1`,
-`seed=0`; scikit-learn fallback through `FrameClassifier`) on the 206-column feature matrix of the specialists (so it works with
-a visible and a hidden ball: distances of the nearest players, closing speeds, touch score, collective signals and their
-+-50 / 100 frame context, coherence R, goalkeepers, time since the ball was lost) that predicts the class "no change / H -> A /
-A -> H within +-5 frames of the frame", the target being derived from the ground truth of external matches (direct H <-> A
-change between two live frames).  Rows are those of the default training pickle (calibrated degrader, dead_affinity 33, stride
-10, home / away swapped copies; 598k rows, 1.3 % positives per direction), every 4th negative kept with weight 4; a fitted
-temperature was 0.99-1.00 so the calibration folds are off.  Leave-one-match-out: the C of a held-out IDSSE match never sees it
-(PFF flavour: IDSSE + 20 PFF at weight 0.5; for the PFF 4-fold guard the held-out fold's matches are excluded; for the 8 unseen
-PFF matches the C is trained on all rows).  The gate maps P_C to the transition: `log A_t = closed + (open - closed) * g`, with three
-variants fixed beforehand: `hard` (g = 1 where P_C >= 0.5, replaces the touch rule), `blend` (g = 0.5 rule + 0.5 P_C),
-`max` (g = max(rule, P_C)); the occlusion floor `ha_occluded` is kept.  Harness `scripts/decoder_sweep.py` (cached front end and
-default A/B models, only the transitions change; candidates attach C with `"c": "<flavour>"`; the pooled turnover recall is
-printed with `agg --turnover`: share of the true direct H<->A changes matched by a predicted change of the same direction within
-25 frames).  spellF1 (delta vs the default 0.6693 / 0.6017 / 0.5263 / 0.5263):
-
-| world | default | hard | blend | max |
-|---|---|---|---|---|
-| B'(33), 7 IDSSE LOMO, seeds 0-2, IDSSE-only C | 0.6693 | 0.6633 (-0.0060) | 0.6654 (-0.0039) | 0.6685 (-0.0008) |
-| per seed delta (0 / 1 / 2) | | -0.0093 / -0.0053 / -0.0033 | -0.0080 / -0.0007 / -0.0029 | -0.0011 / -0.0014 / 0.0000 |
-| B'(33), IDSSE + PFF C | 0.6693 | 0.6620 (-0.0073) | 0.6646 (-0.0047) | 0.6687 (-0.0006) |
-| per seed delta (0 / 1 / 2) | | -0.0103 / -0.0078 / -0.0038 | -0.0080 / -0.0032 / -0.0031 | -0.0007 / -0.0012 / +0.0001 |
-| B'(1) (guard, seed 0; IDSSE / +PFF C) | 0.6019 | 0.5991 / 0.5996 | 0.6005 / 0.6005 | 0.6014 / 0.6020 |
-| A PFF 4-fold, 20 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5374 / 0.5374 (+0.0111) | 0.5330 / 0.5334 | 0.5249 / 0.5253 |
-| A unseen, 8 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5413 / 0.5421 (+0.0150 / +0.0158) | 0.5356 / 0.5366 | 0.5263 / 0.5265 |
-
-Turnover recall (matched / true changes): B'(33) default 0.517 (3647 / 7053, 6297 predicted changes), `hard` 0.493, `blend` 0.500,
-`max` 0.517; B'(1) 0.407 -> 0.389 / 0.396 / 0.405; PFF 4-fold 0.352 -> 0.344 / 0.346 / 0.353; unseen PFF 0.371 -> 0.360 / 0.364 / 0.375.
-The B'(33) default reproduces 0.6693 (0.6709 / 0.6675 / 0.6695) exactly.
-
-Why it does not help: a gate can only allow a change, it cannot make the emissions prefer it.  The variants that open the gate
-wider (`max`) leave the recall unchanged (0.517), so the missed turnovers are not blocked by the transition matrix; the emissions
-(specialists' probabilities) never swing to the other team.  The variants that close the gate where P_C is low (`hard`,
-`blend`) remove true changes together with the false ones (recall -2.4 points on B'(33)).  On the real PFF occlusions the
-hard gate removes 7 % of the predicted changes and gains +0.011 / +0.015 (fewer spurious spells), but the adoption rule is set
-on B'(33), the world that imitates the competition ATD, where it loses 0.006-0.007 on every seed.  Rule (B'(33) mean >= +0.010,
-no seed below -0.003, B'(1) not down by more than 0.01, A not down by more than 0.03) fails on the primary criterion; the
-variant picked on seeds 0-1 (`max`, -0.0013) is -0.0000 / +0.0001 on the blind seed 2.  Not run: a C trained on stride-1 rows
-(positives are about one row per event at stride 10), and the full-data C model (not trained: no variant is adopted).  Default OFF;
-the submission path and the synthetic SHA256 (`2a31a913...`) are unchanged in two runs.
-
-### Ball detectors on the real tactical video (Issue #58, aggregates only)
-
-Purpose: the broadcast route was measured label-free on the real match (Issue #39) but the ball detectors of the
-vision route (motion #36, optional YOLO) had only been tested on synthetic video.  `scripts/real_video_ball_check.py`
-samples (seeded, default 1000) video frames of the evaluated halves where the ATD ball is visible and the
-homography is usable, cuts the 640x640 attention crop around the projected ATD ball (`--search-offset-m` shifts
-it by a seeded random offset to mimic a real search point), runs the available detectors, reprojects the detections
-with H^-1 and compares them with the ATD ball.  It never reads possession labels, never writes crops or per-frame
-rows, and refuses to print anything that is not an aggregate.  A detector that cannot be built (no ultralytics or
-weights) is skipped and listed under `skipped_detectors`.  The submission path and defaults are not changed.
-
-```bash
-python scripts/real_video_ball_check.py --data-dir data --sample 1000 --json reports/real_video_ball_check.json
-```
-
-Numbers printed, per detector: detection rate (% of sampled frames with a detection within 1 / 2 / 5 m of the ATD
-ball, any candidate and highest-confidence candidate), median and p90 error in metres of the nearest detection,
-false positives per frame (detections farther than 5 m), frames skipped (invalid homography / off-image, video
-read failures), detections per frame, runtime; plus the median apparent ball size in px.  The crop is centred on
-the ATD ball, so the rates are an upper bound of the gap-recovery use.
-
-Result on the real BAR-ATH tactical video (run locally; aggregates only; seed 0, 1000 sampled frames out of 91,247
-eligible, 91,844 graded frames with the ATD ball visible, 597 skipped for invalid homography / off-image, 0 read
-failures; YOLO skipped because `ultralytics` is not installed):
-
-| detector, crop | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | false positives per frame | detections per frame | time |
-|---|---|---|---|---|---|---|
-| motion, centred on the ATD ball | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 4.67 | 214 s |
-| motion, crop shifted 3 m | 15.4 / 27.2 / 50.4 % | 5.2 / 10.8 / 22.0 % | 4.8 / 16.5 m | 3.73 | 4.65 | 212 s |
-| hough, centred on the ATD ball | 7.2 / 13.8 / 25.3 % | 5.8 / 9.8 / 14.7 % | 13.9 / 40.8 m | 3.92 | 4.24 | 285 s |
-| hough, crop shifted 3 m | 7.0 / 13.7 / 25.9 % | 5.8 / 9.7 / 14.8 % | 13.7 / 40.2 m | 3.93 | 4.26 | 215 s |
-
-Median apparent ball size: 4.5 px.  Reading: on the tactical camera of the stadium the ball is about 4-5 pixels wide
-and the available detectors do not find it.  Even with the crop centred on the true ball, the most confident
-detection lies within 2 m of it in only ~10 % of the frames, there are ~3.7 false positives per frame, and the
-numbers barely change when the crop is shifted by 3 m, which means most "hits" are other blobs (players, lines)
-that happen to be close to the ball rather than the ball itself.  The simulation of Issue #36 needs a ~0.3 m
-accurate detector to gain anything, so this confirms with real measurements the decision to keep `vision.enabled:
-false` in the submission.  A detector trained for this camera remains future work.
-
-**Item 9 (Issue #59): signed latency of the boundaries (pred - truth) on other matches: no stable bias, no global shift (not adopted; no code change on the submission path).**
-Diagnostic added to `scripts/eval_external.py` (`lat_by_type` per run, `latency_summary`): signed latency in frames of the
-transitions matched by the official scorer (`evaluate()["transitions"][25]`, tolerance 25 frames, `pred - gt` as in
-`possession_metrics.transition_scores`, matching on the destination label), split into H<->A, alive -> D and D -> alive
-(restarts).  Models: the cached leave-one-match-out models of the default recipe (`models/specialists.json` is byte
-identical to the `gap` variant; Issue #44 `lomo_gap`, `pff_gap`), no retraining.  Protocol of Items 7-8 (B'(33): 7 IDSSE
-LOMO, calibrated degrader `dead_affinity` 33, seeds 0 1 2, harness `scripts/decoder_sweep.py`); the run reproduces the
-default of the #44 harness exactly (spellF1 0.6693 = 0.6709 / 0.6675 / 0.6695).  A PFF (20 matches, 4-fold models) and A-unseen
-(8 matches, committed models) as checks (both 0.5263, as in Item 8).  "Runs" = (match, seed) cells; median per run.
-
-| world | transitions | runs | median of run medians | run medians min / max | runs early / late | pooled median | pooled early / exact / late | pooled IQR |
-|---|---|---|---|---|---|---|---|---|
-| B'(33) | all (7133 matched) | 21 | 0.0 | -1 / 0 | 29 % / 0 % | 0 | 49 % / 28 % / 23 % | -2 .. 0 |
-| B'(33) | H<->A (3667) | 21 | -1.0 | -1 / 0 | 90 % / 0 % | -1 | 55 % / 21 % / 24 % | -3 .. 0 |
-| B'(33) | alive -> D (1738) | 21 | -1.0 | -1 / 0 | 86 % / 0 % | -1 | 60 % / 26 % / 14 % | -2 .. 0 |
-| B'(33) | D -> alive (1728) | 21 | 0.0 | 0 / 0 | 0 % / 0 % | 0 | 25 % / 44 % / 31 % | 0 .. +1 |
-| PFF 4-fold | all (3721) | 20 | -1.5 | -3 / 0 | 85 % / 0 % | -1 | 53 % / 3 % / 43 % | -8 .. +9 |
-| PFF 4-fold | H<->A (1837) | 20 | -1.8 | -3 / +4 | 75 % / 20 % | -1 | 52 % / 3 % / 44 % | -8 .. +9 |
-| PFF 4-fold | alive -> D (1013) | 20 | -0.2 | -4 / +3 | 50 % / 20 % | -1 | 51 % / 4 % / 45 % | -8 .. +9 |
-| PFF 4-fold | D -> alive (871) | 20 | -3.5 | -7 / +5 | 90 % / 10 % | -3 | 58 % / 3 % / 39 % | -8 .. +9 |
-| PFF unseen | all (1413) | 8 | -2.0 | -4 / 0 | 88 % / 0 % | -2 | 56 % / 3 % / 41 % | -10 .. +7 |
-
-Decision rule (fixed beforehand): stable bias = at least 80 % of the runs with the same sign **and** |median of medians| >= 3
-frames on B'(33).  On B'(33) the sign is consistent for H<->A (90 % of the runs early) but the magnitude is one frame
-(median of medians -1 for H<->A and alive -> D, 0 for restarts, 0 overall), far below 3 frames, and one frame is free in
-the metric.  PFF (real tracker) shows a small early tendency (median -1 to -2) with a spread of about +-9 frames, so it
-does not contradict "no bias worth correcting" either, but it is not evidence for a +3 shift: on B'(33) a shift of the
-bulk would move the exact matches (28 %, 44 % for restarts) away from zero.  **Not adopted**: `boundary_shift_frames` was
-not implemented (Task 2 only applied with a stable bias); the submission path and the synthetic SHA are untouched.
-
-**Item 10 (Issue #62): decoding by expected spellF1 (minimum Bayes risk over posterior samples) (not adopted; code and block kept OFF).**
-`src/mtah2027/decoding/expected_spellf1.py`, config block `expected_spellf1` (`enabled: false`).  Per graded block: log-space
-forward pass over the same quantised emissions and time-varying transitions `A_t` as Viterbi, `k` posterior paths by backward
-sampling (fixed seed, NumPy-precomputed conditional probabilities so the njit and the pure-Python kernels agree), the Viterbi
-path added as candidate 0, and the candidate with the highest mean spellF1 against the others is kept.  The pair score is a
-vectorised re-implementation of the official `spell_scores` (verified equal to `possession_metrics.spell_scores` to 1e-12 in
-`tests/test_62_expected_spellf1.py`; the forward-backward sampler is verified against brute force on a 5-frame chain).
-Protocol of Items 7-9 (harness `scripts/decoder_sweep.py`, cached default models, no retraining; candidates fixed beforehand:
-`k=100 T=1`, `k=50 T=1`, `k=100 T=2`, T = sampling temperature).  spellF1 means:
-
-| world | default | k=100 T=1 | k=50 T=1 | k=100 T=2 |
-|---|---|---|---|---|
-| B'(33), 7 IDSSE LOMO, seeds 0-2 | 0.6693 | 0.6690 (-0.0003) | 0.6686 (-0.0007) | 0.6693 (+0.0000) |
-| B'(33) per seed delta (0 / 1 / 2) | | -0.0002 / +0.0006 / -0.0014 | +0.0020 / 0.0000 / -0.0042 | 0 / 0 / 0 |
-| B'(1) (guard) | 0.6017 | 0.5994 (-0.0023) | 0.5994 (-0.0023) | 0.6017 (+0.0000) |
-| A PFF 4-fold, 20 matches (guard) | 0.5263 | 0.5193 (-0.0070) | 0.5192 (-0.0071) | 0.5231 (-0.0031) |
-| A unseen, 8 matches (guard) | 0.5263 | 0.5231 (-0.0032) | 0.5216 (-0.0047) | 0.5263 (+0.0000) |
-
-Why it does not help: the emissions plus the transition matrix make the posterior very concentrated around the Viterbi path;
-the samples differ from it by flicker (about 210 spells per half against 189 for Viterbi in the cell inspected), so the
-Viterbi path is the most central candidate (it is chosen in practically every block) and the selection returns it or a
-near-identical neighbour.  With T = 2 the decoder collapses to Viterbi exactly on the IDSSE worlds.  The rule (B'(33) mean
->= +0.010, no seed below -0.003) fails by a factor of 10 or more; no candidate was selected on a single seed.  Cost when
-on: about 0.3 s per 80k-frame block for `k = 100` (0.1 s for `k = 50`) with numba, i.e. about 1 s per match, far below the
-+60 s budget.  Default OFF; the submission path and the synthetic SHA are unchanged.
-
-### Ball detector with roboflow/supervision on the real tactical video (Issue #63; experiment, off by default)
-
-`supervision` (MIT) is a toolkit, not a detector.  `src/mtah2027/vision/sv_ball.py` combines it with the
-single-class ball model of roboflow/sports (`football-ball-detection.pt`, YOLOv8, loaded only from a local file
-through `ultralytics.YOLO(path)`; no hosted inference, no API key, no frame leaves the machine).  Two fixed
-configurations, chosen a priori: `sv_ball` (`InferenceSlicer`, 320 px tiles, 64 px overlap) and `sv_ball640` (the
-whole 640x640 attention crop, no slicing); confidence floor 0.05.  Optional temporal filter (`--sv-clip 5`): the 5
-consecutive frames around each sampled frame are scanned, candidates are reprojected with `H^-1` and the centre
-frame candidates are rescored by the support they find in the neighbour frames (speed gate 38 m/s, bonus when
-t-1 / t+1 agree with a constant-velocity motion).  ByteTrack is not used: supervision >= 0.31 moved it to a separate
-package.  CPU only, deterministic (same output on repeated runs, checked).
-
-Licence notes.  `supervision` and `roboflow/sports` code: MIT.  `ultralytics` (YOLOv8 runtime): AGPL-3.0 (already
-an optional extra, never needed for the submission).  The weights file has no licence of its own in the
-repository; the roboflow/sports README says the ball dataset (Roboflow Universe, `football-ball-detection-rejhg`)
-was derived from the Kaggle "DFL - Bundesliga Data Shootout" broadcast footage, so the model was trained on
-broadcast views and its use must follow the YOLOv8/AGPL terms plus whatever terms that dataset carries.  Weights
-and videos are never committed; torch/ultralytics/supervision live in a separate environment and the default
-path and CI do not need them (tests skip with `pytest.importorskip`).
-
-Sanity check on a public roboflow/sports broadcast sample (`2e57b9_0.mp4`, 8 frames, aggregates only): the model
-returns a ball candidate in 8/8 full frames (median top confidence 0.85).  Cost on CPU for one 640x640 crop:
-about 4 s (`sv_ball`) and 0.9 s (`sv_ball640`) per frame, times the clip length with `--sv-clip`.
-
-Run (aggregates only, same guard as Issue #58):
-
-```bash
-<venv>/Scripts/python scripts/real_video_ball_check.py --data-dir data --detectors sv_ball640,sv_ball     --sv-weights <path>/football-ball-detection.pt --sample 1000 --json <outside the repo>/sv_ball.json
-```
-
-**Result on the real tactical video** (run locally by the lead; aggregates only; seed 0, 300 frames with the ATD ball
-visible, ball ~4.5 px, crop centred on the ATD ball = ceiling):
-
-| detector | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | FP per frame | s per frame (CPU) |
-|---|---|---|---|---|---|
-| motion (#58, 1000 frames) | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 0.2 |
-| `sv_ball640` (YOLO roboflow, 640 crop) | 43.3 / 63.0 / 78.7 % | 41.0 / 59.7 / 75.7 % | 1.12 / 8.5 m | 1.18 | 1.27 |
-| `sv_ball` (InferenceSlicer 320) | 46.3 / 67.0 / 83.0 % | 42.7 / 61.7 / 78.0 % | 1.07 / 6.8 m | 1.47 | 5.19 |
-
-`sv_ball640`: frames with any detection 95 %, 2.1 detections per frame; crop shifted 3 m: top-confidence within 1 / 2 / 5
-m 42.7 / 61.0 / 77.0 % (robust to the search offset); 5-frame temporal filter: no change.  These frames are ones where
-the tracking *sees* the ball; in tracking gaps the rate is probably lower (occlusion).
-
-**Value in the hidden-ball gaps (simulation, `scripts/simulate_sv_ball_value.py`).**  A simulated detector
-(`vision/sim_detector.py`) reproduces the measured top-confidence CDF: per planned crop (one every `vision.every_k` = 5
-frames of each hidden gap, as #36) it returns the true ball plus an error drawn from the mixture <= 1 m 41.0 % /
-1-2 m 18.7 % / 2-5 m 16.0 % / far 19.3 % (a false positive, uniform 5-30 m from the ball) / no detection 5 %
-(uniform radius inside a bin, uniform angle).  Scenarios fixed a priori: gap detection rate 100 / 50 / 25 % of the
-measured rate (frames removed, nested per seed), and the measured `motion` profile as a control.  The points go
-through the same `inject_points` as the real chain (no speed gate, no pitch filter: pessimistic about the real
-`select_detections`, which would drop some far false positives), then the production specialist route (`lomo_gap`
-models, default config, vision off elsewhere), scored with the official metric on the degraded matches: B'(33) = 7 IDSSE
-leave-one-match-out, B'(1), seeds 0-2.  The `none` rows reproduce the references (B'(33) 0.6693 / 0.6709 / 0.6675 /
-0.6695, B'(1) 0.6017).
-
-B'(33) (hidden-ball frames filled by detections or interpolation: 76 % at 100 / 50 %, 42 % at 25 %, 34 % motion):
-
-| scenario | spellF1 | d | macroF1 | d per seed (0 / 1 / 2) |
-|---|---|---|---|---|
-| none | 0.6693 | | 0.9206 | |
-| sv_ball640 100 % | 0.5756 | -0.0938 | 0.8395 | -0.0900 / -0.0984 / -0.0928 |
-| sv_ball640 50 % | 0.5950 | -0.0744 | 0.8625 | -0.0694 / -0.0762 / -0.0775 |
-| sv_ball640 25 % | 0.6279 | -0.0415 | 0.9015 | -0.0421 / -0.0419 / -0.0404 |
-| motion (measured) | 0.5242 | -0.1451 | 0.8218 | -0.1450 / -0.1480 / -0.1422 |
-
-B'(1) guard: none 0.6017; 100 % 0.5678 (-0.0339); 50 % 0.5800 (-0.0217); 25 % 0.5943 (-0.0073); motion 0.5026 (-0.0991).
-The PFF guard was not run (B'(33) failed the rule).
-
-**Decision: not adopted.**  The rule (B'(33) mean >= +0.010, no seed < -0.003 at 50 %) is missed by a wide margin:
-at every rate the simulated sv_ball640 *lowers* spellF1 (-0.074 at 50 %), and the loss is monotone in the rate.  With
-41 % of the points within 1 m but 24 % off by more than 5 m (or missing) and another 35 % off by 1-5 m, the injected
-track misleads the possession model more than the empty gap does, which the tracking-free specialists already handle
-well.  The 1.27 s per crop on CPU would also cost about 11.7k planned crops per simulated match; on the real match,
-with the label-free 40.7 % of the graded frames hidden (~63.5k frames, one crop every 5) that is ~12.7k crops, about
-4.5 h of CPU for `sv_ball640` (about 18 h for `sv_ball`), plus the AGPL-3.0 (ultralytics) and weights /
-dataset-terms caveat above.  `vision.enabled` stays `false` and `sv_ball` is not wired into the submission route.
-It would only be worth revisiting with a detector whose top-confidence candidate is within ~0.3 m in most
-frames, or with a confidence-gated variant (use only candidates that agree over several frames), which the
-measured aggregates do not support.
-
-Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
-(and `--world b1`), then `agg --out-dir D`.
-
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),
@@ -1241,7 +969,71 @@ label-free aggregates of `apply_team_rules` (`diagnostics["restart_rules"]`: res
 tracking agreement) and of the calibration (`calibrated_weight`, `long_ball.weight`), which are printed with the other
 diagnostics and contain no per-frame data.
 
-### Multi-scale context windows and goalkeeper depth for the hidden-ball specialist (Issue #56; B' / A, not adopted)
+### Reproducibility of the learned route (Issue #52)
+
+RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
+`--specialists auto` used to retrain at run time whenever the sibling benchmark cache was on disk, so the file depended
+on the local machine rather than on the repository.  `auto` now loads the committed `models/specialists.json` first and
+trains only when no committed file exists (`train` keeps retraining; synthetic CI runs never train).
+`tests/test_52_reproducible_specialists.py` checks the order, that the committed model was trained with the sources and
+weights declared in `configs/default.yaml`, and that the target-match adaptation (`use_pseudo_labels`) stays off
+(official issue #2).  The pipeline diagnostics now report the emissions actually used (`specialists` or `heuristic`)
+instead of a fixed `heuristic`.
+
+## Milestone 10: post-freeze experiments (separate branches, adopted only if >= +0.010)
+
+Protocol (fixed before any run, same harness as Item 8, `scripts/decoder_sweep.py`): B'(33) = 7 IDSSE leave-one-match-out
+with the calibrated degrader at `dead_affinity` 33, seeds 0-2; adopt only if the mean gains >= +0.010 spellF1 with no seed
+below -0.003; guards B'(1) (reject a drop > 0.01) and A (PFF 4-fold + 8 unseen PFF, reject a drop > 0.03).  Baseline = the
+submitted default: B'(33) 0.6693 (0.6709 / 0.6675 / 0.6695), B'(1) 0.6017, A 0.5263 / 0.5263.  External matches only;
+on BAR-ATH only label-free aggregates (#58, #63).  Each experiment lives in its own branch, merged with its code OFF.
+
+| issue | change | B'(33) vs default | other evidence | decision |
+|---|---|---|---|---|
+| #55 | 56 PFF training matches instead of 20 | -0.0115 | B'(1) -0.0069; A +0.025 to +0.030 | not adopted |
+| #56 | multi-scale context windows + goalkeeper depth | -0.0019 to -0.0025 | ~48 % of turnovers still missed | not adopted |
+| #57 | learned H<->A turnover gate (Specialist C) | -0.0008 (max) to -0.0060 (hard) | hard: A +0.011 / +0.015; turnover recall unchanged (0.517) | not adopted, OFF |
+| #58 | classic ball detectors on the real video | - | motion: top hit within 2 m 10.4 %, 3.75 false positives / frame | vision stays OFF |
+| #59 | latency bias of the boundaries | - | H<->A about 1 frame early, below the 3-frame threshold | no shift applied |
+| #60 | bag of 3 specialist seeds | -0.0013 | B'(1) -0.0012; A +0.0000 / +0.0003 | not adopted |
+| #61 | boundary snap to touch / restart | +0.0002 | within seed noise (~0.002) | not adopted, OFF |
+| #62 | expected-spellF1 (MBR) decoding | 0.0000 to -0.0007 | - | not adopted, OFF |
+| #63 | supervision + roboflow/sports ball model | -0.074 (simulated, 50 % recovery) | real video: top hit within 2 m 60 %, median 1.12 m, 1.18 false positives / frame | not adopted, OFF |
+
+Outcome: nothing is adopted and the submission is unchanged (SHA256 `cac8927c2adc1b1a...`).  The positive cells (#61 +0.0002,
+and #44 +0.009 of Milestone 9) do not add up to the bar: every decoder-side change targets the same missed turnovers, which come
+from the specialists' emissions (turnover recall stays at 0.517 whatever the transition gate does), not from the decoder.  The
+one result against the trend is the hard gate of #57 on real PFF occlusions (+0.011 / +0.015), which loses on every B'(33) seed;
+it is recorded as future work, not applied.
+
+
+### All available PFF matches in training, 56 instead of 20 (Issue #55; not adopted)
+
+Training rows: the 7 IDSSE matches (calibrated degrader, `dead_affinity` 33) plus the first 56 PFF matches by name at weight 0.5
+(`pff_max_matches: 56`); the 8 last PFF matches by name stay out of training (they are the unseen validation set).
+Same harness and models as Item 8 (`scripts/train_cv_models.py`: LOMO over the 7 IDSSE matches, PFF 4-fold over the 56 matches,
+`--full` all-data model scored on the 8 unseen; `scripts/decoder_sweep.py run --n-pff 56`).  The baseline was recomputed with the
+same harness and reproduces Item 8 exactly.  Candidate: spellF1, seeds 0 / 1 / 2.
+
+| | default (20 PFF) | 56 PFF | delta |
+|---|---|---|---|
+| B'(33) mean | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6578 (0.6613 / 0.6514 / 0.6608) | **-0.0115** (-0.0096 / -0.0161 / -0.0087) |
+| B'(33) macroF1 | 0.9206 | 0.9176 | -0.0030 |
+| B'(1) guard | 0.6017 (0.6019 / 0.5991 / 0.6041) | 0.5948 (0.6014 / 0.5905 / 0.5923) | -0.0069 |
+| A, first 20 PFF, 4-fold | 0.5263 (macroF1 0.8636) | 0.5497 (0.8696) | +0.0235 |
+| A, 56 PFF, 4-fold over the 56 | 0.5311 (0.8706) | 0.5560 (0.8773) | +0.0249 |
+| A, 8 unseen PFF | 0.5263 (0.8652) | 0.5559 (0.8722) | +0.0296 |
+
+The 56-match fold is index modulo 4 over the first 56 matches (14 held out per fold, so the first-20 subset keeps its folds); the
+default models never saw matches 21-56, which makes that row conservative for the default.  Rule: B'(33) >= +0.010 and no seed below
+-0.003; reject if B'(1) drops > 0.01 or A drops > 0.03.  **Rejected: B'(33) is lower in all three seeds (-0.0115 on average).**  The guards
+pass (B'(1) -0.0069, A improves), so the cause is not a broken model but a shift of the mixture: the PFF rows grow 2.8x at the same
+weight 0.5, so the model fits the world of real, visible-ball occlusions (A +0.025 to +0.030) at the cost of the degraded-IDSSE world that
+mimics the competition ATD (B').  Not run (would be a selection on the same B' world): re-weighting PFF to keep its total mass
+(about 0.18 per match).  `configs/default.yaml` and `models/specialists.json` are unchanged; `train_cv_models.py --full` and
+`decoder_sweep.py --n-pff / unseen_<variant>.json` stay as tools.
+
+### Multi-scale context windows and goalkeeper depth for the hidden-ball specialist (Issue #56; not adopted)
 
 *Hypothesis.*  After a turnover while the ball is hidden the team shape and the goalkeepers (the recovering team's keeper steps up
 8-15 m in 5-8 s, the other drops) need 6-10 s to settle, so context windows of 25 / 75 / 175 / 250 frames (instead of 50 / 100) and
@@ -1274,16 +1066,277 @@ reorganisation of the block.
 so the defaults stay (`context_windows: [50, 100]`, `gk_context: false`).  The code stays available, OFF.  The all-data
 model of each variant (unseen-PFF guard) was not trained because the primary criterion already fails.
 
-### Reproducibility of the learned route (Issue #52)
+### Specialist C, a learned H<->A turnover gate (Issue #57; not adopted, OFF)
 
-RULES.md requires that running the repository against the provided data reproduces the submission byte for byte.
-`--specialists auto` used to retrain at run time whenever the sibling benchmark cache was on disk, so the file depended
-on the local machine rather than on the repository.  `auto` now loads the committed `models/specialists.json` first and
-trains only when no committed file exists (`train` keeps retraining; synthetic CI runs never train).
-`tests/test_52_reproducible_specialists.py` checks the order, that the committed model was trained with the sources and
-weights declared in `configs/default.yaml`, and that the target-match adaptation (`use_pseudo_labels`) stays off
-(official issue #2).  The pipeline diagnostics now report the emissions actually used (`specialists` or `heuristic`)
-instead of a fixed `heuristic`.
+`src/mtah2027/models/specialist_c.py`, `scripts/train_specialist_c.py`, config blocks `specialist_c` and
+`transition_matrix.learned_gate_*` (`learned_gate_mode: off`).  C is a LightGBM (`deterministic=True`, `num_threads=1`,
+`seed=0`; scikit-learn fallback through `FrameClassifier`) on the 206-column feature matrix of the specialists (so it works with
+a visible and a hidden ball: distances of the nearest players, closing speeds, touch score, collective signals and their
++-50 / 100 frame context, coherence R, goalkeepers, time since the ball was lost) that predicts the class "no change / H -> A /
+A -> H within +-5 frames of the frame", the target being derived from the ground truth of external matches (direct H <-> A
+change between two live frames).  Rows are those of the default training pickle (calibrated degrader, dead_affinity 33, stride
+10, home / away swapped copies; 598k rows, 1.3 % positives per direction), every 4th negative kept with weight 4; a fitted
+temperature was 0.99-1.00 so the calibration folds are off.  Leave-one-match-out: the C of a held-out IDSSE match never sees it
+(PFF flavour: IDSSE + 20 PFF at weight 0.5; for the PFF 4-fold guard the held-out fold's matches are excluded; for the 8 unseen
+PFF matches the C is trained on all rows).  The gate maps P_C to the transition: `log A_t = closed + (open - closed) * g`, with three
+variants fixed beforehand: `hard` (g = 1 where P_C >= 0.5, replaces the touch rule), `blend` (g = 0.5 rule + 0.5 P_C),
+`max` (g = max(rule, P_C)); the occlusion floor `ha_occluded` is kept.  Harness `scripts/decoder_sweep.py` (cached front end and
+default A/B models, only the transitions change; candidates attach C with `"c": "<flavour>"`; the pooled turnover recall is
+printed with `agg --turnover`: share of the true direct H<->A changes matched by a predicted change of the same direction within
+25 frames).  spellF1 (delta vs the default 0.6693 / 0.6017 / 0.5263 / 0.5263):
+
+| world | default | hard | blend | max |
+|---|---|---|---|---|
+| B'(33), 7 IDSSE LOMO, seeds 0-2, IDSSE-only C | 0.6693 | 0.6633 (-0.0060) | 0.6654 (-0.0039) | 0.6685 (-0.0008) |
+| per seed delta (0 / 1 / 2) | | -0.0093 / -0.0053 / -0.0033 | -0.0080 / -0.0007 / -0.0029 | -0.0011 / -0.0014 / 0.0000 |
+| B'(33), IDSSE + PFF C | 0.6693 | 0.6620 (-0.0073) | 0.6646 (-0.0047) | 0.6687 (-0.0006) |
+| per seed delta (0 / 1 / 2) | | -0.0103 / -0.0078 / -0.0038 | -0.0080 / -0.0032 / -0.0031 | -0.0007 / -0.0012 / +0.0001 |
+| B'(1) (guard, seed 0; IDSSE / +PFF C) | 0.6019 | 0.5991 / 0.5996 | 0.6005 / 0.6005 | 0.6014 / 0.6020 |
+| A PFF 4-fold, 20 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5374 / 0.5374 (+0.0111) | 0.5330 / 0.5334 | 0.5249 / 0.5253 |
+| A unseen, 8 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5413 / 0.5421 (+0.0150 / +0.0158) | 0.5356 / 0.5366 | 0.5263 / 0.5265 |
+
+Turnover recall (matched / true changes): B'(33) default 0.517 (3647 / 7053, 6297 predicted changes), `hard` 0.493, `blend` 0.500,
+`max` 0.517; B'(1) 0.407 -> 0.389 / 0.396 / 0.405; PFF 4-fold 0.352 -> 0.344 / 0.346 / 0.353; unseen PFF 0.371 -> 0.360 / 0.364 / 0.375.
+The B'(33) default reproduces 0.6693 (0.6709 / 0.6675 / 0.6695) exactly.
+
+Why it does not help: a gate can only allow a change, it cannot make the emissions prefer it.  The variants that open the gate
+wider (`max`) leave the recall unchanged (0.517), so the missed turnovers are not blocked by the transition matrix; the emissions
+(specialists' probabilities) never swing to the other team.  The variants that close the gate where P_C is low (`hard`,
+`blend`) remove true changes together with the false ones (recall -2.4 points on B'(33)).  On the real PFF occlusions the
+hard gate removes 7 % of the predicted changes and gains +0.011 / +0.015 (fewer spurious spells), but the adoption rule is set
+on B'(33), the world that imitates the competition ATD, where it loses 0.006-0.007 on every seed.  Rule (B'(33) mean >= +0.010,
+no seed below -0.003, B'(1) not down by more than 0.01, A not down by more than 0.03) fails on the primary criterion; the
+variant picked on seeds 0-1 (`max`, -0.0013) is -0.0000 / +0.0001 on the blind seed 2.  Not run: a C trained on stride-1 rows
+(positives are about one row per event at stride 10), and the full-data C model (not trained: no variant is adopted).  Default OFF;
+the submission path and the synthetic SHA256 (`2a31a913...`) are unchanged in two runs.
+
+### Ball detectors on the real tactical video (Issue #58; aggregates only)
+
+Purpose: the broadcast route was measured label-free on the real match (Issue #39) but the ball detectors of the
+vision route (motion #36, optional YOLO) had only been tested on synthetic video.  `scripts/real_video_ball_check.py`
+samples (seeded, default 1000) video frames of the evaluated halves where the ATD ball is visible and the
+homography is usable, cuts the 640x640 attention crop around the projected ATD ball (`--search-offset-m` shifts
+it by a seeded random offset to mimic a real search point), runs the available detectors, reprojects the detections
+with H^-1 and compares them with the ATD ball.  It never reads possession labels, never writes crops or per-frame
+rows, and refuses to print anything that is not an aggregate.  A detector that cannot be built (no ultralytics or
+weights) is skipped and listed under `skipped_detectors`.  The submission path and defaults are not changed.
+
+```bash
+python scripts/real_video_ball_check.py --data-dir data --sample 1000 --json reports/real_video_ball_check.json
+```
+
+Numbers printed, per detector: detection rate (% of sampled frames with a detection within 1 / 2 / 5 m of the ATD
+ball, any candidate and highest-confidence candidate), median and p90 error in metres of the nearest detection,
+false positives per frame (detections farther than 5 m), frames skipped (invalid homography / off-image, video
+read failures), detections per frame, runtime; plus the median apparent ball size in px.  The crop is centred on
+the ATD ball, so the rates are an upper bound of the gap-recovery use.
+
+Result on the real BAR-ATH tactical video (run locally; aggregates only; seed 0, 1000 sampled frames out of 91,247
+eligible, 91,844 graded frames with the ATD ball visible, 597 skipped for invalid homography / off-image, 0 read
+failures; YOLO skipped because `ultralytics` is not installed):
+
+| detector, crop | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | false positives per frame | detections per frame | time |
+|---|---|---|---|---|---|---|
+| motion, centred on the ATD ball | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 4.67 | 214 s |
+| motion, crop shifted 3 m | 15.4 / 27.2 / 50.4 % | 5.2 / 10.8 / 22.0 % | 4.8 / 16.5 m | 3.73 | 4.65 | 212 s |
+| hough, centred on the ATD ball | 7.2 / 13.8 / 25.3 % | 5.8 / 9.8 / 14.7 % | 13.9 / 40.8 m | 3.92 | 4.24 | 285 s |
+| hough, crop shifted 3 m | 7.0 / 13.7 / 25.9 % | 5.8 / 9.7 / 14.8 % | 13.7 / 40.2 m | 3.93 | 4.26 | 215 s |
+
+Median apparent ball size: 4.5 px.  Reading: on the tactical camera of the stadium the ball is about 4-5 pixels wide
+and the available detectors do not find it.  Even with the crop centred on the true ball, the most confident
+detection lies within 2 m of it in only ~10 % of the frames, there are ~3.7 false positives per frame, and the
+numbers barely change when the crop is shifted by 3 m, which means most "hits" are other blobs (players, lines)
+that happen to be close to the ball rather than the ball itself.  The simulation of Issue #36 needs a ~0.3 m
+accurate detector to gain anything, so this confirms with real measurements the decision to keep `vision.enabled:
+false` in the submission.  A detector trained for this camera remains future work.
+
+### Signed latency of the boundaries on other matches (Issue #59; diagnostic, no shift applied)
+
+Diagnostic added to `scripts/eval_external.py` (`lat_by_type` per run, `latency_summary`): signed latency in frames of the
+transitions matched by the official scorer (`evaluate()["transitions"][25]`, tolerance 25 frames, `pred - gt` as in
+`possession_metrics.transition_scores`, matching on the destination label), split into H<->A, alive -> D and D -> alive
+(restarts).  Models: the cached leave-one-match-out models of the default recipe (`models/specialists.json` is byte
+identical to the `gap` variant; Issue #44 `lomo_gap`, `pff_gap`), no retraining.  Protocol of Items 7-8 (B'(33): 7 IDSSE
+LOMO, calibrated degrader `dead_affinity` 33, seeds 0 1 2, harness `scripts/decoder_sweep.py`); the run reproduces the
+default of the #44 harness exactly (spellF1 0.6693 = 0.6709 / 0.6675 / 0.6695).  A PFF (20 matches, 4-fold models) and A-unseen
+(8 matches, committed models) as checks (both 0.5263, as in Item 8).  "Runs" = (match, seed) cells; median per run.
+
+| world | transitions | runs | median of run medians | run medians min / max | runs early / late | pooled median | pooled early / exact / late | pooled IQR |
+|---|---|---|---|---|---|---|---|---|
+| B'(33) | all (7133 matched) | 21 | 0.0 | -1 / 0 | 29 % / 0 % | 0 | 49 % / 28 % / 23 % | -2 .. 0 |
+| B'(33) | H<->A (3667) | 21 | -1.0 | -1 / 0 | 90 % / 0 % | -1 | 55 % / 21 % / 24 % | -3 .. 0 |
+| B'(33) | alive -> D (1738) | 21 | -1.0 | -1 / 0 | 86 % / 0 % | -1 | 60 % / 26 % / 14 % | -2 .. 0 |
+| B'(33) | D -> alive (1728) | 21 | 0.0 | 0 / 0 | 0 % / 0 % | 0 | 25 % / 44 % / 31 % | 0 .. +1 |
+| PFF 4-fold | all (3721) | 20 | -1.5 | -3 / 0 | 85 % / 0 % | -1 | 53 % / 3 % / 43 % | -8 .. +9 |
+| PFF 4-fold | H<->A (1837) | 20 | -1.8 | -3 / +4 | 75 % / 20 % | -1 | 52 % / 3 % / 44 % | -8 .. +9 |
+| PFF 4-fold | alive -> D (1013) | 20 | -0.2 | -4 / +3 | 50 % / 20 % | -1 | 51 % / 4 % / 45 % | -8 .. +9 |
+| PFF 4-fold | D -> alive (871) | 20 | -3.5 | -7 / +5 | 90 % / 10 % | -3 | 58 % / 3 % / 39 % | -8 .. +9 |
+| PFF unseen | all (1413) | 8 | -2.0 | -4 / 0 | 88 % / 0 % | -2 | 56 % / 3 % / 41 % | -10 .. +7 |
+
+Decision rule (fixed beforehand): stable bias = at least 80 % of the runs with the same sign **and** |median of medians| >= 3
+frames on B'(33).  On B'(33) the sign is consistent for H<->A (90 % of the runs early) but the magnitude is one frame
+(median of medians -1 for H<->A and alive -> D, 0 for restarts, 0 overall), far below 3 frames, and one frame is free in
+the metric.  PFF (real tracker) shows a small early tendency (median -1 to -2) with a spread of about +-9 frames, so it
+does not contradict "no bias worth correcting" either, but it is not evidence for a +3 shift: on B'(33) a shift of the
+bulk would move the exact matches (28 %, 44 % for restarts) away from zero.  **Not adopted**: `boundary_shift_frames` was
+not implemented (Task 2 only applied with a stable bias); the submission path and the synthetic SHA are untouched.
+
+### Seed bagging of the specialists (Issue #60; not adopted)
+
+Same world, same training rows (IDSSE calibrated degrader `dead_affinity` 33 + the first 20 PFF at weight 0.5, training pickle
+fixed), two extra LightGBM seeds (1, 2; `deterministic=True`, `num_threads=1`; the seed-0 models are the first member), one model per
+LOMO fold (7 IDSSE), per PFF fold (4) and the all-data model for the unseen PFF.  The bag is a `--model-variant` style ensemble
+manifest (`format: ensemble`, `mode: linear`, equal weights; `specialist_fusion.save_bag_manifest`): class probabilities are averaged
+per frame before the soft priors, floor, scaling and 1e-6 quantisation, so it is deterministic.  Tools: `train_cv_models.py --seed
+N [--full]`, `train_specialists.py --seed N`, `train_specialists(seed=...)`; evaluation with `scripts/decoder_sweep.py` (the baseline
+reproduces 0.6693 / 0.6017 / 0.5263 / 0.5263 exactly).  spellF1:
+
+| | default (seed 0) | bag of 3 | delta | seed 1 alone | seed 2 alone |
+|---|---|---|---|---|---|
+| B'(33) mean (degradation seeds 0 / 1 / 2) | 0.6693 (0.6709 / 0.6675 / 0.6695) | 0.6680 (0.6694 / 0.6667 / 0.6680) | **-0.0013** (-0.0015 / -0.0008 / -0.0015) | 0.6681 | 0.6676 |
+| B'(33) macroF1 | 0.9206 | 0.9207 | +0.0001 | 0.9201 | 0.9206 |
+| B'(1) guard | 0.6017 | 0.6005 | -0.0012 | 0.5999 | 0.5977 |
+| A, first 20 PFF, 4-fold | 0.5263 | 0.5263 | -0.0000 | 0.5258 | 0.5246 |
+| A, 8 unseen PFF | 0.5263 | 0.5266 | +0.0003 | 0.5260 | 0.5287 |
+
+The single extra seeds are within -0.0020 of the default on B'(33), i.e. the seed-to-seed spread is about 0.001-0.002, an order of
+magnitude below the +0.010 bar, and averaging three members removes none of the gap to the default (the members agree on the frames
+that decide the spells; the residual error is bias of the training world, not variance of the booster).  **Rejected**: B'(33) is
+-0.0013 (rule: mean >= +0.010; the "no seed below -0.003" condition holds but is moot), guards pass (B'(1) -0.0012, A +-0.000).  Not run: the
+bag over degradation seeds (a second training pickle with another degrader seed), planned only if the seed bag showed >= +0.005.
+`configs/default.yaml` and `models/specialists*.json` are unchanged; no `specialists_bag.json` is committed (the submission and the
+synthetic SHA256 do not change).
+
+### Boundary snap to the touch / restart frame (Issue #61; not adopted, OFF)
+
+**Idea.**  After Viterbi and the spell optimiser (`pipeline` step 10b, `postprocessing/boundary_snap.py`,
+`boundary_snap.enabled`, default **false**) each `H<->A` boundary moves to the nearest touch peak (`touch_score > 0`,
+ball visible, not aerial) of the gaining team (`nearest_team`) within +-N frames, and each `D -> alive` boundary to the
+restart frame `t*` of an unused resolved set-piece anchor within +-N; `alive -> D`, block edges, moves that would relabel
+forced-dead frames, empty a run or cross the neighbouring boundary are never applied.  N in {6, 12} fixed a priori
+(12 chosen on seeds 0-1, seed 2 blind).  Harness `scripts/decoder_sweep.py` (cached front end; candidates via
+`route: {"boundary_snap.enabled": true, ...}`), cached LOMO `gap` models, no retraining; `--verify` cached == uncached.
+
+| B'(33) 7 IDSSE LOMO | seed 0 | seed 1 | seed 2 | mean | delta |
+|---|---|---|---|---|---|
+| default | 0.6709 | 0.6675 | 0.6695 | 0.6693 | - |
+| snap N=6 | 0.6707 | 0.6671 | 0.6699 | 0.6692 | -0.0001 |
+| snap N=12 | 0.6708 | 0.6678 | 0.6699 | 0.6695 | +0.0002 |
+
+Decision: **not adopted** (needed >= +0.010).  The Viterbi boundaries are already within a few frames of the touch, and
+frame-level moves inside the +-25-frame scoring tolerance barely change the matching.  IDSSE runs carry no Smart
+Tagging, so the restart branch (unit-tested only) is not exercised there.  Guards B'(1) and A PFF were not run (the
+primary rule already fails).  Default config and synthetic submission unchanged.
+
+### Decoding by expected spellF1, minimum Bayes risk over posterior samples (Issue #62; not adopted, OFF)
+
+`src/mtah2027/decoding/expected_spellf1.py`, config block `expected_spellf1` (`enabled: false`).  Per graded block: log-space
+forward pass over the same quantised emissions and time-varying transitions `A_t` as Viterbi, `k` posterior paths by backward
+sampling (fixed seed, NumPy-precomputed conditional probabilities so the njit and the pure-Python kernels agree), the Viterbi
+path added as candidate 0, and the candidate with the highest mean spellF1 against the others is kept.  The pair score is a
+vectorised re-implementation of the official `spell_scores` (verified equal to `possession_metrics.spell_scores` to 1e-12 in
+`tests/test_62_expected_spellf1.py`; the forward-backward sampler is verified against brute force on a 5-frame chain).
+Protocol of Items 7-9 (harness `scripts/decoder_sweep.py`, cached default models, no retraining; candidates fixed beforehand:
+`k=100 T=1`, `k=50 T=1`, `k=100 T=2`, T = sampling temperature).  spellF1 means:
+
+| world | default | k=100 T=1 | k=50 T=1 | k=100 T=2 |
+|---|---|---|---|---|
+| B'(33), 7 IDSSE LOMO, seeds 0-2 | 0.6693 | 0.6690 (-0.0003) | 0.6686 (-0.0007) | 0.6693 (+0.0000) |
+| B'(33) per seed delta (0 / 1 / 2) | | -0.0002 / +0.0006 / -0.0014 | +0.0020 / 0.0000 / -0.0042 | 0 / 0 / 0 |
+| B'(1) (guard) | 0.6017 | 0.5994 (-0.0023) | 0.5994 (-0.0023) | 0.6017 (+0.0000) |
+| A PFF 4-fold, 20 matches (guard) | 0.5263 | 0.5193 (-0.0070) | 0.5192 (-0.0071) | 0.5231 (-0.0031) |
+| A unseen, 8 matches (guard) | 0.5263 | 0.5231 (-0.0032) | 0.5216 (-0.0047) | 0.5263 (+0.0000) |
+
+Why it does not help: the emissions plus the transition matrix make the posterior very concentrated around the Viterbi path;
+the samples differ from it by flicker (about 210 spells per half against 189 for Viterbi in the cell inspected), so the
+Viterbi path is the most central candidate (it is chosen in practically every block) and the selection returns it or a
+near-identical neighbour.  With T = 2 the decoder collapses to Viterbi exactly on the IDSSE worlds.  The rule (B'(33) mean
+>= +0.010, no seed below -0.003) fails by a factor of 10 or more; no candidate was selected on a single seed.  Cost when
+on: about 0.3 s per 80k-frame block for `k = 100` (0.1 s for `k = 50`) with numba, i.e. about 1 s per match, far below the
++60 s budget.  Default OFF; the submission path and the synthetic SHA are unchanged.
+
+### Ball detector with roboflow/supervision on the real tactical video (Issue #63; not adopted, OFF)
+
+`supervision` (MIT) is a toolkit, not a detector.  `src/mtah2027/vision/sv_ball.py` combines it with the
+single-class ball model of roboflow/sports (`football-ball-detection.pt`, YOLOv8, loaded only from a local file
+through `ultralytics.YOLO(path)`; no hosted inference, no API key, no frame leaves the machine).  Two fixed
+configurations, chosen a priori: `sv_ball` (`InferenceSlicer`, 320 px tiles, 64 px overlap) and `sv_ball640` (the
+whole 640x640 attention crop, no slicing); confidence floor 0.05.  Optional temporal filter (`--sv-clip 5`): the 5
+consecutive frames around each sampled frame are scanned, candidates are reprojected with `H^-1` and the centre
+frame candidates are rescored by the support they find in the neighbour frames (speed gate 38 m/s, bonus when
+t-1 / t+1 agree with a constant-velocity motion).  ByteTrack is not used: supervision >= 0.31 moved it to a separate
+package.  CPU only, deterministic (same output on repeated runs, checked).
+
+Licence notes.  `supervision` and `roboflow/sports` code: MIT.  `ultralytics` (YOLOv8 runtime): AGPL-3.0 (already
+an optional extra, never needed for the submission).  The weights file has no licence of its own in the
+repository; the roboflow/sports README says the ball dataset (Roboflow Universe, `football-ball-detection-rejhg`)
+was derived from the Kaggle "DFL - Bundesliga Data Shootout" broadcast footage, so the model was trained on
+broadcast views and its use must follow the YOLOv8/AGPL terms plus whatever terms that dataset carries.  Weights
+and videos are never committed; torch/ultralytics/supervision live in a separate environment and the default
+path and CI do not need them (tests skip with `pytest.importorskip`).
+
+Sanity check on a public roboflow/sports broadcast sample (`2e57b9_0.mp4`, 8 frames, aggregates only): the model
+returns a ball candidate in 8/8 full frames (median top confidence 0.85).  Cost on CPU for one 640x640 crop:
+about 4 s (`sv_ball`) and 0.9 s (`sv_ball640`) per frame, times the clip length with `--sv-clip`.
+
+Run (aggregates only, same guard as Issue #58):
+
+```bash
+<venv>/Scripts/python scripts/real_video_ball_check.py --data-dir data --detectors sv_ball640,sv_ball     --sv-weights <path>/football-ball-detection.pt --sample 1000 --json <outside the repo>/sv_ball.json
+```
+
+**Result on the real tactical video** (run locally by the lead; aggregates only; seed 0, 300 frames with the ATD ball
+visible, ball ~4.5 px, crop centred on the ATD ball = ceiling):
+
+| detector | any detection within 1 / 2 / 5 m | top-confidence within 1 / 2 / 5 m | nearest error median / p90 | FP per frame | s per frame (CPU) |
+|---|---|---|---|---|---|
+| motion (#58, 1000 frames) | 15.5 / 27.9 / 51.0 % | 5.1 / 10.4 / 21.6 % | 4.7 / 15.5 m | 3.75 | 0.2 |
+| `sv_ball640` (YOLO roboflow, 640 crop) | 43.3 / 63.0 / 78.7 % | 41.0 / 59.7 / 75.7 % | 1.12 / 8.5 m | 1.18 | 1.27 |
+| `sv_ball` (InferenceSlicer 320) | 46.3 / 67.0 / 83.0 % | 42.7 / 61.7 / 78.0 % | 1.07 / 6.8 m | 1.47 | 5.19 |
+
+`sv_ball640`: frames with any detection 95 %, 2.1 detections per frame; crop shifted 3 m: top-confidence within 1 / 2 / 5
+m 42.7 / 61.0 / 77.0 % (robust to the search offset); 5-frame temporal filter: no change.  These frames are ones where
+the tracking *sees* the ball; in tracking gaps the rate is probably lower (occlusion).
+
+**Value in the hidden-ball gaps (simulation, `scripts/simulate_sv_ball_value.py`).**  A simulated detector
+(`vision/sim_detector.py`) reproduces the measured top-confidence CDF: per planned crop (one every `vision.every_k` = 5
+frames of each hidden gap, as #36) it returns the true ball plus an error drawn from the mixture <= 1 m 41.0 % /
+1-2 m 18.7 % / 2-5 m 16.0 % / far 19.3 % (a false positive, uniform 5-30 m from the ball) / no detection 5 %
+(uniform radius inside a bin, uniform angle).  Scenarios fixed a priori: gap detection rate 100 / 50 / 25 % of the
+measured rate (frames removed, nested per seed), and the measured `motion` profile as a control.  The points go
+through the same `inject_points` as the real chain (no speed gate, no pitch filter: pessimistic about the real
+`select_detections`, which would drop some far false positives), then the production specialist route (`lomo_gap`
+models, default config, vision off elsewhere), scored with the official metric on the degraded matches: B'(33) = 7 IDSSE
+leave-one-match-out, B'(1), seeds 0-2.  The `none` rows reproduce the references (B'(33) 0.6693 / 0.6709 / 0.6675 /
+0.6695, B'(1) 0.6017).
+
+B'(33) (hidden-ball frames filled by detections or interpolation: 76 % at 100 / 50 %, 42 % at 25 %, 34 % motion):
+
+| scenario | spellF1 | d | macroF1 | d per seed (0 / 1 / 2) |
+|---|---|---|---|---|
+| none | 0.6693 | | 0.9206 | |
+| sv_ball640 100 % | 0.5756 | -0.0938 | 0.8395 | -0.0900 / -0.0984 / -0.0928 |
+| sv_ball640 50 % | 0.5950 | -0.0744 | 0.8625 | -0.0694 / -0.0762 / -0.0775 |
+| sv_ball640 25 % | 0.6279 | -0.0415 | 0.9015 | -0.0421 / -0.0419 / -0.0404 |
+| motion (measured) | 0.5242 | -0.1451 | 0.8218 | -0.1450 / -0.1480 / -0.1422 |
+
+B'(1) guard: none 0.6017; 100 % 0.5678 (-0.0339); 50 % 0.5800 (-0.0217); 25 % 0.5943 (-0.0073); motion 0.5026 (-0.0991).
+The PFF guard was not run (B'(33) failed the rule).
+
+**Decision: not adopted.**  The rule (B'(33) mean >= +0.010, no seed < -0.003 at 50 %) is missed by a wide margin:
+at every rate the simulated sv_ball640 *lowers* spellF1 (-0.074 at 50 %), and the loss is monotone in the rate.  With
+41 % of the points within 1 m but 24 % off by more than 5 m (or missing) and another 35 % off by 1-5 m, the injected
+track misleads the possession model more than the empty gap does, which the tracking-free specialists already handle
+well.  The 1.27 s per crop on CPU would also cost about 11.7k planned crops per simulated match; on the real match,
+with the label-free 40.7 % of the graded frames hidden (~63.5k frames, one crop every 5) that is ~12.7k crops, about
+4.5 h of CPU for `sv_ball640` (about 18 h for `sv_ball`), plus the AGPL-3.0 (ultralytics) and weights /
+dataset-terms caveat above.  `vision.enabled` stays `false` and `sv_ball` is not wired into the submission route.
+It would only be worth revisiting with a detector whose top-confidence candidate is within ~0.3 m in most
+frames, or with a confidence-gated variant (use only candidates that agree over several frames), which the
+measured aggregates do not support.
+
+Reproduce: `python scripts/simulate_sv_ball_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
+(and `--world b1`), then `agg --out-dir D`.
 
 ## 6. Limitations (honest list)
 
@@ -1394,24 +1447,3 @@ All dependencies are pinned (`requirements.txt`, `pyproject.toml`), seeds are fi
 `PYTHONHASHSEED=0` is enforced, every decoder input is rounded to 1e-6 and ties are broken by state index, so
 two runs (and the numba and fallback decoders) give the same SHA256.  CI repeats the run on the synthetic
 full-length match twice and compares the hashes.  Full repository layout and commands: `README.md`.
-
-### Boundary snap to the touch / restart frame (Issue #61; B'(33), not adopted)
-
-**Idea.**  After Viterbi and the spell optimiser (`pipeline` step 10b, `postprocessing/boundary_snap.py`,
-`boundary_snap.enabled`, default **false**) each `H<->A` boundary moves to the nearest touch peak (`touch_score > 0`,
-ball visible, not aerial) of the gaining team (`nearest_team`) within +-N frames, and each `D -> alive` boundary to the
-restart frame `t*` of an unused resolved set-piece anchor within +-N; `alive -> D`, block edges, moves that would relabel
-forced-dead frames, empty a run or cross the neighbouring boundary are never applied.  N in {6, 12} fixed a priori
-(12 chosen on seeds 0-1, seed 2 blind).  Harness `scripts/decoder_sweep.py` (cached front end; candidates via
-`route: {"boundary_snap.enabled": true, ...}`), cached LOMO `gap` models, no retraining; `--verify` cached == uncached.
-
-| B'(33) 7 IDSSE LOMO | seed 0 | seed 1 | seed 2 | mean | delta |
-|---|---|---|---|---|---|
-| default | 0.6709 | 0.6675 | 0.6695 | 0.6693 | - |
-| snap N=6 | 0.6707 | 0.6671 | 0.6699 | 0.6692 | -0.0001 |
-| snap N=12 | 0.6708 | 0.6678 | 0.6699 | 0.6695 | +0.0002 |
-
-Decision: **not adopted** (needed >= +0.010).  The Viterbi boundaries are already within a few frames of the touch, and
-frame-level moves inside the +-25-frame scoring tolerance barely change the matching.  IDSSE runs carry no Smart
-Tagging, so the restart branch (unit-tested only) is not exercised there.  Guards B'(1) and A PFF were not run (the
-primary rule already fails).  Default config and synthetic submission unchanged.
