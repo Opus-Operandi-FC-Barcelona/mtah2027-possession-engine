@@ -47,6 +47,17 @@ VARIANTS: dict[str, dict | None] = {
     "T-max": {SEQ + "enabled": True, SEQ + "mode": "turnover", SEQ + "turnover_gate_mode": "max"},
     "T-blend": {SEQ + "enabled": True, SEQ + "mode": "turnover", SEQ + "turnover_gate_mode": "blend",
                 SEQ + "turnover_blend": 0.5},
+    # Issue #73 (final preregistered grid): visible-frame emissions; hidden frames keep E100
+    "V0": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+           SEQ + "visible_weight": 0.0, SEQ + "emission_scale": 0.8},
+    "V25": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+            SEQ + "visible_weight": 0.25, SEQ + "emission_scale": 0.5},
+    "V50": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+            SEQ + "visible_weight": 0.5, SEQ + "emission_scale": 0.5},
+    "V25s": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+             SEQ + "visible_weight": 0.25, SEQ + "emission_scale": 0.8},
+    "V50s": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+             SEQ + "visible_weight": 0.5, SEQ + "emission_scale": 0.8},
     "E50+T-max": {SEQ + "enabled": True, SEQ + "mode": "both", SEQ + "emission_weight": 0.5,
                   SEQ + "turnover_gate_mode": "max"},
 }
@@ -137,6 +148,7 @@ def cmd_run(a) -> int:
 
 def cmd_agg(a) -> int:
     table = ds.load_results(a.out_dirs)
+    ref = a.ref
     names = [n for n in VARIANTS if any(n in m for by in table.values() for m in by.values())]
     worlds = sorted({w for w, _ in table})
     print(f"{'variant':<12}" + "".join(f"{w:>10}{'d':>9}" for w in worlds) + "   per-seed delta")
@@ -146,7 +158,7 @@ def cmd_agg(a) -> int:
         for w in worlds:
             seeds = sorted(s for ww, s in table if ww == w)
             sm = ds.summarise(table, w, seeds, n)
-            bm = ds.summarise(table, w, seeds, "base")
+            bm = ds.summarise(table, w, seeds, ref)
             d = {s: sm["per_seed"][s] - bm["per_seed"][s] for s in sm["per_seed"] if s in bm["per_seed"]}
             per_world[w] = {"mean": sm["mean"], "delta": sm["mean"] - bm["mean"], "per_seed_delta": d}
             parts.append(f"{sm['mean']:10.4f}{sm['mean'] - bm['mean']:+9.4f}")
@@ -195,6 +207,7 @@ def main(argv=None) -> int:
     g = sub.add_parser("agg")
     g.add_argument("--out-dirs", nargs="+", required=True)
     g.add_argument("--json", default=None)
+    g.add_argument("--ref", default="base", help="reference variant of the deltas (Issue #73: E100ens)")
     args = ap.parse_args(argv)
     return cmd_run(args) if args.cmd == "run" else cmd_agg(args)
 

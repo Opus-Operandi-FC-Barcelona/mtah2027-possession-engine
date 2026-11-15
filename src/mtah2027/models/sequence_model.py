@@ -43,6 +43,7 @@ class SequenceParams:
     mode: str = "off"                  # off | emissions | turnover | both
     emission_weight: float = 0.5       # hidden frames: log p = (1 - w) log p_prod + w * emission_scale * log p_seq
     emission_scale: float = 0.5        # tempering of the sequence log-probabilities (as specialist_fusion.scale_hidden)
+    visible_weight: float = 0.0        # Issue #73: same mix on ball-visible frames (0: visible frames untouched)
     prob_floor: float = 0.001
     turnover_gate_mode: str = "max"    # hard | max | blend (see transition_matrix.learned_gate)
     turnover_threshold: float = 0.5
@@ -234,14 +235,19 @@ def random_model(feature_names: Sequence[str], *, channels: int = 8, dilations: 
 
 def mix_hidden_emissions(log_probs: np.ndarray, seq_prob: np.ndarray, visible: np.ndarray,
                          p: SequenceParams) -> np.ndarray:
-    """Hidden-ball frames: ``(1 - w) log_probs + w * scale * log p_seq`` (visible frames and NaN rows untouched)."""
+    """Mixed frames: ``(1 - w) log_probs + w * scale * log p_seq`` with ``w = emission_weight`` on hidden-ball
+    frames and ``w = visible_weight`` (Issue #73, default 0: untouched) on ball-visible frames; NaN rows untouched."""
     lp = np.asarray(log_probs, dtype=np.float64)
-    hid = ~np.asarray(visible, dtype=bool) & np.isfinite(seq_prob).all(axis=1)
-    if not hid.any() or p.emission_weight == 0.0:
+    vis = np.asarray(visible, dtype=bool)
+    finite = np.isfinite(seq_prob).all(axis=1)
+    w = np.where(vis, p.visible_weight, p.emission_weight)
+    mix = finite & (w != 0.0)
+    if not mix.any():
         return log_probs
     out = lp.copy()
-    ls = p.emission_scale * np.log(np.maximum(seq_prob[hid], p.prob_floor))
-    out[hid] = (1.0 - p.emission_weight) * lp[hid] + p.emission_weight * ls
+    ls = p.emission_scale * np.log(np.maximum(seq_prob[mix], p.prob_floor))
+    wm = w[mix][:, None]
+    out[mix] = (1.0 - wm) * lp[mix] + wm * ls
     return np.round(out, 6)
 
 
