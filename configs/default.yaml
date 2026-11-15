@@ -223,6 +223,11 @@ heuristic_emissions:
   w_phase: 0.3                  # weak Smart Tagging phase prior (in [-1, 1])
   w_long_ball: 0.0              # Issue #49: D logit lowered on hidden-ball frames of Long Ball / Ball in the Box phases
   w_phase_alive: 0.0            # Issue #43: D logit lowered by this where the ball is hidden in a live phase (0 = off)
+  w_phase_hidden: 0.0           # Issue #65: extra phase-prior weight on the H-vs-A odds of hidden-ball frames (0 = off)
+  phase_hidden_min_s: 0.0       # ... only in hidden runs of at least this many seconds (0 = every hidden frame)
+  auto_calibrate_phase_hidden: false  # Issue #65: label-free weight from phase vs Specialist A's confident visible frames
+  phase_hidden_cap: 2.5
+  phase_hidden_min_frames: 250
   w_owner: 4.0                  # strong prior from an owning-team ball channel, if the ATD has one
   owner_channels: [owner, owning_team, ball_owner, possession, possessor, team, teamid, team_id, ballowner]
   dead_scale: 1.0               # multiplier of logit(dead_score) when the ball is visible
