@@ -233,6 +233,17 @@ boundary_snap:
   snap_ha: true
   snap_restart: true
 
+# Issue #79 -- post-decoding boundary refinement with the TCN turnover head (ASRF-style): inside each decoded H / A
+# possession, split at a turnover-head peak when the emissions of the following window favour the other team.
+# Off: not adopted unless the #79 rule is met.  Read at top level (not overridden in route_overrides).
+boundary_refine:
+  enabled: false
+  peak_threshold: 0.7
+  window_s: 2.0
+  margin: 1.0
+  min_piece_s: 0.5
+  peak_window_frames: 5
+
 # Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
 # Generic priors; to be tuned on external matches only.
 heuristic_emissions:
