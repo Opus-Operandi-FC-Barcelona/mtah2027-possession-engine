@@ -1902,6 +1902,29 @@ stays the #72/#73 two-seed ensemble (V50s); `models/sequence_tcn.json`, the conf
 synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are unchanged. Future work: a boundary
 weight combined with a second training seed of R64B, and tuning of the weight (x2 was the only value tried).
 
+### R64B two-seed ensemble (Issue #76; not adopted)
+
+Like-for-like follow-up of #74, proposed after R64B fell 0.0011 short there (disclosed on the issue; nothing else was
+varied and the result was accepted as it came). Variant R64B2: the R64B networks of #74 (training seed 0, reused bit for
+bit) plus a second set trained with seed 1 and otherwise identical settings (`--extra-dir`, `--boundary-weight 2`, 6000 steps),
+averaged as in production and integrated as V50s. Reference: production, the #72 two-seed ensemble with V50s; the B'(33)
+seed-0 cell re-run with the current code gives 0.7449, identical to the stored #73 value. External matches only.
+
+| | B'(33) | delta (seeds 0/1/2) | B'(1) | delta (seeds 0/1/2) | A (20 PFF) | delta |
+|---|---|---|---|---|---|---|
+| production V50s | 0.7391 | - | 0.6841 | - | 0.6597 | - |
+| R64B2 | 0.7488 | **+0.0097** (+0.0062/+0.0110/+0.0118) | 0.6966 | +0.0125 (+0.0176/+0.0056/+0.0143) | 0.6665 | +0.0067 |
+
+Possessions predicted (true): B'(33) 7423 -> 7688 (9183), B'(1) 7037 -> 7393 (9183), A 5767 -> 6135 (7069). H<->A recall
+visible / hidden: B'(33) 0.640 / 0.380 -> 0.664 / 0.423, B'(1) 0.640 / 0.375 -> 0.656 / 0.430, A 0.518 / 0.453 -> 0.548 / 0.496.
+Spurious turnovers: 2477 -> 2569, 2585 -> 2706, 2482 -> 2699. Aggregates in `reports/issue76_r64b_ensemble.json`.
+
+Verdict against the unchanged rule: NOT ADOPTED. B'(33) +0.00967 < +0.010 (no seed below -0.003; B'(1) and A up). The
+second seed made the gain more even across eval seeds but did not move the mean past the threshold. Production,
+`models/sequence_tcn.json`, the configuration and the synthetic SHA256 are unchanged; no code changed in this issue.
+Taken together with #74, the boundary-weighted loss is a consistent but small gain (about +0.009 on B'(33), larger on
+B'(1) and PFF) that reduces the under-segmentation; it is listed as future work.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
