@@ -149,6 +149,22 @@ transition_matrix:
   phase_cue_before_s: 4.0
   phase_cue_after_s: 8.0
   phase_cue_hidden_only: true   # ... only inside occlusions
+  learned_gate_mode: "off"      # Issue #57: off | hard | blend | max -- gate H<->A with Specialist C (models/specialist_c.json)
+  learned_gate_threshold: 0.5   # hard: gate open where P_C >= this
+  learned_gate_blend: 0.5       # blend: g = blend * rule + (1 - blend) * P_C
+
+# Issue #57 -- Specialist C (learned H<->A turnover gate): training settings (external matches only).
+specialist_c:
+  half_window: 5
+  n_estimators: 200
+  learning_rate: 0.05
+  num_leaves: 15
+  min_child_samples: 40
+  subsample: 0.8
+  colsample: 0.7
+  reg_lambda: 5.0
+  calib_folds: 0                # the temperature fitted on the first model was 0.99: no calibration
+  pff_weight: 0.5
 
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:

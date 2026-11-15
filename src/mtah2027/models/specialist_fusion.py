@@ -92,6 +92,7 @@ class SpecialistSet:
     durations: object = None          # DurationModel of the training labels (Issue #34), optional
     ensemble: tuple = ()              # Issue #44: ((SpecialistSet, weight), ...); empty = this set alone
     mix_mode: str = "loglinear"       # Issue #44: how the member probabilities are combined
+    c: object = None                  # Issue #57: Specialist C (learned turnover gate), optional
 
     def members(self) -> tuple:
         """``((set, normalised weight), ...)``: the ensemble members, or this set alone."""
@@ -123,6 +124,7 @@ class SpecialistSet:
 class FusionResult:
     emissions: EmissionResult
     report: dict
+    features: object = None                     # Issue #57: the FeatureMatrix of the match (Specialist C input)
     anchor_label: np.ndarray | None = None      # Issue #49: Specialist A's ultra-confident class per frame, -1 elsewhere
 
 
@@ -240,7 +242,7 @@ def fuse_emissions(specialists: SpecialistSet, fe, heuristic: EmissionResult, *,
               "pseudo_labels": pseudo_report, "training": specialists.training}
     if lb_info:
         report["long_ball"] = {"weight": w_lb, **lb_info}
-    return FusionResult(emissions=emissions, report=report,
+    return FusionResult(emissions=emissions, report=report, features=fm,
                         anchor_label=np.where(vis, res_a.anchor_label, -1).astype(np.int8))
 
 

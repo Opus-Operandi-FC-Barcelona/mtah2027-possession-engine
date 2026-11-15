@@ -86,10 +86,33 @@ class TransitionParams:
     spec_accel_open: float = -5.0
     spec_accel_min: float = 1.0
     spec_accel_half: int = 12
+    # Issue #57: Specialist C (learned turnover gate).  ``off`` keeps the rule; ``hard``: the gate is open
+    # where P_C >= ``learned_gate_threshold`` (replaces the touch rule); ``blend``: g = w * rule + (1-w) * P_C
+    # with w = ``learned_gate_blend``; ``max``: g = max(rule, P_C).  log A_t = closed + (open - closed) * g.
+    learned_gate_mode: str = "off"
+    learned_gate_threshold: float = 0.5
+    learned_gate_blend: float = 0.5
 
     @classmethod
     def from_config(cls, path=None) -> "TransitionParams":
         return params_from_mapping(cls, load_section("transition_matrix", path), "transition_matrix")
+
+
+GATE_MODES = ("off", "hard", "blend", "max")
+
+
+def learned_gate(rule: np.ndarray, prob: np.ndarray, p: TransitionParams) -> np.ndarray:
+    """Gate value ``g`` in [0, 1] per frame from the rule mask and the Specialist C probability."""
+    rule = np.asarray(rule, dtype=np.float64)
+    pr = np.clip(np.nan_to_num(np.asarray(prob, dtype=np.float64), nan=0.0), 0.0, 1.0)
+    if p.learned_gate_mode == "hard":
+        return (pr >= p.learned_gate_threshold).astype(np.float64)
+    if p.learned_gate_mode == "blend":
+        w = float(p.learned_gate_blend)
+        return w * rule + (1.0 - w) * pr
+    if p.learned_gate_mode == "max":
+        return np.maximum(rule, pr)
+    raise ValueError(f"unknown learned_gate_mode '{p.learned_gate_mode}' (choose from {GATE_MODES})")
 
 
 def _ramp(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
@@ -202,13 +225,15 @@ def build_log_transitions(
         fps: float = FPS,
         params: TransitionParams | None = None, spec_home_logit: np.ndarray | None = None,
         spec_p_dead: np.ndarray | None = None, spec_speed: np.ndarray | None = None,
-        transitions: list | None = None) -> np.ndarray:
+        transitions: list | None = None,
+        gate_probs: tuple | None = None) -> np.ndarray:
     """Build ``log_trans[n, 3, 3]`` (float64, rounded to 1e-6) from the per-frame evidence.
 
     ``d_home`` / ``d_away`` are the distances (m) of the closest player of each team to the ball (NaN
     when unknown).  Every input is optional: a missing one just removes the corresponding opening, so
     the matrix degrades towards "closed" transitions.  ``restart_frames`` are the frames ``t*``;
-    ``restart_teams`` (same length, 0 / 1 / -1 unknown) the team that restarts.
+    ``restart_teams`` (same length, 0 / 1 / -1 unknown) the team that restarts.  ``gate_probs`` =
+    ``(p_ha, p_ah)`` of Specialist C (Issue #57), used when ``learned_gate_mode`` is not ``off``.
     """
     p = params or TransitionParams.from_config()
     nan = np.full(n, np.nan)
@@ -230,8 +255,14 @@ def build_log_transitions(
     occ = occlusion_mask(visible, max(1, int(round(p.occlusion_min_s * fps))), int(p.occlusion_margin_frames))
     ha = np.where(occ, np.maximum(ha, p.ha_occluded), ha)
     to_home, to_away = touch_window_masks(touch_score, d_home, d_away, is_aerial, p)
-    ha_ha = np.where(to_away, np.maximum(ha, p.ha_open), ha)
-    ha_ah = np.where(to_home, np.maximum(ha, p.ha_open), ha)
+    if gate_probs is not None and p.learned_gate_mode != "off":       # Issue #57
+        g_ha = learned_gate(to_away, gate_probs[0], p)
+        g_ah = learned_gate(to_home, gate_probs[1], p)
+        ha_ha = np.maximum(ha, p.ha_closed + (p.ha_open - p.ha_closed) * g_ha)
+        ha_ah = np.maximum(ha, p.ha_closed + (p.ha_open - p.ha_closed) * g_ah)
+    else:
+        ha_ha = np.where(to_away, np.maximum(ha, p.ha_open), ha)
+        ha_ah = np.where(to_home, np.maximum(ha, p.ha_open), ha)
     s_dead = s_acc = np.zeros(n, bool)
     if p.spec_open and (spec_home_logit is not None or spec_p_dead is not None or spec_speed is not None):
         s_home, s_away, s_dead, s_acc = specialist_openings(
