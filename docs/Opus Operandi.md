@@ -240,9 +240,11 @@ Six items (#67-#72), measured on external matches only (B'(33) / B'(1) / A, same
 | #70 | Research on other value sources | notes and aggregate probes | nothing adopted |
 | #71 | Label-free world selection | no variant adopted | defaults unchanged |
 | #72 | Non-causal TCN (8 residual blocks, receptive field about +-20 s) over the specialists' features; probabilities replace the hidden-ball emissions (E100), mean of two training seeds | B'(33) +0.0130 (seeds +0.0142 / +0.0114 / +0.0133), B'(1) +0.0394, A +0.0735 | **adopted** |
+| #73 | TCN probabilities also on ball-visible frames (`visible_weight` 0.5, `emission_scale` 0.8; variant V50s of a preregistered grid of five) | B'(33) +0.0568 (seeds +0.0598 / +0.0561 / +0.0546), B'(1) +0.0430, A +0.0599 | **adopted** |
 
-Final submission after Milestone 11: SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` (two further runs identical; Python 3.13.14, Windows 11; `validate_submission.py` valid;
-273 possessions, mean 12.5 s, `D` 45.5 % of graded play frames).  Fallback = the submission before #72, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, reproduced with
+Final submission after #73: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b` (two runs identical, and again from `main`; Python 3.13.14, Windows 11; `validate_submission.py` valid;
+263 possessions, mean 12.9 s, `D` 45.5 % of graded play frames).  Fallbacks: the #72 submission, SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`, reproduced with `sequence_model.visible_weight: 0.0` and
+`emission_scale: 0.5`; the pre-#72 submission, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, reproduced with
 `sequence_model.enabled: false` in `configs/default.yaml` and the same command as above.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 11.
 
 ## 9. Reproduction

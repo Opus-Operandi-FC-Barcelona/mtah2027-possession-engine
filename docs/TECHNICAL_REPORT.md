@@ -1859,6 +1859,13 @@ ADOPTED: `visible_weight: 0.5`, `emission_scale: 0.8`. The synthetic SHA256 chan
 Fallback to #72: `visible_weight: 0.0`, `emission_scale: 0.5`. The weight and scale were chosen on the same cells
 as the verdict, but the paired deltas are far above the threshold and positive on every seed and cell.
 
+*Release after #73.*  Command: `python scripts/generate_submission.py --data-dir data --team "Opus Operandi"`.  New submission SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b`, identical in two runs,
+`validate_submission.py` valid (Python 3.13.14, Windows 11).  Label-free aggregates on the provided match: 263 possessions (273 before #73), mean 12.9 s, `D` 45.5 % of the
+graded play frames (46.5 % by the KPI dashboard definition), H 62.6 % of alive frames; 4 264 frames differ from the #72 submission (2.7 % of the graded frames).  KPI alarms: sanity OK,
+blindness test OK (spellF1 0.751), format and SHA OK; the degraded-external KPI warns for the heuristic comparator only (0.271).  Public 5 minutes (pipeline check only, not used to choose
+anything): spellF1 0.700 [0.512, 0.887], macroF1 0.898.  Fallback chain: `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` (#72) with `visible_weight: 0.0`, `emission_scale: 0.5`;
+`cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b` (pre-#72) with `sequence_model.enabled: false`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

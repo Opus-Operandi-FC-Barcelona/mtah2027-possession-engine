@@ -13,7 +13,7 @@ description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of 
 
 ## Status
 
-Milestones 1-11 (issues #1-#72; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
+Milestones 1-11 (issues #1-#73; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
 provided data and invariance to player dropout") adopted three changes: the set-piece anchor fallback and period-start
 clamp (#50, correctness fix), the isolation of the front end per graded play block (#51, correctness fix) and the
 re-trained default model in the estimated "gaps over dead ball" world (#48, +0.017 spellF1 on B'(33)).  #42, #43, #44
@@ -25,9 +25,11 @@ prior, tracklet-gated vision) adopted nothing: every change stays in the code, o
 is unchanged.  **Milestone 11** (#67-#72: oracle ceiling of the hidden ball, self-supervised ball detector, integration decision, value research,
 world selection, sequence model) adopted one change: #72, a non-causal TCN over the specialists' per-frame features whose probabilities replace the
 hidden-ball emissions (variant E100, mean of two training seeds, `models/sequence_tcn.json`, `sequence_model.enabled: true`).  The detector (#68/#69) was
-not adopted.  The submission changed: SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`
-(273 possessions, mean 12.5 s, `D` 45.5 % of graded play frames; generated twice with identical hash on Python 3.13.14, Windows 11).  The previous submission
-(SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced with `sequence_model.enabled: false` in `configs/default.yaml`.
+not adopted.  **#73** then mixed the TCN probabilities into the ball-visible frames too (`sequence_model.visible_weight: 0.5`, `emission_scale: 0.8`, variant V50s,
+no retraining; B'(33) +0.0568 with every seed positive, B'(1) +0.0430, A +0.0599) and was adopted under the preregistered rule.  The submission changed again: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b`
+(263 possessions, mean 12.9 s, `D` 45.5 % of graded play frames; generated twice with identical hash on Python 3.13.14, Windows 11).  Fallback chain: the #72 submission
+(SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`) is reproduced with `visible_weight: 0.0` and `emission_scale: 0.5`; the pre-#72 submission
+(SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) with `sequence_model.enabled: false` in `configs/default.yaml`.
 Results: `docs/Opus Operandi.md` (sections 6 to 8) and `docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
 [`docs/Opus Operandi.md`](<docs/Opus Operandi.md>).
 
@@ -86,7 +88,7 @@ labels of the provided game.
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
 | 9 Intelligent analysis and dropout invariance | #42-#52 | adopted: #48 model re-trained with gaps over dead ball, #50 set-piece anchor fallback + period-start clamp, #51 play-block isolation, #52 reproducible model loading; measured and off: #42 dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation + ensemble, #49 restart-team rules; #45 docs, #46 release, #47 official audit (there is no #41) |
 | 10 Post-freeze experiments (adopt only if >= +0.010) | #55-#66 | all measured on external matches and left off: #55 56 PFF matches, #56 multi-scale context + goalkeeper depth, #57 learned turnover gate, #58 real-video ball detectors (aggregates), #59 latency bias, #60 seed bagging, #61 boundary snap, #62 expected-spellF1 decoding, #63 pre-trained ball model, #64 pressure micro-geometry, #65 hidden-ball phase prior, #66 tracklet-gated vision |
-| 11 Remaining margin: oracle ceiling, detector, sequence model | #67-#72 | adopted: #72 TCN hidden-ball emissions (two-seed ensemble, B'(33) +0.0130); not adopted: #68/#69 self-supervised ball detector (about 15 % within 0.3 m); #67, #70, #71 diagnostics and research; #73 visible-frame TCN emissions (V50s, B'(33) +0.0568); synthetic SHA256 `b89670c5...` |
+| 11 Remaining margin: oracle ceiling, detector, sequence model | #67-#73 | adopted: #72 TCN hidden-ball emissions (two-seed ensemble, B'(33) +0.0130), #73 TCN emissions on ball-visible frames (V50s, B'(33) +0.0568); not adopted: #68/#69 self-supervised ball detector (about 15 % within 0.3 m); #67, #70, #71 diagnostics and research; #73 visible-frame TCN emissions (V50s, B'(33) +0.0568); synthetic SHA256 `b89670c5...` |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.
