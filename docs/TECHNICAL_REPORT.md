@@ -1819,6 +1819,14 @@ differences (~1e-12) cannot reach the decoder (test in `tests/test_72_sequence_m
 `sequence_model.enabled: false` (the pre-#72 route; flag off in `configs/default.yaml` or in a copy passed through `--config`).  The synthetic
 SHA256 changes from `2a31a913...` to `4224d1ca7c5d300d3637a5f2439ba692a4e951de002e170865714d3c6ed8bf3d` because the synthetic run uses the committed specialists.
 
+*Release after Milestone 11.*  Command: `python scripts/generate_submission.py --data-dir data --team "Opus Operandi"` (`--specialists auto` loads the
+committed models; `models/sequence_tcn.json` is attached because `sequence_model.enabled: true`).  New submission SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`, identical in three runs,
+`validate_submission.py` valid (Python 3.13.14, Windows 11; Python 3.11 in CI).  Label-free aggregates on the provided match: 273 possessions (266 before #72), mean
+12.5 s, `D` 45.5 % of the graded play frames (47.5 % before), 4 206 frames differ from the previous file (2.7 % of the graded frames).  KPI alarms: sanity OK
+(273 possessions, 12.5 s, D 46.5 % of graded, H 62.6 % of alive), blindness test OK (spellF1 0.765), format and SHA OK; the degraded-external KPI
+warns for the heuristic comparator route only (spellF1 0.271), not for the submission route.  Public 5 minutes (pipeline check only, not used to choose
+anything): spellF1 0.578 [0.422, 0.756], macroF1 0.873.  Previous submission (fallback, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced with `sequence_model.enabled: false`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
