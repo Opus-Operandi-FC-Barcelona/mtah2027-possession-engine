@@ -46,6 +46,7 @@ from mtah2027.config import (
 )
 from mtah2027.decoding.duration_model import DurationParams
 from mtah2027.decoding.dynamic_viterbi import decode_match_halves, default_log_init
+from mtah2027.decoding.expected_spellf1 import ExpectedSpellF1Params, decode_match_halves_mbr
 from mtah2027.decoding.mbr_consensus import MbrParams, consensus_labels
 from mtah2027.decoding.transition_matrix import TransitionParams, build_log_transitions
 from mtah2027.features._utils import speed_from_xy
@@ -580,9 +581,15 @@ def run_core(
             dur_arg = (dmodel.tables(fps, dp), dp.weight)
         else:
             st.skip("duration", "no duration table / route not selected")
-    codes = st.run("viterbi", lambda: decode_match_halves(
-        em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
-        log_init=default_log_init(cfg), duration=dur_arg), required=True)
+    ep = ExpectedSpellF1Params.from_config(cfg)
+    if ep.enabled and dur_arg is None:       # Issue #62: minimum Bayes risk over posterior samples (off by default)
+        codes = st.run("viterbi", lambda: decode_match_halves_mbr(
+            em.log_probs, log_trans, params=ep, play_blocks=play_blocks, dead_blocks=dead_blocks,
+            log_init=default_log_init(cfg)), required=True)
+    else:
+        codes = st.run("viterbi", lambda: decode_match_halves(
+            em.log_probs, log_trans, play_blocks=play_blocks, dead_blocks=dead_blocks,
+            log_init=default_log_init(cfg), duration=dur_arg), required=True)
     mbr_info: dict = {}
     mp = MbrParams.from_config(cfg)
     if mp.enabled and learned is not None:     # variants of the learned route only

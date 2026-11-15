@@ -932,6 +932,32 @@ does not contradict "no bias worth correcting" either, but it is not evidence fo
 bulk would move the exact matches (28 %, 44 % for restarts) away from zero.  **Not adopted**: `boundary_shift_frames` was
 not implemented (Task 2 only applied with a stable bias); the submission path and the synthetic SHA are untouched.
 
+**Item 10 (Issue #62): decoding by expected spellF1 (minimum Bayes risk over posterior samples) (not adopted; code and block kept OFF).**
+`src/mtah2027/decoding/expected_spellf1.py`, config block `expected_spellf1` (`enabled: false`).  Per graded block: log-space
+forward pass over the same quantised emissions and time-varying transitions `A_t` as Viterbi, `k` posterior paths by backward
+sampling (fixed seed, NumPy-precomputed conditional probabilities so the njit and the pure-Python kernels agree), the Viterbi
+path added as candidate 0, and the candidate with the highest mean spellF1 against the others is kept.  The pair score is a
+vectorised re-implementation of the official `spell_scores` (verified equal to `possession_metrics.spell_scores` to 1e-12 in
+`tests/test_62_expected_spellf1.py`; the forward-backward sampler is verified against brute force on a 5-frame chain).
+Protocol of Items 7-9 (harness `scripts/decoder_sweep.py`, cached default models, no retraining; candidates fixed beforehand:
+`k=100 T=1`, `k=50 T=1`, `k=100 T=2`, T = sampling temperature).  spellF1 means:
+
+| world | default | k=100 T=1 | k=50 T=1 | k=100 T=2 |
+|---|---|---|---|---|
+| B'(33), 7 IDSSE LOMO, seeds 0-2 | 0.6693 | 0.6690 (-0.0003) | 0.6686 (-0.0007) | 0.6693 (+0.0000) |
+| B'(33) per seed delta (0 / 1 / 2) | | -0.0002 / +0.0006 / -0.0014 | +0.0020 / 0.0000 / -0.0042 | 0 / 0 / 0 |
+| B'(1) (guard) | 0.6017 | 0.5994 (-0.0023) | 0.5994 (-0.0023) | 0.6017 (+0.0000) |
+| A PFF 4-fold, 20 matches (guard) | 0.5263 | 0.5193 (-0.0070) | 0.5192 (-0.0071) | 0.5231 (-0.0031) |
+| A unseen, 8 matches (guard) | 0.5263 | 0.5231 (-0.0032) | 0.5216 (-0.0047) | 0.5263 (+0.0000) |
+
+Why it does not help: the emissions plus the transition matrix make the posterior very concentrated around the Viterbi path;
+the samples differ from it by flicker (about 210 spells per half against 189 for Viterbi in the cell inspected), so the
+Viterbi path is the most central candidate (it is chosen in practically every block) and the selection returns it or a
+near-identical neighbour.  With T = 2 the decoder collapses to Viterbi exactly on the IDSSE worlds.  The rule (B'(33) mean
+>= +0.010, no seed below -0.003) fails by a factor of 10 or more; no candidate was selected on a single seed.  Cost when
+on: about 0.3 s per 80k-frame block for `k = 100` (0.1 s for `k = 50`) with numba, i.e. about 1 s per match, far below the
++60 s budget.  Default OFF; the submission path and the synthetic SHA are unchanged.
+
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),

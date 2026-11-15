@@ -185,6 +185,14 @@ duration:
   min_tail_runs: 5
   default_tail_excess_s: 30.0
 
+# Issue #62 -- decoding by expected spellF1: k posterior paths (forward-backward, backward sampling, fixed seed) plus
+# the Viterbi path; the one with the highest mean spellF1 against the others wins.  Kept OFF unless adopted.
+expected_spellf1:
+  enabled: false
+  k: 100
+  temperature: 1.0              # sampling temperature (> 1 flattens the posterior)
+  seed: 0
+
 # Issue #25 -- spellF1-oriented post-processing of the decoded labels (never crosses a graded block).
 spell_optimizer:
   micro_poss_s: 1.2             # H->A->H / A->H->A middle runs shorter than this are absorbed ...
