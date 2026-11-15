@@ -1902,6 +1902,45 @@ stays the #72/#73 two-seed ensemble (V50s); `models/sequence_tcn.json`, the conf
 synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are unchanged. Future work: a boundary
 weight combined with a second training seed of R64B, and tuning of the weight (x2 was the only value tried).
 
+### Decoder re-tuning for the sequence-model emissions (Issue #75)
+
+The decoder and the post-processor were tuned for the LightGBM route; the V50s route (#72/#73) under-segments (B'(33) 7423
+possessions predicted vs 9183 true, PFF 5767 vs 7069). Preregistered grid, decoding / post-processing only, no retraining,
+V50s emissions exactly as in production (#72 two-seed ensemble): `transition_matrix.ha_closed` in {-11.5, -9.5, -7.5, -5.5} x
+`ha_occluded` in {-6.0, -4.5, -3.0} x `spell_optimizer.micro_poss_s` in {1.2, 0.6, 0.0} (36 cells). Selection on B'(33) eval
+seed 0 only; adoption on held-out eval seeds 1-2 (mean B'(33) delta >= +0.010, no seed < -0.003; guards B'(1) seeds 1-2 drop
+<= 0.010, A drop <= 0.030). External matches only (7 IDSSE LOMO matches degraded at dead_affinity 33 / 1; A = first 20 PFF).
+`scripts/decoder_retune_eval.py` memoises the decoder-independent emissions of each match and cell and re-runs only the
+transitions, Viterbi and spell optimiser per grid cell; the shipped configuration reproduces the #73 V50s score exactly
+(B'(33) seed 0 0.74488).
+
+*Production cell.* The preregistration names (-11.5, -6.0, 1.2) as the production cell, but those are the top-level defaults;
+the learned route decodes with `route_overrides.specialists` (ha_closed -8.76, ha_occluded -7.5746, micro_poss_s 0.9847), which
+override them. The grid values are therefore applied in `route_overrides.specialists` (at top level they would be a no-op), and
+the shipped values, which are not a grid point, are scored as an extra reference `ship` next to the nominal grid cell.
+Adoption is judged against `ship` (the stricter reference); the nominal cell is reported too.
+
+*Result.* Seed-0 B'(33) spellF1 of the 36 cells ranges 0.7406-0.7476. Selected: (-11.5, -6.0, 0.0), 0.7476 (+0.0027 vs `ship`,
++0.0036 vs nominal). The gain is almost all `micro_poss_s` (1.2 -> 0.6 / 0.0 is worth about +0.003, 0.6 and 0.0 are within 0.0002);
+`ha_closed` and `ha_occluded` barely matter and the best values are at the production end; a cheaper H<->A change does not help.
+
+| reference | B'(33) seeds 1 / 2 | B'(33) mean (seeds 1-2) | B'(33) 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| vs `ship` (-8.76, -7.5746, 0.9847) | +0.0007 / +0.0023 | **+0.0015** | +0.0019 | +0.0014 (+0.0018 / +0.0009) | -0.0002 |
+| vs nominal (-11.5, -6.0, 1.2) | -0.0003 / +0.0022 | +0.0010 | +0.0018 | +0.0025 | -0.0002 |
+
+Absolute (selected / `ship`): B'(33) seeds 1-2 0.7377 / 0.7362, B'(1) 0.6860 / 0.6846, A 0.6595 / 0.6597.
+Possessions predicted (true), selected vs `ship`: B'(33) (seeds 0-2) 7464 vs 7423 (9183), B'(1) (seeds 1-2) 4747 vs 4687 (6122),
+A 5812 vs 5767 (7069). Spurious turnovers (25 frames): B'(33) 2478 vs 2477, B'(1) 1767 vs 1736, A 2499 vs 2482. H<->A recall
+(visible / hidden at the true change): B'(33) 0.645 / 0.392 vs 0.640 / 0.380, B'(1) 0.635 / 0.384 vs 0.629 / 0.378, A 0.515 /
+0.463 vs 0.518 / 0.453. Aggregates in `reports/issue75_decoder_retune.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (+0.0015) is far below +0.010 (the guards pass, no seed is
+below -0.003). The under-segmentation is therefore not a decoder-cost problem: the switch costs are not binding with the V50s
+emissions (the network already carries the evidence) and the pruning only removes a few hundred true micro-possessions. The
+defaults, the shipped route and the synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are
+unchanged. The per-cell emissions are cached outside the repository for the #76 combination check.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
