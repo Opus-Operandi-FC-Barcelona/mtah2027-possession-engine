@@ -1,0 +1,198 @@
+{
+ "selected": "P1.5_0.8_t",
+ "overrides": {
+  "player_possession.enabled": true,
+  "player_possession.radius_m": 1.5,
+  "player_possession.confirm_s": 0.8,
+  "player_possession.usage": "transition"
+ },
+ "seed0_b33_spellF1": {
+  "ship": 0.7448762763092401,
+  "P1.0_0.4_e": 0.7410277147530253,
+  "P1.0_0.4_t": 0.7443086025863541,
+  "P1.0_0.4_b": 0.7400344762628229,
+  "P1.0_0.8_e": 0.7412666156169706,
+  "P1.0_0.8_t": 0.7446664440253326,
+  "P1.0_0.8_b": 0.7410337573297451,
+  "P1.5_0.4_e": 0.7392602910333241,
+  "P1.5_0.4_t": 0.7442582270069895,
+  "P1.5_0.4_b": 0.7386463863303817,
+  "P1.5_0.8_e": 0.7402042327835661,
+  "P1.5_0.8_t": 0.7450149121562604,
+  "P1.5_0.8_b": 0.7394198266680931
+ },
+ "decoded_output_changed": {
+  "P1.0_0.4_e": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2489
+  },
+  "P1.0_0.4_t": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2483
+  },
+  "P1.0_0.4_b": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2490
+  },
+  "P1.0_0.8_e": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2484
+  },
+  "P1.0_0.8_t": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2483
+  },
+  "P1.0_0.8_b": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2484
+  },
+  "P1.5_0.4_e": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2499
+  },
+  "P1.5_0.4_t": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2490
+  },
+  "P1.5_0.4_b": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2501
+  },
+  "P1.5_0.8_e": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2486
+  },
+  "P1.5_0.8_t": {
+   "cells": 55,
+   "changed": 55,
+   "possessions_ship": 17877,
+   "possessions_variant": 17892
+  },
+  "P1.5_0.8_b": {
+   "cells": 7,
+   "changed": 7,
+   "possessions_ship": 2480,
+   "possessions_variant": 2490
+  }
+ },
+ "delta_vs_ship": {
+  "b33_seeds_1_2": {
+   "1": -0.00046570069856144425,
+   "2": -6.999401736385025e-05
+  },
+  "b33_mean_seeds_1_2": -0.00026784735796264725,
+  "b33_seed0": 0.0001386358470202298,
+  "b33_mean_3_seeds": -0.00013235295630168822,
+  "b1_seeds_1_2": {
+   "1": -2.9150935291322178e-05,
+   "2": 2.0495626366856534e-05
+  },
+  "b1_mean_seeds_1_2": -4.327654462232822e-06,
+  "a": -0.0003118683566681879,
+  "rule": {
+   "b33_mean_ge_0.010": false,
+   "b33_no_seed_below_-0.003": true,
+   "b1_delta_ge_0": false,
+   "a_delta_ge_0": false
+  }
+ },
+ "absolute": {
+  "P1.5_0.8_t": {
+   "b33": 0.7359164827501237,
+   "b1": 0.6846452944602399,
+   "pff": 0.6593968610082194
+  },
+  "ship": {
+   "b33": 0.7361843301080863,
+   "b1": 0.684649622114702,
+   "pff": 0.6597087293648876
+  }
+ },
+ "pooled": {
+  "P1.5_0.8_t": {
+   "b33": {
+    "n_pred_spells": 7432,
+    "n_gt_spells": 9183,
+    "n_pred_turnovers": 6723,
+    "n_spurious_turnovers": 2482,
+    "recall_visible": 0.6416485173395878,
+    "recall_hidden": 0.37915129151291516,
+    "n_true_visible": 5969,
+    "n_true_hidden": 1084
+   },
+   "b1": {
+    "n_pred_spells": 4687,
+    "n_gt_spells": 6122,
+    "n_pred_turnovers": 4174,
+    "n_spurious_turnovers": 1734,
+    "recall_visible": 0.6302776721186764,
+    "recall_hidden": 0.37771345875542695,
+    "n_true_visible": 2629,
+    "n_true_hidden": 2073
+   },
+   "pff": {
+    "n_pred_spells": 5773,
+    "n_gt_spells": 7069,
+    "n_pred_turnovers": 4923,
+    "n_spurious_turnovers": 2488,
+    "recall_visible": 0.5193839617631439,
+    "recall_hidden": 0.4534702769996888,
+    "n_true_visible": 1883,
+    "n_true_hidden": 3213
+   }
+  },
+  "ship": {
+   "b33": {
+    "n_pred_spells": 7423,
+    "n_gt_spells": 9183,
+    "n_pred_turnovers": 6709,
+    "n_spurious_turnovers": 2477,
+    "recall_visible": 0.6399731948400067,
+    "recall_hidden": 0.3800738007380074,
+    "n_true_visible": 5969,
+    "n_true_hidden": 1084
+   },
+   "b1": {
+    "n_pred_spells": 4687,
+    "n_gt_spells": 6122,
+    "n_pred_turnovers": 4173,
+    "n_spurious_turnovers": 1736,
+    "recall_visible": 0.6291365538227462,
+    "recall_hidden": 0.37771345875542695,
+    "n_true_visible": 2629,
+    "n_true_hidden": 2073
+   },
+   "pff": {
+    "n_pred_spells": 5767,
+    "n_gt_spells": 7069,
+    "n_pred_turnovers": 4915,
+    "n_spurious_turnovers": 2482,
+    "recall_visible": 0.5183218268720128,
+    "recall_hidden": 0.4534702769996888,
+    "n_true_visible": 1883,
+    "n_true_hidden": 3213
+   }
+  }
+ },
+ "adopted": false
+}
