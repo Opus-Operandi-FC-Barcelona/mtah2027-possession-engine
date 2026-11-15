@@ -74,6 +74,7 @@ from mtah2027.models.heuristic_emissions import (
     resolve_owner_team,
     touch_signal,
 )
+from mtah2027.postprocessing.boundary_refine import BoundaryRefineParams, refine_boundaries
 from mtah2027.postprocessing.boundary_snap import BoundarySnapParams, snap_boundaries
 from mtah2027.postprocessing.spell_optimizer import SpellParams, optimize_spells
 from mtah2027.postprocessing.submission_contract import enforce_submission_contract
@@ -705,6 +706,18 @@ def run_core(
         if res is not None:
             codes, snap_stats = res
 
+    # 10c. split decoded possessions at turnover-head peaks (Issue #79, off by default) -------------
+    brp = BoundaryRefineParams.from_config(cfg)
+    refine_stats: dict = {}
+    if brp.enabled:
+        if seq_out is None:
+            st.skip("boundary_refine", "no sequence-model turnover head (learned route with the TCN only)")
+        else:
+            res = st.run("boundary_refine", lambda: refine_boundaries(
+                codes, play_blocks=play_blocks, turnover_prob=seq_out[1], log_probs=em.log_probs, fps=fps, params=brp))
+            if res is not None:
+                codes, refine_stats = res
+
     diagnostics = {
         "stages": st.info, "n_frames": int(n), "n_slots": int(players_xy.shape[1]),
         "ball_visible_share": float(visible.mean()) if n else 0.0,
@@ -717,7 +730,7 @@ def run_core(
         "emission_source": emission_source, "restart_rules": fe.rules_report,
         "specialists": learned.report if learned is not None else {},
         "viterbi_raw": raw_summary, "labels": summarize_labels(codes, play_blocks, fps),
-        "optimizer": opt_stats, "boundary_snap": snap_stats, "mbr": mbr_info,
+        "optimizer": opt_stats, "boundary_snap": snap_stats, "boundary_refine": refine_stats, "mbr": mbr_info,
     }
     if keep_features:
         feats.update({"dead_score": dead_score, "visible": visible, "log_probs": em.log_probs,

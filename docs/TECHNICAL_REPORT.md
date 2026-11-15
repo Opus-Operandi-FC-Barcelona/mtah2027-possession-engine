@@ -2031,6 +2031,40 @@ The code stays in the repository OFF by default; production, `models/sequence_tc
 synthetic SHA256 are unchanged. Aggregates in `reports/issue78_sequence_crf.json`. Future work: train the CRF jointly with
 the decoder's transition structure (or decode with the CRF transitions alone) so that switch costs are not counted twice.
 
+### Post-decoding boundary refinement (Issue #79)
+
+ASRF-style refinement (Ishikawa et al., WACV 2021): after the Viterbi and the spell optimiser, inside every decoded H / A
+possession the TCN turnover head of #72 (`seq_out[1]`, H -> A / A -> H within +-5 frames) is searched for a local peak
+>= `peak_threshold`; if the emission log-odds of the other team averaged over the next `window_s` seconds are >= `margin`,
+the possession is split there and the remainder relabelled up to the next decoded boundary or until the same windowed
+evidence flips back. Implemented in `postprocessing/boundary_refine.py` (config section `boundary_refine`, OFF by default,
+applied in `run_core` after the boundary snap; read at top level because `route_overrides.specialists` does not hold it).
+Fixed a priori and outside the grid: pieces >= 0.5 s, peak = local maximum over +-5 frames. Preregistered grid (12 cells):
+peak threshold {0.5, 0.7, 0.9} x window {1 s, 2 s} x margin {0.5, 1.0}; no retraining; `scripts/boundary_refine_eval.py`
+(on top of `decoder_modules_eval.py`). Selection on B'(33) eval seed 0 only (comment on #79 before any held-out score);
+adoption on seeds 1-2: mean B'(33) delta >= +0.010, no seed < -0.003, B'(1) delta >= 0, A delta >= 0. External data only.
+
+*Selection.* `ship` reproduces 0.7448763. Nine cells decode identically to `ship`; the three with window 1 s and margin 0.5
+(any threshold) change 1 of 7 matches (+2 possessions) and score 0.7445881. Selected by the preregistered tie rule (best
+score, grid order): peak 0.5, window 1 s, margin 1.0 (= `ship` on seed 0). Diagnosis (one match): 2789 / 2641 head frames
+>= 0.5, 134 peak candidates inside a decoded possession of the matching direction, none with windowed evidence >= 0.5
+log-odds for the other team: the V50s emissions already agree with the decoded team, so the Viterbi is not missing changes
+that the emissions can see; the missed ones are those the network itself does not see.
+
+| selected cell vs `ship` | B'(33) seed 1 / 2 | mean seeds 1-2 | 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| delta spellF1 | +0.0006 / +0.0002 | **+0.0004** | +0.0003 | +0.0001 | +0.0002 |
+
+The refinement changes 5 of 55 held-out matches. Possessions predicted (true), selected vs `ship`: B'(33) 7427 vs 7423 (9183),
+B'(1) 4689 vs 4687 (6122), A 5769 vs 5767 (7069). Spurious turnovers: unchanged (2477, 1736, 2482). H<->A recall (visible /
+hidden): B'(33) 0.641 / 0.380 vs 0.640 / 0.380, B'(1) 0.630 / 0.378 vs 0.629 / 0.378, A 0.519 / 0.454 vs 0.518 / 0.453.
+Aggregates in `reports/issue79_boundary_refinement.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (+0.0004) is far below +0.010 (the guards pass: no seed
+below -0.003, B'(1) and A deltas >= 0). The turnover head and the emissions are the same information as the decoder already
+uses, so splitting with them recovers only a handful of possessions. Defaults, shipped route and the synthetic SHA256 are
+unchanged; the code stays OFF.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
