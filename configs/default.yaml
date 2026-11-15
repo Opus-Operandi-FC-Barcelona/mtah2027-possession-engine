@@ -200,6 +200,14 @@ spell_optimizer:
   bridge_gap_close_s: 1.0       # ... bridging evidence gaps shorter than this ...
   bridge_requires_geometry: true  # ... and there is touchline / set-piece / out-of-play support
 
+# Issue #61 -- post-Viterbi refinement of each boundary to the touch peak of the gaining team (H<->A) or to the
+# restart frame t* (D->alive) within +-window_frames.  Off: not adopted unless the #61 rule is met.
+boundary_snap:
+  enabled: false
+  window_frames: 12
+  snap_ha: true
+  snap_restart: true
+
 # Issue #28 (wave 1) -- heuristic emissions log_probs[N, 3] (H, A, D) from the #13 / #16 features.
 # Generic priors; to be tuned on external matches only.
 heuristic_emissions:

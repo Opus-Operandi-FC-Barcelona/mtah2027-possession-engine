@@ -1285,3 +1285,24 @@ All dependencies are pinned (`requirements.txt`, `pyproject.toml`), seeds are fi
 `PYTHONHASHSEED=0` is enforced, every decoder input is rounded to 1e-6 and ties are broken by state index, so
 two runs (and the numba and fallback decoders) give the same SHA256.  CI repeats the run on the synthetic
 full-length match twice and compares the hashes.  Full repository layout and commands: `README.md`.
+
+### Boundary snap to the touch / restart frame (Issue #61; B'(33), not adopted)
+
+**Idea.**  After Viterbi and the spell optimiser (`pipeline` step 10b, `postprocessing/boundary_snap.py`,
+`boundary_snap.enabled`, default **false**) each `H<->A` boundary moves to the nearest touch peak (`touch_score > 0`,
+ball visible, not aerial) of the gaining team (`nearest_team`) within +-N frames, and each `D -> alive` boundary to the
+restart frame `t*` of an unused resolved set-piece anchor within +-N; `alive -> D`, block edges, moves that would relabel
+forced-dead frames, empty a run or cross the neighbouring boundary are never applied.  N in {6, 12} fixed a priori
+(12 chosen on seeds 0-1, seed 2 blind).  Harness `scripts/decoder_sweep.py` (cached front end; candidates via
+`route: {"boundary_snap.enabled": true, ...}`), cached LOMO `gap` models, no retraining; `--verify` cached == uncached.
+
+| B'(33) 7 IDSSE LOMO | seed 0 | seed 1 | seed 2 | mean | delta |
+|---|---|---|---|---|---|
+| default | 0.6709 | 0.6675 | 0.6695 | 0.6693 | - |
+| snap N=6 | 0.6707 | 0.6671 | 0.6699 | 0.6692 | -0.0001 |
+| snap N=12 | 0.6708 | 0.6678 | 0.6699 | 0.6695 | +0.0002 |
+
+Decision: **not adopted** (needed >= +0.010).  The Viterbi boundaries are already within a few frames of the touch, and
+frame-level moves inside the +-25-frame scoring tolerance barely change the matching.  IDSSE runs carry no Smart
+Tagging, so the restart branch (unit-tested only) is not exercised there.  Guards B'(1) and A PFF were not run (the
+primary rule already fails).  Default config and synthetic submission unchanged.
