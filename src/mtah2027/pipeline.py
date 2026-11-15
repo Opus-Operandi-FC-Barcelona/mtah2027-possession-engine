@@ -532,6 +532,24 @@ def run_core(
             if fe.rules_report is not None:
                 fe.rules_report.update({"calibrated_weight": round(w_cal, 4), "calibration_n": n_cal})
 
+    gate_probs = None     # Issue #57: Specialist C turnover gate (learned route only)
+    if TransitionParams.from_config(cfg).learned_gate_mode != "off":
+        if learned is None or learned.features is None:
+            st.skip("learned_gate", "no learned route / feature matrix")
+        else:
+            def _gate():
+                from mtah2027.models.specialist_c import load_default_specialist_c
+
+                model = getattr(specialists, "c", None) or load_default_specialist_c(cfg)
+                if model is None:
+                    return None
+                fm_c = learned.features
+                if fm_c.names != model.feature_names:
+                    raise ValueError("feature layout does not match Specialist C")
+                return model.predict(fm_c.x)
+
+            gate_probs = st.run("learned_gate", _gate)
+
     def _transitions(tp: TransitionParams | None = None):
         return build_log_transitions(
             n, touch_score=bk.touch_score if bk is not None else None,
@@ -544,7 +562,7 @@ def run_core(
             spec_home_logit=em.home_logit if learned is not None else None,
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
-            transitions=fe.transitions)
+            transitions=fe.transitions, gate_probs=gate_probs)
 
     log_trans = st.run("transitions", _transitions)
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive

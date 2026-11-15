@@ -105,6 +105,15 @@ def model_path(root: Path, cell: dict, variant: str) -> Path:
     return REPO_ROOT / "models" / f"specialists_{variant}.json"
 
 
+def c_model_path(root: Path, cell: dict, variant: str) -> Path:
+    """Issue #57: Specialist C of a cell (leave-one-match-out / PFF fold / all-data for the unseen matches)."""
+    if cell["world"] in ("b33", "b1"):
+        return root / f"c_{variant}" / f"{cell['match']}.json"
+    if cell["world"] == "pff":
+        return root / f"c_{variant}" / f"fold{cell['fold']}.json"
+    return root / f"c_{variant}" / "unseen.json"
+
+
 def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_raw: dict):
     from mtah2027.models import specialist_fusion as sf
 
@@ -117,6 +126,13 @@ def build_specialists(cand: dict, cell: dict, root: Path, store: dict, config_ra
             store[key] = sf.load_specialists(model_path(root, cell, variant), config_raw)
         sets.append((store[key], float(weight)))
     first = sets[0][0]
+    if cand.get("c"):     # Issue #57: attach the Specialist C of this cell
+        from mtah2027.models.specialist_c import load_specialist_c
+
+        ckey = ("c", cand["c"], cell["match"], cell["world"])
+        if ckey not in store:
+            store[ckey] = load_specialist_c(c_model_path(root, cell, cand["c"]), config_raw)
+        first = dataclasses.replace(first, c=store[ckey])
     if not ens:
         return first
     return dataclasses.replace(first, ensemble=tuple(sets), mix_mode=ens.get("mode", "loglinear"))
@@ -175,6 +191,7 @@ class CellCache:
 def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool, log) -> dict:
     from eval_external import score
 
+    from mtah2027.models.specialist_c import turnover_recall
     from mtah2027.pipeline import run_core
     from mtah2027.validation import dropout_strata as ds
 
@@ -193,6 +210,7 @@ def run_cell(cell: dict, cands: list, root: Path, config_raw: dict, verify: bool
             core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
                             log=lambda m: None, specialists=spec, durations=spec.durations)
             row = score(gt, core.codes)
+            row["turn"] = turnover_recall(gt, core.codes)     # Issue #57: true H<->A changes matched
             row["strata"] = ds.stratum_counts(gt, core.codes, n_tracked, visible)
             out["results"][cand["name"]] = row
             if verify and ci == 0:
@@ -307,6 +325,16 @@ def cmd_agg(args) -> int:
             ps = {s: round(v, 4) for s, v in r[w]["per_seed"].items()}
             ds_ = {s: round(v, 4) for s, v in r[w]["seed_delta"].items()}
             print(f"   {w}: mean {r[w]['mean']:.4f} macro {r[w]['macro']:.4f} per seed {ps} delta per seed {ds_}")
+    if args.turnover:
+        print("turnover recall (pooled over cells: matched / true H<->A changes; predicted changes)")
+        for n in names:
+            parts = []
+            for w in worlds:
+                t = [m[n]["turn"] for (ww, _), by in table.items() if ww == w for m in by.values()
+                     if n in m and "turn" in m[n]]
+                nt, mt, npd = (sum(x[k] for x in t) for k in ("n_true", "matched", "n_pred")) if t else (0, 0, 0)
+                parts.append(f"{w}: {mt}/{nt} = {mt / max(nt, 1):.3f} (pred {npd})")
+            print(f"  {n:<40}" + "   ".join(parts))
     if args.strata:
         for w in worlds:
             for n in dict.fromkeys([base, args.strata]):
@@ -342,6 +370,7 @@ def main(argv=None) -> int:
     a.add_argument("--detail", nargs="*", default=None)
     a.add_argument("--strata", default=None, help="candidate whose pooled strata are printed next to the baseline")
     a.add_argument("--json", default=None)
+    a.add_argument("--turnover", action="store_true", help="pooled turnover recall per candidate and world")
     args = ap.parse_args(argv)
     return cmd_run(args) if args.cmd == "run" else cmd_agg(args)
 

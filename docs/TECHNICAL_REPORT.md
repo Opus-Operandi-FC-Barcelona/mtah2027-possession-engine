@@ -769,6 +769,49 @@ mean (per seed +0.0030 / +0.0075 / +0.0046; 19 of 30 runs up, worst -0.016), 0.6
 matches and 0.6802 -> 0.6828 on the other six; heuristic route +0.012.  The adoption rule (mean >= +0.01, no seed
 worse than -0.003) is **not met** for the specialists route, and the real fill (7.4 %) is half the simulated one (14-15
 %), so `broadcast_sync.enabled` stays `false`.  Code, report and simulation remain available.
+**Item 9 (Issue #57): Specialist C, a learned H<->A turnover gate (not adopted; code and block kept OFF).**
+`src/mtah2027/models/specialist_c.py`, `scripts/train_specialist_c.py`, config blocks `specialist_c` and
+`transition_matrix.learned_gate_*` (`learned_gate_mode: off`).  C is a LightGBM (`deterministic=True`, `num_threads=1`,
+`seed=0`; scikit-learn fallback through `FrameClassifier`) on the 206-column feature matrix of the specialists (so it works with
+a visible and a hidden ball: distances of the nearest players, closing speeds, touch score, collective signals and their
++-50 / 100 frame context, coherence R, goalkeepers, time since the ball was lost) that predicts the class "no change / H -> A /
+A -> H within +-5 frames of the frame", the target being derived from the ground truth of external matches (direct H <-> A
+change between two live frames).  Rows are those of the default training pickle (calibrated degrader, dead_affinity 33, stride
+10, home / away swapped copies; 598k rows, 1.3 % positives per direction), every 4th negative kept with weight 4; a fitted
+temperature was 0.99-1.00 so the calibration folds are off.  Leave-one-match-out: the C of a held-out IDSSE match never sees it
+(PFF flavour: IDSSE + 20 PFF at weight 0.5; for the PFF 4-fold guard the held-out fold's matches are excluded; for the 8 unseen
+PFF matches the C is trained on all rows).  The gate maps P_C to the transition: `log A_t = closed + (open - closed) * g`, with three
+variants fixed beforehand: `hard` (g = 1 where P_C >= 0.5, replaces the touch rule), `blend` (g = 0.5 rule + 0.5 P_C),
+`max` (g = max(rule, P_C)); the occlusion floor `ha_occluded` is kept.  Harness `scripts/decoder_sweep.py` (cached front end and
+default A/B models, only the transitions change; candidates attach C with `"c": "<flavour>"`; the pooled turnover recall is
+printed with `agg --turnover`: share of the true direct H<->A changes matched by a predicted change of the same direction within
+25 frames).  spellF1 (delta vs the default 0.6693 / 0.6017 / 0.5263 / 0.5263):
+
+| world | default | hard | blend | max |
+|---|---|---|---|---|
+| B'(33), 7 IDSSE LOMO, seeds 0-2, IDSSE-only C | 0.6693 | 0.6633 (-0.0060) | 0.6654 (-0.0039) | 0.6685 (-0.0008) |
+| per seed delta (0 / 1 / 2) | | -0.0093 / -0.0053 / -0.0033 | -0.0080 / -0.0007 / -0.0029 | -0.0011 / -0.0014 / 0.0000 |
+| B'(33), IDSSE + PFF C | 0.6693 | 0.6620 (-0.0073) | 0.6646 (-0.0047) | 0.6687 (-0.0006) |
+| per seed delta (0 / 1 / 2) | | -0.0103 / -0.0078 / -0.0038 | -0.0080 / -0.0032 / -0.0031 | -0.0007 / -0.0012 / +0.0001 |
+| B'(1) (guard, seed 0; IDSSE / +PFF C) | 0.6019 | 0.5991 / 0.5996 | 0.6005 / 0.6005 | 0.6014 / 0.6020 |
+| A PFF 4-fold, 20 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5374 / 0.5374 (+0.0111) | 0.5330 / 0.5334 | 0.5249 / 0.5253 |
+| A unseen, 8 matches (guard; IDSSE / +PFF C) | 0.5263 | 0.5413 / 0.5421 (+0.0150 / +0.0158) | 0.5356 / 0.5366 | 0.5263 / 0.5265 |
+
+Turnover recall (matched / true changes): B'(33) default 0.517 (3647 / 7053, 6297 predicted changes), `hard` 0.493, `blend` 0.500,
+`max` 0.517; B'(1) 0.407 -> 0.389 / 0.396 / 0.405; PFF 4-fold 0.352 -> 0.344 / 0.346 / 0.353; unseen PFF 0.371 -> 0.360 / 0.364 / 0.375.
+The B'(33) default reproduces 0.6693 (0.6709 / 0.6675 / 0.6695) exactly.
+
+Why it does not help: a gate can only allow a change, it cannot make the emissions prefer it.  The variants that open the gate
+wider (`max`) leave the recall unchanged (0.517), so the missed turnovers are not blocked by the transition matrix; the emissions
+(specialists' probabilities) never swing to the other team.  The variants that close the gate where P_C is low (`hard`,
+`blend`) remove true changes together with the false ones (recall -2.4 points on B'(33)).  On the real PFF occlusions the
+hard gate removes 7 % of the predicted changes and gains +0.011 / +0.015 (fewer spurious spells), but the adoption rule is set
+on B'(33), the world that imitates the competition ATD, where it loses 0.006-0.007 on every seed.  Rule (B'(33) mean >= +0.010,
+no seed below -0.003, B'(1) not down by more than 0.01, A not down by more than 0.03) fails on the primary criterion; the
+variant picked on seeds 0-1 (`max`, -0.0013) is -0.0000 / +0.0001 on the blind seed 2.  Not run: a C trained on stride-1 rows
+(positives are about one row per event at stride 10), and the full-data C model (not trained: no variant is adopted).  Default OFF;
+the submission path and the synthetic SHA256 (`2a31a913...`) are unchanged in two runs.
+
 ## Milestone 9
 
 Protocol (fixed after the official audit, #47): B' = 7 IDSSE leave-one-match-out with the calibrated degrader (#38),
