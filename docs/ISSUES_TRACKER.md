@@ -99,3 +99,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #65 · wave-5 · Prior de fase de Smart Tagging en H vs A con balón oculto (no adoptado, desactivado) · `feat/issue-65-hidden-phase-prior`
 - [x] COMPLETADA · #66 · wave-5 · Filtro por tracklets sobre sv_ball640 (simulado; no adoptado, desactivado) · `feat/issue-66-tracklet-gated-vision`
 - [x] COMPLETADA · #67 · wave-5 · Techo oráculo del balón oculto, curva de precisión, descomposición del error y evidencia blanda (diagnóstico; desactivado) · `feat/issue-67-oracle-ceiling`
+- [x] COMPLETADA · #68 · wave-5 · Detector de balón auto-supervisado en el vídeo táctico, GPU (no adoptado, desactivado) · `feat/issue-68-selfsup-ball-detector`

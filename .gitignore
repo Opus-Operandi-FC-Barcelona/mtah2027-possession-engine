@@ -32,3 +32,6 @@ dist/
 .venv/
 venv/
 .numba_cache/
+
+# model weights (never committed; Issue #68 weights are trained on the match video)
+*.pt
