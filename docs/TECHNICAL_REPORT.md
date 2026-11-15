@@ -1902,6 +1902,135 @@ stays the #72/#73 two-seed ensemble (V50s); `models/sequence_tcn.json`, the conf
 synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are unchanged. Future work: a boundary
 weight combined with a second training seed of R64B, and tuning of the weight (x2 was the only value tried).
 
+### Decoder re-tuning for the sequence-model emissions (Issue #75)
+
+The decoder and the post-processor were tuned for the LightGBM route; the V50s route (#72/#73) under-segments (B'(33) 7423
+possessions predicted vs 9183 true, PFF 5767 vs 7069). Preregistered grid, decoding / post-processing only, no retraining,
+V50s emissions exactly as in production (#72 two-seed ensemble): `transition_matrix.ha_closed` in {-11.5, -9.5, -7.5, -5.5} x
+`ha_occluded` in {-6.0, -4.5, -3.0} x `spell_optimizer.micro_poss_s` in {1.2, 0.6, 0.0} (36 cells). Selection on B'(33) eval
+seed 0 only; adoption on held-out eval seeds 1-2 (mean B'(33) delta >= +0.010, no seed < -0.003; guards B'(1) seeds 1-2 drop
+<= 0.010, A drop <= 0.030). External matches only (7 IDSSE LOMO matches degraded at dead_affinity 33 / 1; A = first 20 PFF).
+`scripts/decoder_retune_eval.py` memoises the decoder-independent emissions of each match and cell and re-runs only the
+transitions, Viterbi and spell optimiser per grid cell; the shipped configuration reproduces the #73 V50s score exactly
+(B'(33) seed 0 0.74488).
+
+*Production cell.* The preregistration names (-11.5, -6.0, 1.2) as the production cell, but those are the top-level defaults;
+the learned route decodes with `route_overrides.specialists` (ha_closed -8.76, ha_occluded -7.5746, micro_poss_s 0.9847), which
+override them. The grid values are therefore applied in `route_overrides.specialists` (at top level they would be a no-op), and
+the shipped values, which are not a grid point, are scored as an extra reference `ship` next to the nominal grid cell.
+Adoption is judged against `ship` (the stricter reference); the nominal cell is reported too.
+
+*Result.* Seed-0 B'(33) spellF1 of the 36 cells ranges 0.7406-0.7476. Selected: (-11.5, -6.0, 0.0), 0.7476 (+0.0027 vs `ship`,
++0.0036 vs nominal). The gain is almost all `micro_poss_s` (1.2 -> 0.6 / 0.0 is worth about +0.003, 0.6 and 0.0 are within 0.0002);
+`ha_closed` and `ha_occluded` barely matter and the best values are at the production end; a cheaper H<->A change does not help.
+
+| reference | B'(33) seeds 1 / 2 | B'(33) mean (seeds 1-2) | B'(33) 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| vs `ship` (-8.76, -7.5746, 0.9847) | +0.0007 / +0.0023 | **+0.0015** | +0.0019 | +0.0014 (+0.0018 / +0.0009) | -0.0002 |
+| vs nominal (-11.5, -6.0, 1.2) | -0.0003 / +0.0022 | +0.0010 | +0.0018 | +0.0025 | -0.0002 |
+
+Absolute (selected / `ship`): B'(33) seeds 1-2 0.7377 / 0.7362, B'(1) 0.6860 / 0.6846, A 0.6595 / 0.6597.
+Possessions predicted (true), selected vs `ship`: B'(33) (seeds 0-2) 7464 vs 7423 (9183), B'(1) (seeds 1-2) 4747 vs 4687 (6122),
+A 5812 vs 5767 (7069). Spurious turnovers (25 frames): B'(33) 2478 vs 2477, B'(1) 1767 vs 1736, A 2499 vs 2482. H<->A recall
+(visible / hidden at the true change): B'(33) 0.645 / 0.392 vs 0.640 / 0.380, B'(1) 0.635 / 0.384 vs 0.629 / 0.378, A 0.515 /
+0.463 vs 0.518 / 0.453. Aggregates in `reports/issue75_decoder_retune.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (+0.0015) is far below +0.010 (the guards pass, no seed is
+below -0.003). The under-segmentation is therefore not a decoder-cost problem: the switch costs are not binding with the V50s
+emissions (the network already carries the evidence) and the pruning only removes a few hundred true micro-possessions. The
+defaults, the shipped route and the synthetic SHA256 (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`) are
+unchanged. The per-cell emissions are cached outside the repository for the #76 combination check.
+
+### R64B two-seed ensemble (Issue #76; not adopted)
+
+Like-for-like follow-up of #74, proposed after R64B fell 0.0011 short there (disclosed on the issue; nothing else was
+varied and the result was accepted as it came). Variant R64B2: the R64B networks of #74 (training seed 0, reused bit for
+bit) plus a second set trained with seed 1 and otherwise identical settings (`--extra-dir`, `--boundary-weight 2`, 6000 steps),
+averaged as in production and integrated as V50s. Reference: production, the #72 two-seed ensemble with V50s; the B'(33)
+seed-0 cell re-run with the current code gives 0.7449, identical to the stored #73 value. External matches only.
+
+| | B'(33) | delta (seeds 0/1/2) | B'(1) | delta (seeds 0/1/2) | A (20 PFF) | delta |
+|---|---|---|---|---|---|---|
+| production V50s | 0.7391 | - | 0.6841 | - | 0.6597 | - |
+| R64B2 | 0.7488 | **+0.0097** (+0.0062/+0.0110/+0.0118) | 0.6966 | +0.0125 (+0.0176/+0.0056/+0.0143) | 0.6665 | +0.0067 |
+
+Possessions predicted (true): B'(33) 7423 -> 7688 (9183), B'(1) 7037 -> 7393 (9183), A 5767 -> 6135 (7069). H<->A recall
+visible / hidden: B'(33) 0.640 / 0.380 -> 0.664 / 0.423, B'(1) 0.640 / 0.375 -> 0.656 / 0.430, A 0.518 / 0.453 -> 0.548 / 0.496.
+Spurious turnovers: 2477 -> 2569, 2585 -> 2706, 2482 -> 2699. Aggregates in `reports/issue76_r64b_ensemble.json`.
+
+Verdict against the unchanged rule: NOT ADOPTED. B'(33) +0.00967 < +0.010 (no seed below -0.003; B'(1) and A up). The
+second seed made the gain more even across eval seeds but did not move the mean past the threshold. Production,
+`models/sequence_tcn.json`, the configuration and the synthetic SHA256 are unchanged; no code changed in this issue.
+Taken together with #74, the boundary-weighted loss is a consistent but small gain (about +0.009 on B'(33), larger on
+B'(1) and PFF) that reduces the under-segmentation; it is listed as future work.
+
+### Decoder modules revisited with the sequence-model emissions (Issue #77)
+
+Three decoder modules were rejected under the LightGBM emissions and are still in the code, OFF: the explicit-duration
+(semi-Markov) decoder (#34), decoding by expected spellF1 (#62) and the boundary snap to the touch / restart frame (#61).
+The V50s route under-segments (B'(33) 7423 possessions predicted vs 9183 true, PFF 5767 vs 7069), which is what a duration
+prior and an expected-spellF1 decoder act on. Preregistered variants on top of production V50s (existing switches, nothing else
+changes): D1 (`duration.enabled`, weight 1.0), D05 (weight 0.5), X (`expected_spellf1.enabled`, k 100, temperature 1.0, seed 0),
+S (`boundary_snap.enabled`), D-best + S and X + S. Selection on B'(33) eval seed 0 only; adoption on held-out eval seeds 1-2
+(mean B'(33) delta >= +0.010, no seed < -0.003; guards B'(1) seeds 1-2 drop <= 0.010, A (first 20 PFF) drop <= 0.030).
+External matches only. `scripts/decoder_modules_eval.py` is adapted from `scripts/decoder_retune_eval.py` of #75 (memoised
+emissions per match, decoder re-run per variant, generalised to arbitrary `section.key` overrides).
+
+*Where the switches are read.* `duration`, `expected_spellf1` and `boundary_snap` are not overridden in
+`route_overrides.specialists` (it holds only `transition_matrix`, `spell_optimizer`, `specialist_fusion`), so the top-level
+sections are what the shipped learned route reads; the variants write there and every one of them changes the decoded labels
+(hash differs from `ship` in 7/7 seed-0 cells for D1, D05, S, D05S, XS; 3/7 for X, whose sampled-path consensus often returns
+the Viterbi path). The duration tables exist in the stored specialists (fitted by #34's `fit_from_bench` from the external
+training labels, leaving out the held-out match); nothing was refit. The shipped route reproduces the #73 seed-0 score exactly
+(B'(33) seed 0 0.7448763).
+
+*Selection (B'(33) seed 0 spellF1).* ship 0.7449, D1 0.7446, D05 0.7448, X 0.7438, **S 0.7451**, D05S 0.7447, XS 0.7447
+(D-best = D05). Predicted possessions (B'(33) seed 0 only): ship 2480, D1 2517, D05 2498, X 2492, S 2480.
+The duration prior and the expected-spellF1 decoder add 12-37 possessions but spellF1 does not follow: the extra possessions
+are not true ones. The snap moves boundaries only and leaves the count unchanged.
+
+*Held-out.* Selected S vs `ship`:
+
+| | B'(33) seed 1 / 2 | B'(33) mean (seeds 1-2) | B'(33) 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| delta spellF1 | -0.0003 / -0.0011 | **-0.0007** | -0.0004 | -0.0002 | -0.0007 |
+
+Absolute (S / `ship`): B'(33) seeds 1-2 0.7355 / 0.7362, B'(1) 0.6844 / 0.6846, A 0.6590 / 0.6597. Possessions predicted
+(true), S and `ship` identical: B'(33) (seeds 0-2) 7423 (9183), B'(1) 4687 (6122), A 5767 (7069). Spurious turnovers (25 frames),
+S vs `ship`: B'(33) 2482 vs 2477, B'(1) 1743 vs 1736, A 2495 vs 2482. H<->A recall (visible / hidden): B'(33) 0.639 / 0.380 vs
+0.640 / 0.380, B'(1) 0.627 / 0.377 vs 0.629 / 0.378, A 0.517 / 0.450 vs 0.518 / 0.453. Aggregates in
+`reports/issue77_decoder_modules.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (-0.0007) is far below +0.010 (guards pass, no seed below
+-0.003). With the V50s emissions the three modules neither recover the missing possessions nor sharpen the boundaries (the
+snap is neutral: the network's boundaries are already at the touch). The defaults, the shipped route and the synthetic SHA256
+are unchanged (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`, two runs identical). To re-run with other sequence nets (e.g. #76 / #78): `python scripts/decoder_modules_eval.py run --world b33
+--seeds 0 --variants ship,D1,D05,X,S --models-root <specialist models> --seq-root <net dirs> --out-dir <dir>` (several
+`--seq-root` = ensemble; `--extra "sequence_model.visible_weight=0.5"` for other mixing), then `report --out-dirs ...`.
+
+### Sequence model with a linear-chain CRF (Issue #78; not adopted, OFF)
+
+The #72 TCN is trained with a per-frame cross-entropy and the decoder adds hand-set transitions afterwards. #78 puts a
+linear-chain CRF on top of the TCN and trains it end to end with the sequence negative log-likelihood (plus the per-frame
+cross-entropy, weight 0.5; `scripts/train_sequence.py --crf c1|c2`, log-semiring tree reduction of the forward algorithm).
+C1 learns a global 3x3 transition matrix and its unaries (log-softmax) replace the TCN emissions in the production V50s mix;
+C2 additionally learns a feature-conditioned H<->A transition (`-softplus(w.h_t + b)`) that replaces the final H->A / A->H
+entries of `log_trans` inside the play blocks (`sequence_model.crf_transition`, OFF; `src/mtah2027/models/sequence_crf.py`
+holds the NumPy chain score, log-partition, NLL and the transition override). Same data, LOMO folds, #71 mixture,
+architecture and inputs as #72, training seed 0, 6000 steps. Reference: production as it is (the #72 two-seed ensemble with
+V50s; the B'(33) seed-0 cell re-run with the current code gives 0.7449, identical to #73). External matches only.
+
+Selection on B'(33) eval seed 0 (comment on the issue before any held-out score): C1 0.7224 (-0.0224), C2 0.7140 (-0.0309);
+C1 selected. Held-out: C1 B'(33) seeds 1 / 2 -0.0262 / -0.0163 (3-seed mean 0.7174, -0.0216), B'(1) seeds 1 / 2
+-0.0246 / -0.0257. Possessions predicted (true): B'(33) 7232 vs 7423 (9183); H<->A recall visible / hidden on B'(33)
+0.610 / 0.290 vs 0.640 / 0.380. The learned transitions are stickier (H<->A about -4.2) and, added to the decoder's own
+switch cost, lower the number of possessions further: the opposite of what was needed.
+
+Verdict: NOT ADOPTED (the main criterion fails and both held-out seeds are below -0.003, so the A cell was not scored).
+The code stays in the repository OFF by default; production, `models/sequence_tcn.json`, the configuration and the
+synthetic SHA256 are unchanged. Aggregates in `reports/issue78_sequence_crf.json`. Future work: train the CRF jointly with
+the decoder's transition structure (or decode with the CRF transitions alone) so that switch costs are not counted twice.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

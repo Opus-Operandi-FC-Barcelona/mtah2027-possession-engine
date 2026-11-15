@@ -49,6 +49,7 @@ class SequenceParams:
     turnover_threshold: float = 0.5
     turnover_blend: float = 0.5
     half_window: int = 5               # frames: targets of the turnover head
+    crf_transition: bool = False       # Issue #78 (C2): learned H<->A transition scores replace the production ones
 
     @classmethod
     def from_config(cls, path=None) -> "SequenceParams":
@@ -66,6 +67,10 @@ class SequenceParams:
     @property
     def use_turnover(self) -> bool:
         return self.enabled and self.mode in ("turnover", "both")
+
+    @property
+    def use_crf_transition(self) -> bool:
+        return self.enabled and self.crf_transition
 
 
 def turnover_targets(codes: np.ndarray, half_window: int = 5) -> np.ndarray:
@@ -124,14 +129,33 @@ class SequenceModel:
         pad[d:d + n] = h
         return pad[:n] @ w[0] + pad[d:d + n] @ w[1] + pad[2 * d:2 * d + n] @ w[2] + b
 
-    def forward(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """``(emission_logits[N, 3], turnover_logits[N, 3])`` of one standardised block ``x[N, F]``."""
+    def _trunk(self, x: np.ndarray) -> np.ndarray:
         w = self._d
         h = x.astype(np.float64) @ w["w_in"] + w["b_in"]
         for i, d in enumerate(self.dilations):
             r = np.maximum(self._conv3(h, w[f"w1_{i}"], w[f"b1_{i}"], d), 0.0)
             h = h + r @ w[f"w2_{i}"] + w[f"b2_{i}"]
+        return h
+
+    def forward(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``(emission_logits[N, 3], turnover_logits[N, 3])`` of one standardised block ``x[N, F]``."""
+        w = self._d
+        h = self._trunk(x)
         return h @ w["w_e"] + w["b_e"], h @ w["w_t"] + w["b_t"]
+
+    @property
+    def has_crf_transition(self) -> bool:
+        """Issue #78 (C2): the network carries the feature-conditioned H<->A transition head."""
+        return "w_ha" in self.w
+
+    def forward_all(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+        """``forward`` plus the C2 H<->A log-transition scores ``[N, 2]`` (``H -> A``, ``A -> H``; None without head)."""
+        from mtah2027.models.sequence_crf import neg_softplus
+
+        w = self._d
+        h = self._trunk(x)
+        ha = neg_softplus(h @ w["w_ha"] + w["b_ha"]) if self.has_crf_transition else None
+        return h @ w["w_e"] + w["b_e"], h @ w["w_t"] + w["b_t"], ha
 
     def standardise(self, x: np.ndarray, names: Sequence[str]) -> np.ndarray:
         idx = [list(names).index(k) for k in self.feature_names]
@@ -141,21 +165,30 @@ class SequenceModel:
     def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
                 ) -> tuple[np.ndarray, np.ndarray]:
         """Emission probabilities ``[N, 3]`` and turnover probabilities ``[N, 3]`` (NaN outside ``blocks``)."""
+        return self.predict_all(x, names, blocks)[:2]
+
+    def predict_all(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+        """``predict`` plus the H<->A log-transition scores ``[N, 2]`` of C2 (NaN outside ``blocks``; None without
+        the head)."""
         if not set(self.feature_names) <= set(names):
             raise ValueError("feature layout does not match the sequence model")
         n = len(x)
         pe = np.full((n, 3), np.nan, dtype=np.float64)
         pt = np.full((n, 3), np.nan, dtype=np.float64)
+        ph = np.full((n, 2), np.nan, dtype=np.float64) if self.has_crf_transition else None
         z = self.standardise(x, names)
         for a, b in blocks:
             a, b = int(a), min(int(b), n - 1)
             if b < a:
                 continue
-            le, lt = self.forward(z[a:b + 1])
+            le, lt, ha = self.forward_all(z[a:b + 1])
             # float64 maths, then quantised: BLAS differences between machines (1e-12) cannot reach the decoder
             pe[a:b + 1] = np.round(_softmax(le), PROB_DECIMALS)
             pt[a:b + 1] = np.round(_softmax(lt), PROB_DECIMALS)
-        return pe, pt
+            if ph is not None:
+                ph[a:b + 1] = np.round(ha, PROB_DECIMALS)
+        return pe, pt, ph
 
     # -------------------------------------------------------------------------------------------
     def save(self, path: str | Path) -> Path:
@@ -202,10 +235,17 @@ class SequenceEnsemble:
 
     def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
                 ) -> tuple[np.ndarray, np.ndarray]:
-        outs = [m.predict(x, names, blocks) for m in self.members]
+        return self.predict_all(x, names, blocks)[:2]
+
+    def predict_all(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+        """Mean over the members; the C2 log-transitions are averaged over the members that have the head."""
+        outs = [m.predict_all(x, names, blocks) for m in self.members]
         pe = np.round(np.mean([o[0] for o in outs], axis=0), PROB_DECIMALS)
         pt = np.round(np.mean([o[1] for o in outs], axis=0), PROB_DECIMALS)
-        return pe, pt
+        hs = [o[2] for o in outs if o[2] is not None]
+        ph = np.round(np.mean(hs, axis=0), PROB_DECIMALS) if hs else None
+        return pe, pt, ph
 
     def to_json_dict(self) -> dict:
         return {"format": JSON_FORMAT, "kind": "tcn_mean_softmax", "meta": self.meta,
