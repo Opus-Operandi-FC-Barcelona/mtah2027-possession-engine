@@ -85,6 +85,10 @@ class VisionParams:
     tracklet_max_residual_m: float = 1.0   # distance to the smooth (local polynomial) fit of the run
     tracklet_max_link_frames: int = 10     # linked detections are at most this many frames apart
     injected_emission_scale: float = 1.0   # <1 tempers emissions where ball_source is 2/3
+    # --- Issue #67: soft evidence (detections tilt the H/A emission instead of becoming the ball); 0 = off
+    soft_evidence_weight: float = 0.0
+    soft_evidence_scale_m: float = 3.0
+    soft_evidence_hold_frames: int = 5
 
     @classmethod
     def from_config(cls, path=None) -> "VisionParams":

@@ -1497,6 +1497,118 @@ so even a small simulated gain would not have justified enabling it.  `vision.en
 Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
+## Milestone 11: remaining margin in tactical video
+
+### Oracle ceiling of the hidden-ball value, accuracy curve, error decomposition and soft evidence (Issue #67; diagnostic, everything OFF)
+
+Question: how much spellF1 is left in the hidden-ball frames, as an upper bound for any video ball detector, and how accurate
+and clean must a detector be to reach +0.010?  External data only (never BAR-ATH): B'(33) = 7 IDSSE leave-one-match-out with the
+calibrated degrader at `dead_affinity` 33 (seeds 0-2), guard B'(1) (seed 0), production specialist route (`lomo_gap` models,
+default config), official metric.  `scripts/oracle_ceiling.py` extends the machinery of #63 / #66; the `none` rows reproduce the
+references exactly (B'(33) 0.6693 = 0.6709 / 0.6675 / 0.6695, B'(1) 0.6019).  Hidden frame = graded frame without ball in the
+degraded match; "restored" frames are written through the same `inject_points` as the real chain (cadence `k`: one point
+every `vision.every_k` = 5 frames of each gap, interpolated in between) or at every hidden frame (cadence `all`).  Coverage is
+nested per seed.  Run time: 69 scenarios on each seed-0 cell, 16 key rows on seeds 1-2; B'(1) has 13 key rows (seed 0); the 4
+refinement rows (sigma 0.2 / false positives 2 and 5 %) and all soft rows are seed 0 only (stated per row).
+
+**1. Oracle (true ball restored in the hidden frames).**  B'(33), d = spellF1 minus `none`:
+
+| coverage | cadence k=5: spellF1 | d | macroF1 d | per seed d (0 / 1 / 2) | every frame: spellF1 | d | per seed d |
+|---|---|---|---|---|---|---|---|
+| 100 % | 0.7104 | +0.0410 | +0.0188 | +0.0392 / +0.0406 / +0.0434 | 0.7154 | +0.0460 | +0.0452 / +0.0451 / +0.0478 |
+| 75 % (seed 0) | 0.7067 | +0.0358 | +0.0171 | | 0.7166 | +0.0457 | |
+| 50 % | 0.6977 | +0.0283 | +0.0155 | +0.0262 / +0.0278 / +0.0310 | 0.7123 | +0.0430 | +0.0430 / +0.0409 / +0.0450 |
+| 25 % | 0.6846 | +0.0153 | +0.0096 | +0.0143 / +0.0118 / +0.0198 | 0.7074 (seed 0) | +0.0365 | |
+
+B'(1) (seed 0, guard): 100 % k +0.1085, every frame +0.1128; 50 % k +0.0701, every frame +0.1071; 25 % k +0.0336.  So a perfect
+detector would be worth +0.041 to +0.046 on B'(33) (about 0.04 above the noise of spellF1) and +0.11 on B'(1), where the holes
+are mostly live-ball.  The cadence costs little at 100 % (-0.005) but matters at low coverage (the interpolation fills 49 % of the
+hidden frames at 25 % / k against 99.8 % at every frame).  Even with the true ball in every hidden frame the score stays
+0.715: the hidden frames are not where most of the spellF1 is lost (item 3).
+
+**2. Accuracy curve (true ball + isotropic Gaussian error sigma + false positives uniform 5-30 m away, injected as the ball,
+cadence k).**  B'(33) d; cells with 3 seeds give the mean, the others are seed 0 only (`s0`):
+
+| sigma | fp 0 %, cov 100 | fp 0 %, cov 50 | fp 10 %, cov 100 | fp 10 %, cov 50 | fp 25 %, cov 100 | fp 25 %, cov 50 |
+|---|---|---|---|---|---|---|
+| 0.1 m | +0.0229 | +0.0251 | -0.0188 (s0) | -0.0070 (s0) | -0.0607 (s0) | -0.0450 (s0) |
+| 0.3 m | -0.0119 (s0) | -0.0026 | -0.0407 (s0) | -0.0279 (s0) | -0.0711 (s0) | -0.0576 (s0) |
+| 0.5 m | -0.0320 | -0.0235 | -0.0528 (s0) | -0.0462 (s0) | -0.0790 (s0) | -0.0690 (s0) |
+| 1 m | -0.0648 (s0) | -0.0533 | -0.0745 | -0.0632 | -0.0986 (s0) | -0.0796 (s0) |
+| 2 m | -0.0922 (s0) | -0.0866 | -0.1017 (s0) | -0.0911 (s0) | -0.1172 (s0) | -0.0993 |
+
+Refinement (cov 50 %, seed 0): sigma 0.2 m, fp 0 -> +0.0113; sigma 0.1 m, fp 2 % -> +0.0151; sigma 0.1 m, fp 5 % -> +0.0061;
+sigma 0.2 m, fp 2 % -> +0.0020.  B'(1) guard (seed 0): sigma 0.5 m, fp 0, cov 100 +0.0317; sigma 0.3 m, fp 0, cov 50 +0.0471;
+sigma 1 m + fp 10 % at 50 % -0.0061 (at 100 % -0.0254).
+
+**Crossing +0.010 on B'(33): a detector has to put the ball within about 0.2 m (1 sigma) in the covered frames AND have fewer than
+about 2-3 % false positives; 50 % coverage is enough (the loss with sigma is steeper than the gain from coverage).**  The
+measured `sv_ball640` (41 % within 1 m, 24 % beyond 5 m or missing) sits in the sigma >= 1 m, fp ~ 20 % region of the table,
+between -0.06 and -0.10, consistent with #63 (-0.074).  Accuracy is not the whole story: a 0.5 m error with no false positives
+already loses -0.024 (50 %), because the injected ball feeds the ball-present specialist, which was trained on tracking-precision
+positions and reads contact / carrier geometry at sub-metre scale.
+
+**3. Error decomposition of the current route on B'(33)** (mean of 21 cells; official `possession_metrics` functions; hidden =
+graded frames without ball, 41 % of the graded frames).  "fix hidden / fix visible" = spellF1 if the prediction were replaced by
+the truth in the hidden (resp. visible) graded frames (not additive, a bound on where the loss lives):
+
+| | B'(33) | B'(1) (7 cells, seed 0) |
+|---|---|---|
+| spellF1 now | 0.6693 | 0.6019 |
+| fix hidden frames only | 0.7574 (+0.088) | 0.8367 (+0.235) |
+| fix visible frames only | 0.9215 (+0.252) | 0.7774 (+0.176) |
+| frame accuracy hidden / visible | 0.936 / 0.929 | 0.841 / 0.952 |
+| recall of H / A in hidden frames | 0.756 / 0.727 | 0.758 / 0.767 |
+| recall of H / A in visible frames | 0.913 / 0.914 | 0.922 / 0.917 |
+| recall of D in hidden / visible | 0.983 / 0.981 | 0.949 / 0.986 |
+| possessions: truth / predicted | 437 / 350 | 437 / 313 |
+
+In B'(33) the hidden holes sit largely in dead-ball stretches (`dead_affinity` 33), so most of what the current route loses is
+in frames where the ball IS visible.  Fate of the 437 true possessions at IoU 0.5 (B'(33); in brackets those mostly in hidden
+frames): matched 268 (23), merged into a predicted spell that also covers a neighbour 50 (10), boundary error 37 (8), split into
+>= 2 predicted spells 3 (1), no same-team overlap (missed) 80 (26).  Possession count errors are almost all merges / misses
+(the route predicts 350 spells against 437), not splits: it under-segments.  H<->A turnovers (matched within +-1 s): 336 true,
+174 matched, 161 missed (39 of them in hidden frames), 75 spurious; stops (to D): 99 true, 17 missed, 16 spurious; restarts
+(from D): 99 true, 17 missed, 16 spurious.  Median absolute latency of the matched boundaries: 1.4 frames for H<->A and for stops,
+0.9 for restarts, i.e. boundary timing is not the problem; the missing turnovers are.  With the oracle ball in every hidden
+frame (`orc100_all`) hidden-frame accuracy rises 0.936 -> 0.982, matched possessions 268 -> 293, missed turnovers in hidden
+frames 39 -> 21, but missed turnovers in visible frames stay at about 121 (total missed 161 -> 142) and spellF1 stops at
+0.715.  On B'(1) the picture is the opposite (live-ball holes: 158 of the 336 turnovers are in hidden frames, 120 of the 196 missed
+ones; fixing the hidden frames would give +0.235, the oracle ball +0.113).
+
+**4. Soft evidence** (`vision.soft_evidence_weight`, default 0 = off; `src/mtah2027/vision/soft_evidence.py`, wired in
+`run_core(..., soft_evidence=(frames, xy, conf))`).  The detection does not become the ball (the ball features stay empty); it
+only tilts the H / A emission by `weight * conf * tanh((d_A - d_H) / 3 m)` nats (d = distance of the detection to the nearest
+player of each team, applied within 5 frames of the detection; D untouched).  Same detections and error models as item 2, conf = 1,
+seed 0, B'(33) d:
+
+| detections | w = 1 | w = 2 | w = 4 |
+|---|---|---|---|
+| perfect, cov 100 | +0.0014 | -0.0020 | -0.0192 |
+| perfect, cov 50 | +0.0017 | -0.0007 | -0.0141 |
+| sigma 0.5 m, fp 10 %, cov 100 | +0.0029 | -0.0029 | -0.0203 |
+| sigma 0.5 m, fp 10 %, cov 50 | +0.0031 | -0.0007 | -0.0149 |
+| sigma 1 m, fp 10 %, cov 50 | +0.0025 | -0.0019 | -0.0168 |
+| sigma 2 m, fp 25 %, cov 100 | +0.0015 | -0.0030 | -0.0241 |
+| sigma 2 m, fp 25 %, cov 50 | +0.0024 | -0.0039 | -0.0205 |
+
+(sigma 0.3 m rows equal sigma 0 within 0.0005.)  B'(1) (seed 0): w = 1, perfect, cov 100 +0.0050; sigma 1 m, fp 10 %, cov 50 +0.0030.
+Soft evidence is far more tolerant of detector error than hard injection (it never loses more than 0.004 at w <= 2 with 2 m / 25 %
+false positives, where injection loses 0.10), but it also gains nothing: the best row is +0.0031, because a nearest-team tilt only
+repeats what the specialists already infer from the player geometry.  It is not a route to +0.010.
+
+**Conclusions.**  (a) The ceiling of a perfect hidden-ball detector is +0.041 (k = 5) to +0.046 (every frame) on B'(33) and +0.11 on
+B'(1); 25 % coverage already gives +0.015.  (b) Reaching +0.010 needs a median error <= ~0.2 m and < ~3 % false positives; a
+detector of the `sv_ball640` class (1 m, ~20 % far) cannot, and gating (#66) cannot fix that without a much more precise detector.
+(c) The main spellF1 losses of the current route on B'(33) are under-segmentation (350 predicted spells against 437) and missed
+H<->A turnovers in frames where the ball is visible (about 120 of 336 per match), not boundary latency and not the hidden-ball
+frames; the oracle leaves 0.715.  On B'(1)-like holes (live-ball occlusions) the video would matter much more.  (d) Soft evidence is
+safe but worth about +0.002.  Nothing is enabled: `vision.soft_evidence_weight` stays 0.0; the synthetic SHA256 is unchanged
+(2a31a913...).
+
+Reproduce: `python scripts/oracle_ceiling.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D` (and `--world b1
+--seeds 0 --rows <list>`), then `agg --out-dir D [D2 ...] --json reports/issue67_oracle_ceiling.json`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
