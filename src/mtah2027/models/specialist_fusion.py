@@ -96,6 +96,7 @@ class SpecialistSet:
     ensemble: tuple = ()              # Issue #44: ((SpecialistSet, weight), ...); empty = this set alone
     mix_mode: str = "loglinear"       # Issue #44: how the member probabilities are combined
     c: object = None                  # Issue #57: Specialist C (learned turnover gate), optional
+    seq: object = None                # Issue #72: SequenceModel (TCN), optional; used only when sequence_model.enabled
 
     def members(self) -> tuple:
         """``((set, normalised weight), ...)``: the ensemble members, or this set alone."""

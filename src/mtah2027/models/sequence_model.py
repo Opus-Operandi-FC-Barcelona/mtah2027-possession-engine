@@ -1,0 +1,196 @@
+"""Sequence model over the per-frame feature matrix of the specialists (Issue #72; OFF by default).
+
+A non-causal dilated temporal convolutional network (TCN) reads the whole feature sequence of a play block and
+returns, for every frame,
+
+* three emission logits (``H``, ``A``, ``D``) -- used, when ``sequence_model.mode`` asks for it, on the
+  hidden-ball frames only (mode ``emissions``);
+* three turnover logits (none / ``H -> A`` / ``A -> H`` within ``+- half_window`` frames, the targets of
+  Specialist C) -- used as an additional opening of the ``H <-> A`` transition (mode ``turnover``), through the
+  same gate mechanism as the learned gate of Issue #57 (``off`` / ``hard`` / ``max`` / ``blend``).
+
+Training happens on the GPU (``scripts/train_sequence.py``, PyTorch) on degraded *external* matches only; the
+weights are exported to a ``.npz`` file and the inference here is plain NumPy (no torch at run time, fixed
+arithmetic order, so a run is reproducible).  The architecture is therefore deliberately simple: a 1x1
+input projection, ``len(dilations)`` residual blocks ``h += W2 relu(conv3_d(h))`` (kernel 3, dilation ``d``,
+zero padding) and two linear heads.  Features are standardised with the training mean / std and missing
+values are set to the mean (zero after standardisation).
+"""
+# ruff: noqa: E501
+from __future__ import annotations
+
+import dataclasses
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Sequence
+
+import numpy as np
+
+from mtah2027.config import load_section, params_from_mapping
+
+MODEL_FORMAT = 1
+MODES = ("off", "emissions", "turnover", "both")
+GATE_MODES = ("hard", "max", "blend")
+FEATURE_DROP_PREFIX = "ctx:"          # hand-made context windows: the network sees the context itself
+
+
+@dataclass(frozen=True)
+class SequenceParams:
+    enabled: bool = False
+    mode: str = "off"                  # off | emissions | turnover | both
+    emission_weight: float = 0.5       # hidden frames: log p = (1 - w) log p_prod + w * emission_scale * log p_seq
+    emission_scale: float = 0.5        # tempering of the sequence log-probabilities (as specialist_fusion.scale_hidden)
+    prob_floor: float = 0.001
+    turnover_gate_mode: str = "max"    # hard | max | blend (see transition_matrix.learned_gate)
+    turnover_threshold: float = 0.5
+    turnover_blend: float = 0.5
+    half_window: int = 5               # frames: targets of the turnover head
+
+    @classmethod
+    def from_config(cls, path=None) -> "SequenceParams":
+        p = params_from_mapping(cls, load_section("sequence_model", path), "sequence_model")
+        if p.mode not in MODES:
+            raise ValueError(f"sequence_model.mode must be one of {MODES}, got {p.mode!r}")
+        if p.turnover_gate_mode not in GATE_MODES:
+            raise ValueError(f"sequence_model.turnover_gate_mode must be one of {GATE_MODES}")
+        return p
+
+    @property
+    def use_emissions(self) -> bool:
+        return self.enabled and self.mode in ("emissions", "both")
+
+    @property
+    def use_turnover(self) -> bool:
+        return self.enabled and self.mode in ("turnover", "both")
+
+
+def turnover_targets(codes: np.ndarray, half_window: int = 5) -> np.ndarray:
+    """Per-frame class 0 none / 1 H -> A / 2 A -> H within ``+- half_window`` of a direct change (as C)."""
+    c = np.asarray(codes)
+    n = len(c)
+    y = np.zeros(n, dtype=np.int64)
+    prev, cur = c[:-1], c[1:]
+    events = sorted([(int(t) + 1, 1) for t in np.flatnonzero((prev == 0) & (cur == 1))]
+                    + [(int(t) + 1, 2) for t in np.flatnonzero((prev == 1) & (cur == 0))])
+    for t, cls in events:
+        y[max(0, t - half_window):min(n, t + half_window + 1)] = cls
+    return y
+
+
+def select_columns(names: Sequence[str]) -> list[str]:
+    """Feature names fed to the network (all but the ``ctx:`` columns)."""
+    return [k for k in names if not k.startswith(FEATURE_DROP_PREFIX)]
+
+
+def _softmax(z: np.ndarray) -> np.ndarray:
+    z = z - z.max(axis=-1, keepdims=True)
+    e = np.exp(z)
+    return e / e.sum(axis=-1, keepdims=True)
+
+
+class SequenceModel:
+    """Fitted TCN (weights as NumPy arrays)."""
+
+    def __init__(self, weights: dict, meta: dict | None = None):
+        self.w = {k: np.asarray(v, dtype=np.float32) for k, v in weights.items()}
+        self.meta = dict(meta or {})
+        self.feature_names: list[str] = list(self.meta["feature_names"])
+        self.dilations: list[int] = [int(d) for d in self.meta["dilations"]]
+
+    # -------------------------------------------------------------------------------------------
+    def _conv3(self, h: np.ndarray, w: np.ndarray, b: np.ndarray, d: int) -> np.ndarray:
+        """``y[t] = sum_k h[t + (k - 1) d] @ w[k] + b`` with zero padding (``w[3, C, C]``)."""
+        n = len(h)
+        pad = np.zeros((n + 2 * d, h.shape[1]), np.float32)
+        pad[d:d + n] = h
+        return pad[:n] @ w[0] + pad[d:d + n] @ w[1] + pad[2 * d:2 * d + n] @ w[2] + b
+
+    def forward(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """``(emission_logits[N, 3], turnover_logits[N, 3])`` of one standardised block ``x[N, F]``."""
+        h = x.astype(np.float32) @ self.w["w_in"] + self.w["b_in"]
+        for i, d in enumerate(self.dilations):
+            r = np.maximum(self._conv3(h, self.w[f"w1_{i}"], self.w[f"b1_{i}"], d), 0.0)
+            h = h + r @ self.w[f"w2_{i}"] + self.w[f"b2_{i}"]
+        return h @ self.w["w_e"] + self.w["b_e"], h @ self.w["w_t"] + self.w["b_t"]
+
+    def standardise(self, x: np.ndarray, names: Sequence[str]) -> np.ndarray:
+        idx = [list(names).index(k) for k in self.feature_names]
+        z = (x[:, idx].astype(np.float32) - self.w["mean"]) / self.w["std"]
+        return np.nan_to_num(z, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+    def predict(self, x: np.ndarray, names: Sequence[str], blocks: Sequence[tuple[int, int]]
+                ) -> tuple[np.ndarray, np.ndarray]:
+        """Emission probabilities ``[N, 3]`` and turnover probabilities ``[N, 3]`` (NaN outside ``blocks``)."""
+        if not set(self.feature_names) <= set(names):
+            raise ValueError("feature layout does not match the sequence model")
+        n = len(x)
+        pe = np.full((n, 3), np.nan, dtype=np.float64)
+        pt = np.full((n, 3), np.nan, dtype=np.float64)
+        z = self.standardise(x, names)
+        for a, b in blocks:
+            a, b = int(a), min(int(b), n - 1)
+            if b < a:
+                continue
+            le, lt = self.forward(z[a:b + 1])
+            pe[a:b + 1] = _softmax(le.astype(np.float64))
+            pt[a:b + 1] = _softmax(lt.astype(np.float64))
+        return pe, pt
+
+    # -------------------------------------------------------------------------------------------
+    def save(self, path: str | Path) -> Path:
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(out, __meta__=np.array(json.dumps({"format": MODEL_FORMAT, **self.meta}, sort_keys=True)),
+                 **self.w)
+        return out
+
+    @classmethod
+    def load(cls, path: str | Path) -> "SequenceModel":
+        z = np.load(path, allow_pickle=False)
+        meta = json.loads(str(z["__meta__"]))
+        if meta.get("format") != MODEL_FORMAT:
+            raise ValueError(f"unsupported sequence model format {meta.get('format')!r}")
+        return cls({k: z[k] for k in z.files if k != "__meta__"}, meta)
+
+
+def random_model(feature_names: Sequence[str], *, channels: int = 8, dilations: Sequence[int] = (1, 2, 4),
+                 seed: int = 0) -> SequenceModel:
+    """Small random-weight model (tests, smoke runs of the integration)."""
+    rng = np.random.default_rng(seed)
+    f = len(feature_names)
+    w: dict = {"mean": np.zeros(f, np.float32), "std": np.ones(f, np.float32),
+               "w_in": rng.normal(0, 0.3, (f, channels)), "b_in": np.zeros(channels),
+               "w_e": rng.normal(0, 0.3, (channels, 3)), "b_e": np.zeros(3),
+               "w_t": rng.normal(0, 0.3, (channels, 3)), "b_t": np.zeros(3)}
+    for i, _ in enumerate(dilations):
+        w[f"w1_{i}"] = rng.normal(0, 0.2, (3, channels, channels))
+        w[f"b1_{i}"] = np.zeros(channels)
+        w[f"w2_{i}"] = rng.normal(0, 0.2, (channels, channels))
+        w[f"b2_{i}"] = np.zeros(channels)
+    return SequenceModel(w, {"feature_names": list(feature_names), "dilations": list(dilations),
+                             "channels": channels})
+
+
+def mix_hidden_emissions(log_probs: np.ndarray, seq_prob: np.ndarray, visible: np.ndarray,
+                         p: SequenceParams) -> np.ndarray:
+    """Hidden-ball frames: ``(1 - w) log_probs + w * scale * log p_seq`` (visible frames and NaN rows untouched)."""
+    lp = np.asarray(log_probs, dtype=np.float64)
+    hid = ~np.asarray(visible, dtype=bool) & np.isfinite(seq_prob).all(axis=1)
+    if not hid.any() or p.emission_weight == 0.0:
+        return log_probs
+    out = lp.copy()
+    ls = p.emission_scale * np.log(np.maximum(seq_prob[hid], p.prob_floor))
+    out[hid] = (1.0 - p.emission_weight) * lp[hid] + p.emission_weight * ls
+    return np.round(out, 6)
+
+
+def gate_probabilities(turnover_prob: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(p_ha, p_ah)`` as consumed by ``transition_matrix.learned_gate`` (NaN -> 0 there)."""
+    return turnover_prob[:, 1], turnover_prob[:, 2]
+
+
+def with_gate(tp, p: SequenceParams):
+    """TransitionParams with the learned gate set from the sequence parameters."""
+    return dataclasses.replace(tp, learned_gate_mode=p.turnover_gate_mode,
+                               learned_gate_threshold=p.turnover_threshold, learned_gate_blend=p.turnover_blend)
