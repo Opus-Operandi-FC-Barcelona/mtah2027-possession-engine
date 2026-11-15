@@ -1,0 +1,183 @@
+{
+ "issue": 81,
+ "title": "TCN retrained with boundary-regression and segment-level (CDF) losses",
+ "data": "external matches only: IDSSE 7-match LOMO B'(33) and B'(1), eval seeds 0-2; A = first 20 PFF matches (4-fold), eval seed 0",
+ "reference": "V50s: #72 two-seed ensemble (training seeds 0+1) with #73 integration; B'(33) seed 0 = 0.7448763",
+ "variants": {
+  "L1": "boundary head loss 0.5 (sigma 5 frames, BCE pos_weight 5)",
+  "L2": "L1 + CDF segment loss 0.5 (windows 128, stride 64, scale 25)",
+  "L3": "L2 + #74 boundary weight x2 (+-75 frames)"
+ },
+ "selection_b33_seed0": {
+  "V50s": {
+   "mean": 0.7448762763092401,
+   "delta": 0.0
+  },
+  "L1": {
+   "mean": 0.7420303742144184,
+   "delta": -0.0028459020948217173
+  },
+  "L2": {
+   "mean": 0.7454161173599171,
+   "delta": 0.000539841050676948
+  },
+  "L3": {
+   "mean": 0.741631054570924,
+   "delta": -0.0032452217383160953
+  }
+ },
+ "selected": "L2",
+ "rule": "B'(33) mean delta seeds 1-2 >= +0.010 and no seed < -0.003; B'(1) seeds 1-2 delta >= 0; A delta >= 0",
+ "adoption_L2s2": {
+  "b33_seeds": {
+   "0": 0.002396293600341659,
+   "1": 0.007354784631911637,
+   "2": 0.006218217136158333
+  },
+  "b33_mean_seeds_1_2": 0.006786500884034985,
+  "b33_mean_3seeds": 0.00532309845613721,
+  "b1_seeds": {
+   "0": 0.00019199164543703962,
+   "1": 0.001870005242305628,
+   "2": 0.005300378737127187
+  },
+  "b1_mean_seeds_1_2": 0.0035851919897164075,
+  "b1_mean_3seeds": 0.0024541252082900256,
+  "pff_delta": 0.0033749121370373336
+ },
+ "summary": {
+  "V50s": {
+   "b1": {
+    "mean": 0.6840648134966548,
+    "delta": 0.0,
+    "per_seed_delta": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.0
+    }
+   },
+   "b33": {
+    "mean": 0.7390816455084709,
+    "delta": 0.0,
+    "per_seed_delta": {
+     "0": 0.0,
+     "1": 0.0,
+     "2": 0.0
+    }
+   },
+   "pff": {
+    "mean": 0.6597087293648876,
+    "delta": 0.0,
+    "per_seed_delta": {
+     "0": 0.0
+    }
+   }
+  },
+  "L2s2": {
+   "b1": {
+    "mean": 0.6865189387049448,
+    "delta": 0.0024541252082900256,
+    "per_seed_delta": {
+     "0": 0.00019199164543703962,
+     "1": 0.001870005242305628,
+     "2": 0.005300378737127187
+    }
+   },
+   "b33": {
+    "mean": 0.7444047439646081,
+    "delta": 0.00532309845613721,
+    "per_seed_delta": {
+     "0": 0.002396293600341659,
+     "1": 0.007354784631911637,
+     "2": 0.006218217136158333
+    }
+   },
+   "pff": {
+    "mean": 0.6630836415019249,
+    "delta": 0.0033749121370373336,
+    "per_seed_delta": {
+     "0": 0.0033749121370373336
+    }
+   }
+  }
+ },
+ "turnover": {
+  "V50s": {
+   "b1": {
+    "visible": [
+     3875,
+     2481
+    ],
+    "hidden": [
+     3178,
+     1191
+    ],
+    "n_pred": 6257,
+    "n_spurious": 2585
+   },
+   "b33": {
+    "visible": [
+     5969,
+     3820
+    ],
+    "hidden": [
+     1084,
+     412
+    ],
+    "n_pred": 6709,
+    "n_spurious": 2477
+   },
+   "pff": {
+    "visible": [
+     1883,
+     976
+    ],
+    "hidden": [
+     3213,
+     1457
+    ],
+    "n_pred": 4915,
+    "n_spurious": 2482
+   }
+  },
+  "L2s2": {
+   "b1": {
+    "visible": [
+     3875,
+     2499
+    ],
+    "hidden": [
+     3178,
+     1185
+    ],
+    "n_pred": 6271,
+    "n_spurious": 2587
+   },
+   "b33": {
+    "visible": [
+     5969,
+     3865
+    ],
+    "hidden": [
+     1084,
+     406
+    ],
+    "n_pred": 6741,
+    "n_spurious": 2470
+   },
+   "pff": {
+    "visible": [
+     1883,
+     988
+    ],
+    "hidden": [
+     3213,
+     1485
+    ],
+    "n_pred": 4919,
+    "n_spurious": 2446
+   }
+  }
+ },
+ "verdict": "NOT ADOPTED (B'(33) seeds 1-2 mean delta below +0.010)"
+}
