@@ -1827,6 +1827,45 @@ committed models; `models/sequence_tcn.json` is attached because `sequence_model
 warns for the heuristic comparator route only (spellF1 0.271), not for the submission route.  Public 5 minutes (pipeline check only, not used to choose
 anything): spellF1 0.578 [0.422, 0.756], macroF1 0.873.  Previous submission (fallback, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced with `sequence_model.enabled: false`.
 
+### Sequence-model emissions on ball-visible frames (Issue #73)
+
+#67 located the largest loss in frames with the ball visible; #72 only touched hidden-ball frames. #73 mixes the
+TCN log-probabilities into the visible frames too: `(1 - w) log p_prod + w * scale * log p_seq`, with `w =
+sequence_model.visible_weight` on visible frames (new key, code default 0.0) and `w = emission_weight` (1.0) on hidden
+frames; `emission_scale` now tempers the TCN log-probs in every mixed frame. No retraining (the #72 two-seed networks),
+float64 and 1e-6 quantisation kept. External matches only (IDSSE leave-one-match-out B' cells, eval seeds 0/1/2; A = first 20 PFF).
+
+Preregistered grid (final): V0 (0, 0.8), V25 (0.25, 0.5), V50 (0.5, 0.5), V25s (0.25, 0.8), V50s (0.5, 0.8) as
+(visible_weight, emission_scale). Reference re-run in the same harness: E100 ensemble, scale 0.5
+(B'(33) 0.6823, B'(1) 0.6411, A 0.5998). V50s was chosen on B'(33) seed 0 only (0.7449 vs 0.6851).
+
+| variant | B'(33) delta (seeds 0/1/2) | B'(1) delta | A delta |
+|---|---|---|---|
+| V0 | +0.0000 (+0.0022/-0.0002/-0.0020) | +0.0034 | +0.0051 |
+| V25 | +0.0252 (+0.0242/+0.0230/+0.0285) | +0.0178 | +0.0306 |
+| V50 | +0.0480 (+0.0486/+0.0443/+0.0510) | +0.0337 | +0.0490 |
+| V25s | +0.0338 (+0.0375/+0.0293/+0.0344) | +0.0266 | +0.0440 |
+| **V50s** | **+0.0568 (+0.0598/+0.0561/+0.0546)** | +0.0430 | +0.0599 |
+
+H<->A turnover recall (25-frame tolerance, pooled), ball visible / hidden at the true change, reference -> V50s:
+B'(33) 0.570 / 0.357 -> 0.640 / 0.380; B'(1) 0.568 / 0.343 -> 0.640 / 0.375; A 0.496 / 0.412 -> 0.518 / 0.453.
+Possessions predicted (true): B'(33) 7460 -> 7423 (9183); B'(1) 6966 -> 7037 (9183); A 6388 -> 5767 (7069), so on PFF
+the route still under-segments and a little more than before while spellF1 improves; spurious turnovers drop on B'(33)
+(2742 -> 2477). Aggregates in `reports/issue73_visible_emissions.json`.
+
+Verdict: V50s meets the unchanged rule (B'(33) +0.0568 >= +0.010, no seed below -0.003, B'(1) up, A up) and is
+ADOPTED: `visible_weight: 0.5`, `emission_scale: 0.8`. The synthetic SHA256 changes from `4224d1ca...` to
+`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644` (the synthetic run uses the committed models).
+Fallback to #72: `visible_weight: 0.0`, `emission_scale: 0.5`. The weight and scale were chosen on the same cells
+as the verdict, but the paired deltas are far above the threshold and positive on every seed and cell.
+
+*Release after #73.*  Command: `python scripts/generate_submission.py --data-dir data --team "Opus Operandi"`.  New submission SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b`, identical in two runs,
+`validate_submission.py` valid (Python 3.13.14, Windows 11).  Label-free aggregates on the provided match: 263 possessions (273 before #73), mean 12.9 s, `D` 45.5 % of the
+graded play frames (46.5 % by the KPI dashboard definition), H 62.6 % of alive frames; 4 264 frames differ from the #72 submission (2.7 % of the graded frames).  KPI alarms: sanity OK,
+blindness test OK (spellF1 0.751), format and SHA OK; the degraded-external KPI warns for the heuristic comparator only (0.271).  Public 5 minutes (pipeline check only, not used to choose
+anything): spellF1 0.700 [0.512, 0.887], macroF1 0.898.  Fallback chain: `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` (#72) with `visible_weight: 0.0`, `emission_scale: 0.5`;
+`cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b` (pre-#72) with `sequence_model.enabled: false`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
