@@ -181,6 +181,7 @@ sequence_model:
   turnover_threshold: 0.5
   turnover_blend: 0.5
   half_window: 5
+  crf_transition: false         # Issue #78 (C2): learned H<->A transitions replace the production ones (needs a CRF-trained model)
 
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:

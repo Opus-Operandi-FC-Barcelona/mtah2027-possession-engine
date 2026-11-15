@@ -520,6 +520,7 @@ def run_core(
             em = heuristic_emissions(fe, fps, cfg, st)
     seq_out = None      # Issue #72: sequence model (TCN) outputs (learned route only; off by default)
     seq_params = None
+    crf_ha = None       # Issue #78 (C2): learned H<->A log-transition scores of the sequence model (off by default)
     if learned is not None and getattr(specialists, "seq", None) is not None:
         from mtah2027.models.sequence_model import SequenceParams
 
@@ -531,7 +532,14 @@ def run_core(
 
                 sx, sn = carrier_swarm_columns(fe)
                 seq_x, seq_names = np.concatenate([seq_x, sx], axis=1), list(seq_names) + sn
-            seq_out = st.run("sequence_model", lambda: specialists.seq.predict(seq_x, seq_names, play_blocks))
+            if seq_params.use_crf_transition:
+                full = st.run("sequence_model", lambda: specialists.seq.predict_all(seq_x, seq_names, play_blocks))
+                if full is not None:
+                    seq_out, crf_ha = full[:2], full[2]
+                if crf_ha is None:
+                    st.skip("crf_transition", "the sequence model has no H<->A transition head")
+            else:
+                seq_out = st.run("sequence_model", lambda: specialists.seq.predict(seq_x, seq_names, play_blocks))
     if seq_out is not None and seq_params.use_emissions:
         from mtah2027.models.sequence_model import mix_hidden_emissions
 
@@ -595,7 +603,7 @@ def run_core(
             gate_probs = st.run("learned_gate", _gate)
 
     def _transitions(tp: TransitionParams | None = None):
-        return build_log_transitions(
+        lt = build_log_transitions(
             n, touch_score=bk.touch_score if bk is not None else None,
             d_home=bk.d_home[:, 0] if bk is not None else None,
             d_away=bk.d_away[:, 0] if bk is not None else None,
@@ -607,6 +615,11 @@ def run_core(
             spec_p_dead=em.p_dead if learned is not None else None,
             spec_speed=sig.speed_mean if (learned is not None and sig is not None) else None,
             transitions=fe.transitions, gate_probs=gate_probs)
+        if crf_ha is not None:        # Issue #78 (C2): learned H<->A transition scores
+            from mtah2027.models.sequence_crf import override_ha_transitions
+
+            lt = override_ha_transitions(lt, crf_ha)
+        return lt
 
     log_trans = st.run("transitions", _transitions)
     if log_trans is None:     # closed matrix: stay costs 0, every change is expensive

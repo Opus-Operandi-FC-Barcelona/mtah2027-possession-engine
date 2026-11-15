@@ -12,6 +12,11 @@ training matches for a dev check (never an evaluation cell).
 Issue #74 (both off by default, the #72 network is reproduced): ``--extra-dir`` appends the carrier / swarm
 columns of Issue #64 (``sequence_data.py build --ref-dir``) to the input; ``--boundary-weight`` multiplies the
 emission loss of the frames within ``--boundary-window`` frames of a true direct H<->A change.
+
+Issue #78 (off by default, the #72 network is reproduced): ``--crf c1`` trains the emission head with the
+negative log-likelihood of a linear-chain CRF (learned global 3x3 transition matrix, zero diagonal) plus
+``--crf-ce-weight`` times the per-frame cross-entropy; ``--crf c2`` also makes the H<->A transition scores a learned
+function of the TCN features at each frame (``-softplus(w . h_t + b)``, exported as ``w_ha`` / ``b_ha``).
 """
 # ruff: noqa: E501
 from __future__ import annotations
@@ -37,9 +42,56 @@ from mtah2027.models.sequence_model import SequenceModel, turnover_targets  # no
 DILATIONS = (1, 2, 4, 8, 16, 32, 64, 128)
 
 
+NEG = -1.0e4           # "minus infinity" of the log-semiring (finite: no NaN gradients)
+HA_BIAS_INIT = 6.0     # -softplus(6) = -6.0: the H<->A switch starts as expensive as the production occluded cost
+
+
+def crf_global(raw):
+    """Learned 3x3 transition matrix with a zero diagonal."""
+    return raw * (1.0 - torch.eye(3, device=raw.device))
+
+
+def crf_nll(unary, trans, y, valid):
+    """Mean (per valid frame) negative log-likelihood of a linear chain.
+
+    ``unary[B, T, 3]``, ``trans[B, T, 3, 3]`` (``trans[:, t, i, j]`` scores ``t-1 -> t``), ``y[B, T]`` and ``valid[B, T]``
+    (a prefix of every row: padding at the end).  The partition function is a log-semiring product of the
+    per-frame matrices ``M_t[i, j] = trans[t, i, j] + unary[t, j]`` reduced as a balanced tree (log2 T levels
+    instead of T sequential steps); padded frames are identity matrices.  ``numpy`` mirror: ``models.sequence_crf``.
+    """
+    b, t, _ = unary.shape
+    yy = y.clamp(max=2)
+    vm = valid.float()
+    gold = (unary.gather(-1, yy[..., None])[..., 0] * vm).sum(1)
+    if t > 1:
+        pair = trans[:, 1:].gather(-2, yy[:, :-1, None, None].expand(b, t - 1, 1, 3))[:, :, 0]
+        gold = gold + (pair.gather(-1, yy[:, 1:, None])[..., 0] * vm[:, 1:]).sum(1)
+    m = trans[:, 1:] + unary[:, 1:, None, :]                       # [B, T-1, 3, 3]
+    eye = torch.where(torch.eye(3, dtype=torch.bool, device=unary.device), 0.0, NEG)
+    m = torch.where(valid[:, 1:, None, None], m, eye.expand_as(m))
+    length = m.shape[1]
+    size = 1 << max(0, (length - 1).bit_length()) if length > 1 else 1
+    if size > length:
+        m = torch.cat([m, eye.expand(b, size - length, 3, 3)], dim=1)
+    while m.shape[1] > 1:
+        left, right = m[:, 0::2], m[:, 1::2]
+        m = torch.logsumexp(left[..., :, :, None] + right[..., None, :, :], dim=-2)
+    p = m[:, 0] if length >= 1 else eye.expand(b, 3, 3)
+    logz = torch.logsumexp(unary[:, 0, :, None] + p, dim=(-2, -1))
+    return ((logz - gold).sum() / vm.sum().clamp(min=1.0))
+
+
 class TCN(nn.Module):
-    def __init__(self, n_in: int, channels: int, dilations=DILATIONS, dropout: float = 0.1, in_drop: float = 0.1):
+    def __init__(self, n_in: int, channels: int, dilations=DILATIONS, dropout: float = 0.1, in_drop: float = 0.1,
+                 crf: str = "none"):
         super().__init__()
+        self.crf = crf
+        if crf != "none":
+            self.crf_raw = nn.Parameter(torch.full((3, 3), -6.0))
+        if crf == "c2":
+            self.ha = nn.Linear(channels, 2)
+            nn.init.zeros_(self.ha.weight)
+            nn.init.constant_(self.ha.bias, HA_BIAS_INIT)
         self.inp = nn.Linear(n_in, channels)
         self.c1 = nn.ModuleList([nn.Conv1d(channels, channels, 3, dilation=d, padding=d) for d in dilations])
         self.c2 = nn.ModuleList([nn.Linear(channels, channels) for _ in dilations])
@@ -48,12 +100,32 @@ class TCN(nn.Module):
         self.he = nn.Linear(channels, 3)
         self.ht = nn.Linear(channels, 3)
 
-    def forward(self, x):                       # x [B, T, F]
+    def trunk(self, x):                         # x [B, T, F]
         h = self.inp(self.in_drop(x))
         for c1, c2 in zip(self.c1, self.c2):
             r = F.relu(c1(h.transpose(1, 2))).transpose(1, 2)
             h = h + c2(self.drop(r))
+        return h
+
+    def forward(self, x):
+        h = self.trunk(x)
         return self.he(h), self.ht(h)
+
+    def forward_crf(self, x):
+        """Emission logits, turnover logits and the chain transitions ``[B, T, 3, 3]`` (C2: H<->A from the features)."""
+        h = self.trunk(x)
+        g = crf_global(self.crf_raw)
+        trans = g.expand(x.shape[0], x.shape[1], 3, 3)
+        if self.crf == "c2":
+            ha = -F.softplus(self.ha(h))                                   # [B, T, 2]
+            sel = torch.zeros(3, 3, device=x.device)
+            sel[0, 1] = 1.0
+            sel[1, 0] = 1.0
+            a = torch.zeros(x.shape[0], x.shape[1], 3, 3, device=x.device)
+            a[..., 0, 1] = ha[..., 0]
+            a[..., 1, 0] = ha[..., 1]
+            trans = trans * (1.0 - sel) + a
+        return self.he(h), self.ht(h), trans
 
     def export(self, mean, std, names, dilations) -> SequenceModel:
         def np_(t):
@@ -62,6 +134,11 @@ class TCN(nn.Module):
         w = {"mean": mean, "std": std, "w_in": np_(self.inp.weight).T, "b_in": np_(self.inp.bias),
              "w_e": np_(self.he.weight).T, "b_e": np_(self.he.bias),
              "w_t": np_(self.ht.weight).T, "b_t": np_(self.ht.bias)}
+        if self.crf != "none":
+            w["crf_trans"] = np_(crf_global(self.crf_raw))
+        if self.crf == "c2":
+            w["w_ha"] = np_(self.ha.weight).T
+            w["b_ha"] = np_(self.ha.bias)
         for i, (c1, c2) in enumerate(zip(self.c1, self.c2)):
             w[f"w1_{i}"] = np.stack([np_(c1.weight[:, :, k]).T for k in range(3)])
             w[f"b1_{i}"] = np_(c1.bias)
@@ -141,6 +218,8 @@ def main(argv=None) -> int:
     ap.add_argument("--turn-weight", type=float, default=6.0)
     ap.add_argument("--half-window", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--crf", choices=("none", "c1", "c2"), default="none", help="Issue #78: CRF NLL training")
+    ap.add_argument("--crf-ce-weight", type=float, default=0.5, help="Issue #78: weight of the per-frame CE")
     ap.add_argument("--extra-dir", default=None, help="Issue #74: carrier / swarm columns appended to the input")
     ap.add_argument("--boundary-weight", type=float, default=1.0, help="Issue #74: emission loss weight near a change")
     ap.add_argument("--boundary-window", type=int, default=75, help="frames either side of a true H<->A change")
@@ -162,7 +241,7 @@ def main(argv=None) -> int:
     mean = np.nan_to_num(np.nanmean(sub, axis=0)).astype(np.float32)
     std = np.nan_to_num(np.nanstd(sub, axis=0))
     std = np.where(std < 1e-6, 1.0, std).astype(np.float32)
-    model = TCN(len(names), args.channels).to(device)
+    model = TCN(len(names), args.channels, crf=args.crf).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps, pct_start=0.1)
     sample = windows_sampler(tr, mixture, args.window, rng)
@@ -171,9 +250,14 @@ def main(argv=None) -> int:
     for step in range(args.steps):
         model.train()
         x, y, t, nb = batch(sample, args.batch, args.window, mean, std, device, args.half_window, bw)
-        le, lt = model(x)
+        if args.crf != "none":
+            le, lt, trans = model.forward_crf(x)
+        else:
+            le, lt = model(x)
         m = y < 3
-        if bw:
+        if args.crf != "none":
+            loss_e = crf_nll(le, trans, y, m) + args.crf_ce_weight * F.cross_entropy(le[m], y[m])
+        elif bw:
             wgt = 1.0 + (args.boundary_weight - 1.0) * nb[m].float()
             loss_e = (F.cross_entropy(le[m], y[m], reduction="none") * wgt).mean()
         else:
@@ -191,7 +275,7 @@ def main(argv=None) -> int:
     sm = model.export(mean, std, names, DILATIONS)
     sm.meta.update({"steps": args.steps, "exclude": args.exclude, "mixture": list(args.mixture),
                     "seed": args.seed, "n_variants": len(tr),
-                    "extra": bool(extra_dir), "boundary_weight": args.boundary_weight})
+                    "extra": bool(extra_dir), "boundary_weight": args.boundary_weight, "crf": args.crf})
     sm.save(args.out)
     if va:
         sv = windows_sampler(va, {"pff": 1.0, "idsse33": 1.0, "idsse1": 1.0}, args.window,
