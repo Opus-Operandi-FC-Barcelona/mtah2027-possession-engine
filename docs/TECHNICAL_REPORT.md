@@ -1497,6 +1497,21 @@ so even a small simulated gain would not have justified enabling it.  `vision.en
 Reproduce: `python scripts/simulate_tracklet_gate_value.py run --world b33 --seeds 0 1 2 --models-root <lomo models> --out-dir D`
 (and `--world b1 --seeds 0`), then `agg --out-dir D`.
 
+## Milestone 11
+
+### Integration decision for the self-supervised ball detector (Issue #69; decision only, not adopted, nothing wired)
+
+Plan of #69: simulate the value of the #68 detector in B'(33) / B'(1) with its measured error profile (hard injection, tracklet filter of #66, soft
+evidence of #67) and wire it behind `vision.*` only if a variant met the adoption rule (B'(33) >= +0.010, no seed below -0.003, B'(1) and A guards).
+
+Decision: **not adopted, no code and no change to the submission route.**  The measured profile of the fine-tuned detector (#68) has the top
+candidate within 0.3 m of the tracking ball in only ~15 % of the frames (about 50 % within 1 m, 16 % beyond 10 m), while the oracle ceiling of #67 and the
+simulation of #63 / #66 need about 0.2 m accuracy before the injected ball helps more than it hurts; the detector confidence is uninformative (the
+share of correct candidates does not rise with the confidence gate), so a gate cannot select the good detections.  Hard injection at this accuracy
+was already negative in the #63 / #66 simulations, and the tracklet filter of #66 discards most of the points.  Running the simulation would only
+re-confirm a value known to be below the rule, and the real run (GPU decoding of the tactical video) adds cost, an AGPL-3.0 dependency
+(ultralytics) and a model file that cannot be committed.  `vision.enabled` stays `false`; the sequence model of #72 is the milestone's adopted change.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

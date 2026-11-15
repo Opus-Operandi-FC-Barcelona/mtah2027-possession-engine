@@ -98,3 +98,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #64 · wave-5 · Micro-geometría 22v22 de presión y portador implícito (no adoptado, desactivado) · `feat/issue-64-carrier-swarm-features`
 - [x] COMPLETADA · #65 · wave-5 · Prior de fase de Smart Tagging en H vs A con balón oculto (no adoptado, desactivado) · `feat/issue-65-hidden-phase-prior`
 - [x] COMPLETADA · #66 · wave-5 · Filtro por tracklets sobre sv_ball640 (simulado; no adoptado, desactivado) · `feat/issue-66-tracklet-gated-vision`
+- [x] COMPLETADA · #69 · wave-5 · Integración del detector auto-supervisado: decisión de no adoptar (precisión ~15 % a 0.3 m frente a ~0.2 m necesarios; sin cambios en la ruta) · `feat/issue-69-detector-decision`
