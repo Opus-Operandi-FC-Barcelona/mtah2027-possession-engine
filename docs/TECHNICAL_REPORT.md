@@ -2008,6 +2008,29 @@ are unchanged (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644
 --seeds 0 --variants ship,D1,D05,X,S --models-root <specialist models> --seq-root <net dirs> --out-dir <dir>` (several
 `--seq-root` = ensemble; `--extra "sequence_model.visible_weight=0.5"` for other mixing), then `report --out-dirs ...`.
 
+### Sequence model with a linear-chain CRF (Issue #78; not adopted, OFF)
+
+The #72 TCN is trained with a per-frame cross-entropy and the decoder adds hand-set transitions afterwards. #78 puts a
+linear-chain CRF on top of the TCN and trains it end to end with the sequence negative log-likelihood (plus the per-frame
+cross-entropy, weight 0.5; `scripts/train_sequence.py --crf c1|c2`, log-semiring tree reduction of the forward algorithm).
+C1 learns a global 3x3 transition matrix and its unaries (log-softmax) replace the TCN emissions in the production V50s mix;
+C2 additionally learns a feature-conditioned H<->A transition (`-softplus(w.h_t + b)`) that replaces the final H->A / A->H
+entries of `log_trans` inside the play blocks (`sequence_model.crf_transition`, OFF; `src/mtah2027/models/sequence_crf.py`
+holds the NumPy chain score, log-partition, NLL and the transition override). Same data, LOMO folds, #71 mixture,
+architecture and inputs as #72, training seed 0, 6000 steps. Reference: production as it is (the #72 two-seed ensemble with
+V50s; the B'(33) seed-0 cell re-run with the current code gives 0.7449, identical to #73). External matches only.
+
+Selection on B'(33) eval seed 0 (comment on the issue before any held-out score): C1 0.7224 (-0.0224), C2 0.7140 (-0.0309);
+C1 selected. Held-out: C1 B'(33) seeds 1 / 2 -0.0262 / -0.0163 (3-seed mean 0.7174, -0.0216), B'(1) seeds 1 / 2
+-0.0246 / -0.0257. Possessions predicted (true): B'(33) 7232 vs 7423 (9183); H<->A recall visible / hidden on B'(33)
+0.610 / 0.290 vs 0.640 / 0.380. The learned transitions are stickier (H<->A about -4.2) and, added to the decoder's own
+switch cost, lower the number of possessions further: the opposite of what was needed.
+
+Verdict: NOT ADOPTED (the main criterion fails and both held-out seeds are below -0.003, so the A cell was not scored).
+The code stays in the repository OFF by default; production, `models/sequence_tcn.json`, the configuration and the
+synthetic SHA256 are unchanged. Aggregates in `reports/issue78_sequence_crf.json`. Future work: train the CRF jointly with
+the decoder's transition structure (or decode with the CRF transitions alone) so that switch costs are not counted twice.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers

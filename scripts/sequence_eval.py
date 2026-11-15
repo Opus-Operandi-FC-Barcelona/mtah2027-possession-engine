@@ -58,6 +58,9 @@ VARIANTS: dict[str, dict | None] = {
              SEQ + "visible_weight": 0.25, SEQ + "emission_scale": 0.8},
     "V50s": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
              SEQ + "visible_weight": 0.5, SEQ + "emission_scale": 0.8},
+    # Issue #78: the V50s mix with CRF-trained networks (C1: unaries only) and, for C2, the learned H<->A transitions
+    "C2": {SEQ + "enabled": True, SEQ + "mode": "emissions", SEQ + "emission_weight": 1.0,
+           SEQ + "visible_weight": 0.5, SEQ + "emission_scale": 0.8, SEQ + "crf_transition": True},
     "E50+T-max": {SEQ + "enabled": True, SEQ + "mode": "both", SEQ + "emission_weight": 0.5,
                   SEQ + "turnover_gate_mode": "max"},
 }
@@ -93,7 +96,7 @@ def seq_path(root: Path, cell: dict) -> Path:
     return root / "full.npz"
 
 
-def run_cell(cell, models_root, seq_roots, config_raw, variants):
+def run_cell(cell, models_root, seq_roots, config_raw, variants, save_emissions: Path | None = None):
     from mtah2027.models.sequence_model import SequenceEnsemble, SequenceModel
     from mtah2027.pipeline import run_core
 
@@ -106,13 +109,26 @@ def run_cell(cell, models_root, seq_roots, config_raw, variants):
     t0 = time.perf_counter()
     cache = ds.CellCache(ball)
     cache.install()
+    saved = False
     try:
         for name in variants:
             real = name.partition("=")[2] or name          # Issue #74: "R64=V50s" stores V50s under another name
             cfg = ds.apply_config(config_raw, VARIANTS[real])
             spec.seq = None if real == "base" else seq
+            keep = save_emissions is not None and not saved and real != "base"
+            if keep:       # Issue #78: cache the mixed emissions and the network outputs of the cell (first variant)
+                spec.seq = _Recorder(seq)
             core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
-                            log=lambda m: None, specialists=spec, durations=spec.durations)
+                            log=lambda m: None, specialists=spec, durations=spec.durations, keep_features=keep)
+            if keep:
+                rec = spec.seq
+                arrays = {"log_probs": np.asarray(core.features["log_probs"], np.float32), "visible": visible,
+                          "seq_prob": rec.out[0].astype(np.float32)}
+                if rec.out[2] is not None:
+                    arrays["crf_ha"] = rec.out[2].astype(np.float32)
+                np.savez_compressed(Path(save_emissions) / f"{ds.cell_id(cell)}.npz", **arrays)
+                spec.seq = seq
+                saved = True
             row = score(gt, core.codes)
             row.pop("lat_by_type", None)
             row["turn"] = turnover_strata(gt, core.codes, ~visible)
@@ -124,6 +140,23 @@ def run_cell(cell, models_root, seq_roots, config_raw, variants):
     return out
 
 
+class _Recorder:
+    """Wraps a sequence model / ensemble and keeps the last ``predict_all`` output (Issue #78 emission cache)."""
+
+    def __init__(self, model):
+        self.model, self.out = model, None
+
+    def extra_names(self):
+        return self.model.extra_names()
+
+    def predict(self, x, names, blocks):
+        return self.predict_all(x, names, blocks)[:2]
+
+    def predict_all(self, x, names, blocks):
+        self.out = self.model.predict_all(x, names, blocks)
+        return self.out
+
+
 def cmd_run(a) -> int:
     import yaml
 
@@ -133,6 +166,8 @@ def cmd_run(a) -> int:
     cells = [c for i, c in enumerate(cells) if i % int(m) == int(k)]
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if a.save_emissions:
+        Path(a.save_emissions).mkdir(parents=True, exist_ok=True)
     names = a.variants.split(",") if a.variants else list(VARIANTS)
     for cell in cells:
         path = out_dir / f"{ds.cell_id(cell)}.json"
@@ -140,7 +175,8 @@ def cmd_run(a) -> int:
         todo = [n for n in names if n.partition("=")[0] not in have["results"]]
         if not todo:
             continue
-        res = run_cell(cell, Path(a.models_root), [Path(r) for r in a.seq_root], config_raw, todo)
+        res = run_cell(cell, Path(a.models_root), [Path(r) for r in a.seq_root], config_raw, todo,
+                       Path(a.save_emissions) if a.save_emissions else None)
         res["results"] = {**have["results"], **res["results"]}
         path.write_text(json.dumps(res), encoding="utf-8")
         print(f"{ds.cell_id(cell)}: {len(todo)} variants in {res['seconds']} s", flush=True)
@@ -205,6 +241,7 @@ def main(argv=None) -> int:
     r.add_argument("--out-dir", required=True)
     r.add_argument("--bench-dir", default=str(ds.DEFAULT_BENCH))
     r.add_argument("--shard", default="0/1")
+    r.add_argument("--save-emissions", default=None, help="Issue #78: directory for the per-cell emission cache")
     r.add_argument("--variants", default=None, help="comma-separated subset (default: the whole grid); "
                    "NAME=VARIANT runs VARIANT's configuration and stores it as NAME (Issue #74)")
     g = sub.add_parser("agg")

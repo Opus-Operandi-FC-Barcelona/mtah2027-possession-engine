@@ -1,0 +1,32 @@
+{
+ "issue": 78,
+ "title": "Sequence model with a linear-chain CRF trained on the sequence likelihood",
+ "data": "external matches only (IDSSE 7-match LOMO B'(33), B'(1)); A not scored because the main criterion failed",
+ "reference": "production V50s (#72 two-seed ensemble); B'(33) seed-0 re-run 0.7449",
+ "selection_b33_seed0": {
+  "V50s": 0.7449,
+  "C1": 0.7224,
+  "C2": 0.714,
+  "selected": "C1"
+ },
+ "C1_heldout_delta": {
+  "b33": {
+   "1": -0.0262,
+   "2": -0.0163,
+   "mean_3_seeds": -0.0216
+  },
+  "b1": {
+   "1": -0.0246,
+   "2": -0.0257
+  }
+ },
+ "possessions_b33_pred_true": {
+  "V50s": "7423/9183",
+  "C1": "7232/9183"
+ },
+ "turnover_recall_b33_visible_hidden": {
+  "V50s": "0.640/0.380",
+  "C1": "0.610/0.290"
+ },
+ "verdict": "NOT ADOPTED"
+}
