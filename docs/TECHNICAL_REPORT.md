@@ -1964,6 +1964,50 @@ second seed made the gain more even across eval seeds but did not move the mean 
 Taken together with #74, the boundary-weighted loss is a consistent but small gain (about +0.009 on B'(33), larger on
 B'(1) and PFF) that reduces the under-segmentation; it is listed as future work.
 
+### Decoder modules revisited with the sequence-model emissions (Issue #77)
+
+Three decoder modules were rejected under the LightGBM emissions and are still in the code, OFF: the explicit-duration
+(semi-Markov) decoder (#34), decoding by expected spellF1 (#62) and the boundary snap to the touch / restart frame (#61).
+The V50s route under-segments (B'(33) 7423 possessions predicted vs 9183 true, PFF 5767 vs 7069), which is what a duration
+prior and an expected-spellF1 decoder act on. Preregistered variants on top of production V50s (existing switches, nothing else
+changes): D1 (`duration.enabled`, weight 1.0), D05 (weight 0.5), X (`expected_spellf1.enabled`, k 100, temperature 1.0, seed 0),
+S (`boundary_snap.enabled`), D-best + S and X + S. Selection on B'(33) eval seed 0 only; adoption on held-out eval seeds 1-2
+(mean B'(33) delta >= +0.010, no seed < -0.003; guards B'(1) seeds 1-2 drop <= 0.010, A (first 20 PFF) drop <= 0.030).
+External matches only. `scripts/decoder_modules_eval.py` is adapted from `scripts/decoder_retune_eval.py` of #75 (memoised
+emissions per match, decoder re-run per variant, generalised to arbitrary `section.key` overrides).
+
+*Where the switches are read.* `duration`, `expected_spellf1` and `boundary_snap` are not overridden in
+`route_overrides.specialists` (it holds only `transition_matrix`, `spell_optimizer`, `specialist_fusion`), so the top-level
+sections are what the shipped learned route reads; the variants write there and every one of them changes the decoded labels
+(hash differs from `ship` in 7/7 seed-0 cells for D1, D05, S, D05S, XS; 3/7 for X, whose sampled-path consensus often returns
+the Viterbi path). The duration tables exist in the stored specialists (fitted by #34's `fit_from_bench` from the external
+training labels, leaving out the held-out match); nothing was refit. The shipped route reproduces the #73 seed-0 score exactly
+(B'(33) seed 0 0.7448763).
+
+*Selection (B'(33) seed 0 spellF1).* ship 0.7449, D1 0.7446, D05 0.7448, X 0.7438, **S 0.7451**, D05S 0.7447, XS 0.7447
+(D-best = D05). Predicted possessions (B'(33) seed 0 only): ship 2480, D1 2517, D05 2498, X 2492, S 2480.
+The duration prior and the expected-spellF1 decoder add 12-37 possessions but spellF1 does not follow: the extra possessions
+are not true ones. The snap moves boundaries only and leaves the count unchanged.
+
+*Held-out.* Selected S vs `ship`:
+
+| | B'(33) seed 1 / 2 | B'(33) mean (seeds 1-2) | B'(33) 3-seed mean | B'(1) seeds 1-2 | A (PFF) |
+|---|---|---|---|---|---|
+| delta spellF1 | -0.0003 / -0.0011 | **-0.0007** | -0.0004 | -0.0002 | -0.0007 |
+
+Absolute (S / `ship`): B'(33) seeds 1-2 0.7355 / 0.7362, B'(1) 0.6844 / 0.6846, A 0.6590 / 0.6597. Possessions predicted
+(true), S and `ship` identical: B'(33) (seeds 0-2) 7423 (9183), B'(1) 4687 (6122), A 5767 (7069). Spurious turnovers (25 frames),
+S vs `ship`: B'(33) 2482 vs 2477, B'(1) 1743 vs 1736, A 2495 vs 2482. H<->A recall (visible / hidden): B'(33) 0.639 / 0.380 vs
+0.640 / 0.380, B'(1) 0.627 / 0.377 vs 0.629 / 0.378, A 0.517 / 0.450 vs 0.518 / 0.453. Aggregates in
+`reports/issue77_decoder_modules.json`.
+
+Verdict: NOT ADOPTED. The mean B'(33) delta on the held-out seeds (-0.0007) is far below +0.010 (guards pass, no seed below
+-0.003). With the V50s emissions the three modules neither recover the missing possessions nor sharpen the boundaries (the
+snap is neutral: the network's boundaries are already at the touch). The defaults, the shipped route and the synthetic SHA256
+are unchanged (`b89670c5841a4282b3bc148d8244eb405cf64d1435d6a07be8eed196fa17a644`, two runs identical). To re-run with other sequence nets (e.g. #76 / #78): `python scripts/decoder_modules_eval.py run --world b33
+--seeds 0 --variants ship,D1,D05,X,S --models-root <specialist models> --seq-root <net dirs> --out-dir <dir>` (several
+`--seq-root` = ensemble; `--extra "sequence_model.visible_weight=0.5"` for other mixing), then `report --out-dirs ...`.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
