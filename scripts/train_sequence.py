@@ -17,6 +17,12 @@ Issue #78 (off by default, the #72 network is reproduced): ``--crf c1`` trains t
 negative log-likelihood of a linear-chain CRF (learned global 3x3 transition matrix, zero diagonal) plus
 ``--crf-ce-weight`` times the per-frame cross-entropy; ``--crf c2`` also makes the H<->A transition scores a learned
 function of the TCN features at each frame (``-softplus(w . h_t + b)``, exported as ``w_ha`` / ``b_ha``).
+
+Issue #81 (off by default, the #72 network is reproduced): ``--boundary-loss W`` adds a single-channel boundary head on
+the TCN hidden state (Gaussian-smoothed target, sigma ``--boundary-sigma`` frames, around the true direct H<->A
+changes; binary cross-entropy) used only as a training loss (not exported); ``--segment-loss W`` adds a CDF-based
+segment loss (arXiv 2604.01859): inside sliding windows the cumulative predicted class distribution is compared
+with the cumulative true one (L1 over time).
 """
 # ruff: noqa: E501
 from __future__ import annotations
@@ -81,9 +87,63 @@ def crf_nll(unary, trans, y, valid):
     return ((logz - gold).sum() / vm.sum().clamp(min=1.0))
 
 
+def boundary_target(y, sigma: float = 5.0, pos_radius: int | None = None):
+    """Gaussian-smoothed indicator of the true direct H<->A changes, ``[B, T]`` in ``[0, 1]`` (max over events).
+
+    A change is a frame ``t`` with ``y[t-1]`` and ``y[t]`` both in {H, A} and different (a ``D`` or an invalid
+    frame in between is not a change, as in ``turnover_targets``).
+    """
+    b, t = y.shape
+    ev = torch.zeros(b, t, device=y.device)
+    if t > 1:
+        ev[:, 1:] = ((y[:, :-1] < 2) & (y[:, 1:] < 2) & (y[:, :-1] != y[:, 1:])).float()
+    r = int(pos_radius if pos_radius is not None else max(1, round(3 * sigma)))
+    out = torch.zeros_like(ev)
+    for k in range(-r, r + 1):
+        w = float(np.exp(-0.5 * (k / sigma) ** 2))
+        sh = torch.roll(ev, shifts=k, dims=1)
+        if k > 0:
+            sh[:, :k] = 0.0
+        elif k < 0:
+            sh[:, k:] = 0.0
+        out = torch.maximum(out, sh * w)
+    return out
+
+
+def boundary_bce(logit, target, valid, pos_weight: float = 5.0):
+    """Mean (over valid frames) binary cross-entropy of the boundary head against the smoothed target."""
+    vm = valid.float()
+    pw = torch.tensor(pos_weight, device=logit.device)
+    l_ = F.binary_cross_entropy_with_logits(logit, target, pos_weight=pw, reduction="none")
+    return (l_ * vm).sum() / vm.sum().clamp(min=1.0)
+
+
+def segment_cdf_loss(logits, y, valid, win: int = 128, stride: int = 64, scale: float = 25.0):
+    """CDF-based segment loss: L1 between the cumulative predicted and true class distributions in sliding windows.
+
+    ``logits[B, T, 3]``, ``y[B, T]``, ``valid[B, T]``.  Within each window the cumulative sum (over time) of
+    ``softmax(logits) - onehot(y)`` is taken per class (invalid frames contribute nothing), its absolute value is
+    averaged over the window and divided by ``scale`` frames, so that a boundary placed ``d`` frames away costs
+    about ``d / scale`` inside the windows containing it.  Windows with fewer than ``win // 2`` valid frames are dropped.
+    """
+    b, t, _ = logits.shape
+    p = torch.softmax(logits, dim=-1)
+    oh = F.one_hot(y.clamp(max=2), 3).float()
+    vm = valid.float()[..., None]
+    diff = (p - oh) * vm                                               # [B, T, 3]
+    if t < win:
+        win, stride = t, t
+    dw = diff.unfold(1, win, stride)                                   # [B, W, 3, win]
+    vw = vm.unfold(1, win, stride)[..., 0, :]                          # [B, W, win]
+    cum = dw.cumsum(-1)
+    err = cum.abs().mean(-1).mean(-1) / scale                          # [B, W]
+    ok = (vw.sum(-1) >= win // 2).float()
+    return (err * ok).sum() / ok.sum().clamp(min=1.0)
+
+
 class TCN(nn.Module):
     def __init__(self, n_in: int, channels: int, dilations=DILATIONS, dropout: float = 0.1, in_drop: float = 0.1,
-                 crf: str = "none"):
+                 crf: str = "none", boundary_head: bool = False):
         super().__init__()
         self.crf = crf
         if crf != "none":
@@ -99,6 +159,11 @@ class TCN(nn.Module):
         self.in_drop = nn.Dropout(in_drop)
         self.he = nn.Linear(channels, 3)
         self.ht = nn.Linear(channels, 3)
+        if boundary_head:                       # Issue #81: training-only boundary head (created last: default RNG unchanged)
+            self.hbd = nn.Linear(channels, 1)
+
+    def boundary_logits(self, h):
+        return self.hbd(h)[..., 0]
 
     def trunk(self, x):                         # x [B, T, F]
         h = self.inp(self.in_drop(x))
@@ -220,6 +285,9 @@ def main(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--crf", choices=("none", "c1", "c2"), default="none", help="Issue #78: CRF NLL training")
     ap.add_argument("--crf-ce-weight", type=float, default=0.5, help="Issue #78: weight of the per-frame CE")
+    ap.add_argument("--boundary-loss", type=float, default=0.0, help="Issue #81: weight of the boundary-regression head loss")
+    ap.add_argument("--boundary-sigma", type=float, default=5.0, help="Issue #81: Gaussian sigma (frames) of the boundary target")
+    ap.add_argument("--segment-loss", type=float, default=0.0, help="Issue #81: weight of the CDF segment-level loss")
     ap.add_argument("--extra-dir", default=None, help="Issue #74: carrier / swarm columns appended to the input")
     ap.add_argument("--boundary-weight", type=float, default=1.0, help="Issue #74: emission loss weight near a change")
     ap.add_argument("--boundary-window", type=int, default=75, help="frames either side of a true H<->A change")
@@ -241,7 +309,7 @@ def main(argv=None) -> int:
     mean = np.nan_to_num(np.nanmean(sub, axis=0)).astype(np.float32)
     std = np.nan_to_num(np.nanstd(sub, axis=0))
     std = np.where(std < 1e-6, 1.0, std).astype(np.float32)
-    model = TCN(len(names), args.channels, crf=args.crf).to(device)
+    model = TCN(len(names), args.channels, crf=args.crf, boundary_head=args.boundary_loss > 0).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps, pct_start=0.1)
     sample = windows_sampler(tr, mixture, args.window, rng)
@@ -250,7 +318,12 @@ def main(argv=None) -> int:
     for step in range(args.steps):
         model.train()
         x, y, t, nb = batch(sample, args.batch, args.window, mean, std, device, args.half_window, bw)
-        if args.crf != "none":
+        lb = None
+        if args.boundary_loss > 0:
+            h = model.trunk(x)
+            le, lt = model.he(h), model.ht(h)
+            lb = model.boundary_logits(h)
+        elif args.crf != "none":
             le, lt, trans = model.forward_crf(x)
         else:
             le, lt = model(x)
@@ -264,6 +337,10 @@ def main(argv=None) -> int:
             loss_e = F.cross_entropy(le[m], y[m])
         loss_t = F.cross_entropy(lt[m], t[m], weight=tw)
         loss = loss_e + loss_t
+        if lb is not None:
+            loss = loss + args.boundary_loss * boundary_bce(lb, boundary_target(y, args.boundary_sigma), m)
+        if args.segment_loss > 0:
+            loss = loss + args.segment_loss * segment_cdf_loss(le, y, m)
         opt.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -275,7 +352,8 @@ def main(argv=None) -> int:
     sm = model.export(mean, std, names, DILATIONS)
     sm.meta.update({"steps": args.steps, "exclude": args.exclude, "mixture": list(args.mixture),
                     "seed": args.seed, "n_variants": len(tr),
-                    "extra": bool(extra_dir), "boundary_weight": args.boundary_weight, "crf": args.crf})
+                    "extra": bool(extra_dir), "boundary_weight": args.boundary_weight, "crf": args.crf,
+                    "boundary_loss": args.boundary_loss, "segment_loss": args.segment_loss})
     sm.save(args.out)
     if va:
         sv = windows_sampler(va, {"pff": 1.0, "idsse33": 1.0, "idsse1": 1.0}, args.window,
