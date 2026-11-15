@@ -166,6 +166,21 @@ specialist_c:
   calib_folds: 0                # the temperature fitted on the first model was 0.99: no calibration
   pff_weight: 0.5
 
+# Issue #72 -- sequence model (TCN over the specialists' feature matrix); trained on external matches only
+# (scripts/train_sequence.py), NumPy inference from models/sequence_tcn.json (mean softmax of two training seeds).
+# ADOPTED (E100): hidden-ball emissions, weight 1.0.  Fallback = the pre-#72 route: enabled: false (SHA256 cac8927c...).
+# mode: emissions (hidden-ball frames only) | turnover (opens the H<->A transition through #57's gate) | both.
+sequence_model:
+  enabled: true
+  mode: "emissions"
+  emission_weight: 1.0
+  emission_scale: 0.5
+  prob_floor: 0.001
+  turnover_gate_mode: "max"     # hard | max | blend
+  turnover_threshold: 0.5
+  turnover_blend: 0.5
+  half_window: 5
+
 # Issue #24 -- Viterbi decoding of each graded block.
 viterbi:
   log_init: [-0.6931, -0.6931, -3.0]   # log-prior of the first frame of a block: H, A, D

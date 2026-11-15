@@ -1732,6 +1732,95 @@ on two criteria).  Defaults, `configs/default.yaml`, `models/` and the synthetic
 rule for the future: a candidate that gains in PFF and loses in B'(33) is worth a re-run only if the weighted M moves by >= +0.010; the
 weight of PFF in M is estimated, not known, and BAR-ATH has no labels to check it against.
 
+### Sequence model (Issue #72; ADOPTED: E100 hidden-ball emissions, two-seed ensemble, ON by default)
+
+`src/mtah2027/models/sequence_model.py` (NumPy inference, `sequence_model` config section, `SpecialistSet.seq`), `scripts/sequence_data.py`
+(dense training sequences), `scripts/train_sequence.py` (PyTorch, GPU venv), `scripts/sequence_eval.py` (cells + turnover recall),
+`reports/issue72_sequence_model.json` (aggregates), `tests/test_72_sequence_model.py`.  Nothing from BAR-ATH was used to train, tune or select.
+
+*Model.*  Non-causal dilated TCN (8 residual blocks, dilations 1..128, 64 channels, receptive field about +-20 s, 0.2 M parameters) over the
+per-frame feature matrix of the specialists (the columns without the hand-made `ctx:` windows), with two heads: H/A/D emission logits and a
+turnover head (none / H->A / A->H within +-5 frames, the targets of Specialist C).  Trained with window sampling (2048 frames, 6000 steps, about
+3 minutes on an RTX 3060) on degraded external matches: IDSSE with the calibrated degrader at `dead_affinity` 33 (2 training seeds) and 1 (1 seed),
+home/away swapped copies, and PFF matches 20..55 (never in the A cells or the 8 unseen), sampled with the #71 world mixture (0.32 / 0.20 / 0.48).
+Leave-one-match-out for the 7 IDSSE cells; one all-data model for A.  Training seeds (101..) are never evaluation seeds.  The weights are exported
+to `.npz` and run in NumPy (parity with torch 1e-6); the run-time pipeline needs no torch.  Two modes, both off (`sequence_model.enabled: false`):
+`emissions` (hidden-ball frames only: `log p = (1 - w) log p_prod + w * 0.5 * log p_seq`) and `turnover` (the turnover head replaces the touch rule as
+the H<->A opening through the #57 gate: `hard` / `max` / `blend`).
+
+*Preregistration* (comment on #72, before any score): fixed grid E50, E100 (emission weight 0.5 / 1.0), T-hard, T-max, T-blend, E50+T-max; variant
+chosen on B'(33) seed 0 only; rule B'(33) >= +0.010 with no seed below -0.003, B'(1) not down by more than 0.010, A not down by more than 0.030.
+
+*Result* (production re-run in the same cells: 0.6693 / 0.6017 / 0.5263; spellF1, mean over 7 matches; delta per eval seed 0 / 1 / 2):
+
+| variant | B'(33) | delta B'(33) (seeds) | B'(1) | delta B'(1) | A (20 PFF) | delta A |
+|---|---|---|---|---|---|---|
+| production | 0.6693 | - | 0.6017 | - | 0.5263 | - |
+| E50 | 0.6788 | +0.0095 (+0.0102 / +0.0089 / +0.0094) | 0.6267 | +0.0250 | 0.5678 | +0.0415 |
+| **E100** | **0.6799** | **+0.0106 (+0.0118 / +0.0087 / +0.0113)** | 0.6389 | +0.0372 | 0.5929 | +0.0666 |
+| T-hard | 0.6738 | +0.0044 (+0.0021 / +0.0037 / +0.0074) | 0.6043 | +0.0026 | 0.5436 | +0.0173 |
+| T-max | 0.6701 | +0.0008 | 0.6018 | +0.0001 | 0.5300 | +0.0038 |
+| T-blend | 0.6713 | +0.0020 | 0.6019 | +0.0002 | 0.5344 | +0.0082 |
+| E50+T-max | 0.6797 | +0.0104 (+0.0113 / +0.0092 / +0.0106) | 0.6278 | +0.0261 | 0.5719 | +0.0457 |
+
+Second training seed of the networks (E50 / E100 only, same cells): E100 B'(33) 0.6814 (+0.0121; +0.0114 / +0.0124 / +0.0126), B'(1) +0.0383, A +0.0736;
+E50 +0.0087 / +0.0269 / +0.0420.  macroF1 moves the same way (E100: +0.0055 B'(33), +0.0167 B'(1), +0.0175 A).
+
+*Turnover recall* (true direct H<->A changes matched by a predicted change of the same direction within 25 frames, pooled over cells; the stratum is the
+ball visibility at the true change; predicted changes in brackets):
+
+| variant | B'(33) visible | B'(33) hidden | B'(1) visible | B'(1) hidden | A visible | A hidden |
+|---|---|---|---|---|---|---|
+| production | 0.569 (6297) | 0.231 | 0.564 (5485) | 0.227 | 0.461 (4976) | 0.288 |
+| E100 | 0.570 (6539) | 0.348 | 0.568 (6051) | 0.344 | 0.495 (5499) | 0.407 |
+| T-hard | 0.565 (6246) | 0.259 | 0.555 (5489) | 0.253 | 0.460 (4860) | 0.324 |
+| T-max | 0.571 (6346) | 0.249 | 0.563 (5537) | 0.243 | 0.469 (5098) | 0.310 |
+
+Possessions predicted / true (B'(33)): production 7342 / 9183, E100 7481, T-hard 7286.
+
+*Reading.*  The sequence model works where the hidden-ball emissions are the problem: with the learned emissions on hidden frames, hidden-frame turnover
+recall rises from 0.23 to 0.35 (B' worlds) and from 0.29 to 0.41 (real occlusions) and the route predicts more possessions (7481 vs 7342 of 9183).  The
+second mode, the detector that opens the H<->A transition on all frames, does not reach the visible-ball turnovers (recall 0.57 whatever the gate),
+so the infra-segmentation of the visible frames found in #67 is not fixed by it; its small gains (T-hard +0.0044 B'(33), +0.0173 A) are below the rule.
+The variant selected on seed 0 of B'(33) is E100 (+0.0118).
+
+*Verdict.*  E100 meets the preregistered rule on both training seeds (B'(33) +0.0106 / +0.0121 with every eval seed above +0.0087, B'(1) up, A up), by a
+small margin on B'(33) (the rule is +0.010) and with the integration weight chosen on the same cells as the verdict (a fixed 6-variant grid, selection on
+seed 0).  It stays OFF in this branch because enabling it changes the default pipeline (synthetic SHA256) and needs a trained model file for BAR-ATH
+(an all-data network, about 1 MB `.npz`) committed to `models/`; that step, and the choice of the production training seed(s), is left to the owner.
+Synthetic SHA256 of the default route is unchanged (`2a31a913...`).
+
+Reproduce (GPU venv for training, the main venv for the rest): `python scripts/sequence_data.py build --out-dir D`, `python scripts/train_sequence.py --data-dir D
+--out M/lomo/<match>.npz --exclude <match> --steps 6000` (and `--out M/full.npz` without `--exclude`), `python scripts/sequence_eval.py run --world b33|b1|pff
+--seeds 0 1 2 --models-root <lomo models of #44> --seq-root M --out-dir R`, then `agg --out-dirs R/b33 R/b1 R/pff`.
+
+*Adoption (production model).*  Owner decision after the evaluation above.  Preregistered on #72 before any ensemble score existed: the production
+model is the mean of the softmax probabilities of the training-seed-0 and training-seed-1 all-data models if the ensemble meets the same rule on
+every eval seed, else the seed-0 model alone.  Same cells (7 IDSSE leave-one-match-out matches at `dead_affinity` 33 / 1, eval seeds 0/1/2; A = first
+20 PFF matches), E100, ensemble of the two leave-one-match-out models of each cell:
+
+| variant | B'(33) delta (seeds 0/1/2) | B'(1) delta | A delta |
+|---|---|---|---|
+| production route | 0.6693 | 0.6017 | 0.5263 |
+| E100 seed-0 model (float32 run) | +0.0106 (+0.0118/+0.0087/+0.0113) | +0.0372 | +0.0666 |
+| E100 seed-0 model (float64 inference of the shipped loader) | +0.0106 (identical) | +0.0372 | +0.0666 |
+| E100 seed-1 model | +0.0121 (+0.0114/+0.0124/+0.0126) | +0.0383 | +0.0736 |
+| **E100 ensemble (seeds 0 + 1), shipped** | **+0.0130 (+0.0142/+0.0114/+0.0133)** | **+0.0394** | **+0.0735** |
+
+The ensemble meets the rule on every eval seed (B'(33) >= +0.010, none below -0.003, B'(1) and A up), so the ensemble is the production model.  The
+weight and the variant were chosen on the same external cells (thin margin); BAR-ATH was not used for any choice.  `models/sequence_tcn.json`
+(3.4 MB, JSON, float32 weights stored as shortest-repr decimals so loading returns the exact trained values; metadata: seeds, data, variant) is trained on
+all external data (no match left out).  `sequence_model.enabled: true, mode: emissions, emission_weight: 1.0` in `configs/default.yaml`;
+`resolve_specialists` attaches the file (logged and skipped if absent or unreadable, then the route is the pre-#72 one).
+
+*Cross-machine determinism.*  Inference is pure NumPy in float64 on the exact float32 weights, the emission and turnover probabilities of every member
+are rounded to 6 decimals, averaged, rounded again, and the mixed hidden-ball `log_probs` are rounded to 6 decimals like the rest of the pipeline, so BLAS
+differences (~1e-12) cannot reach the decoder (test in `tests/test_72_sequence_model.py`).
+
+*Fallback.*  The submission produced before #72 (SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) is reproduced exactly with
+`sequence_model.enabled: false` (the pre-#72 route; flag off in `configs/default.yaml` or in a copy passed through `--config`).  The synthetic
+SHA256 changes from `2a31a913...` to `4224d1ca7c5d300d3637a5f2439ba692a4e951de002e170865714d3c6ed8bf3d` because the synthetic run uses the committed specialists.
+
 ## 6. Limitations (honest list)
 
 * **Ball occlusions** (41% of graded frames) remain the largest source of lost spellF1: Specialist B recovers
