@@ -101,3 +101,4 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #67 · wave-5 · Techo oráculo del balón oculto, curva de precisión, descomposición del error y evidencia blanda (diagnóstico; desactivado) · `feat/issue-67-oracle-ceiling`
 - [x] COMPLETADA · #68 · wave-5 · Detector de balón auto-supervisado en el vídeo táctico, GPU (no adoptado, desactivado) · `feat/issue-68-selfsup-ball-detector`
 - [x] COMPLETADA · #69 · wave-5 · Integración del detector auto-supervisado: decisión de no adoptar (precisión ~15 % a 0.3 m frente a ~0.2 m necesarios; sin cambios en la ruta) · `feat/issue-69-detector-decision`
+- [x] COMPLETADA · #71 · wave-5 · Selección de mundo sin etiquetas (validación adversarial, razón de densidades; sin variante adoptada) · `feat/issue-71-world-selection`
