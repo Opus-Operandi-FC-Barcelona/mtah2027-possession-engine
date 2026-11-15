@@ -525,8 +525,13 @@ def run_core(
 
         seq_params = SequenceParams.from_config(cfg)
         if seq_params.enabled and seq_params.mode != "off" and learned.features is not None:
-            seq_out = st.run("sequence_model", lambda: specialists.seq.predict(
-                learned.features.x, learned.features.names, play_blocks))
+            seq_x, seq_names = learned.features.x, learned.features.names
+            if any(k not in seq_names for k in specialists.seq.extra_names()):   # Issue #74: carrier / swarm input
+                from mtah2027.models.specialist_features import carrier_swarm_columns
+
+                sx, sn = carrier_swarm_columns(fe)
+                seq_x, seq_names = np.concatenate([seq_x, sx], axis=1), list(seq_names) + sn
+            seq_out = st.run("sequence_model", lambda: specialists.seq.predict(seq_x, seq_names, play_blocks))
     if seq_out is not None and seq_params.use_emissions:
         from mtah2027.models.sequence_model import mix_hidden_emissions
 

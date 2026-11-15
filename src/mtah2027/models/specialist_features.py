@@ -177,6 +177,20 @@ def _add(cols: list, names: list, matrix: np.ndarray, keys: list[str], prefix: s
         names.append(full)
 
 
+def carrier_swarm_columns(fe) -> tuple[np.ndarray, list[str]]:
+    """Issue #64 columns of a front end: ``sw:*`` and the three ``diff:*`` (home minus away), float32."""
+    from mtah2027.features.carrier_swarm import NAMES as SW_NAMES
+    from mtah2027.features.carrier_swarm import carrier_swarm
+
+    sw = carrier_swarm(fe.pxy, fe.team, fe.pvel)
+    scols = [sw[k] for k in SW_NAMES]
+    snames = [f"sw:{k}" for k in SW_NAMES]
+    for base in ("swarm", "carrier_vx", "carrier_x"):
+        scols.append((sw[f"{base}_home"] - sw[f"{base}_away"]).astype(np.float32))
+        snames.append(f"diff:{base}")
+    return np.stack(scols, axis=1).astype(np.float32), snames
+
+
 def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
                          play_blocks: Sequence[tuple[int, int]] | None = None,
                          params: FeatureParams | None = None, config_path=None) -> FeatureMatrix:
@@ -226,16 +240,7 @@ def build_feature_matrix(fe, heuristic, *, require_collective: bool = True,
         x = np.concatenate([x, cx], axis=1)
         names = names + cnames
     if fp.carrier_swarm:
-        from mtah2027.features.carrier_swarm import NAMES as SW_NAMES
-        from mtah2027.features.carrier_swarm import carrier_swarm
-
-        sw = carrier_swarm(fe.pxy, fe.team, fe.pvel)
-        scols = [sw[k] for k in SW_NAMES]
-        snames = [f"sw:{k}" for k in SW_NAMES]
-        for base in ("swarm", "carrier_vx", "carrier_x"):
-            scols.append((sw[f"{base}_home"] - sw[f"{base}_away"]).astype(np.float32))
-            snames.append(f"diff:{base}")
-        sx = np.stack(scols, axis=1).astype(np.float32)
+        sx, snames = carrier_swarm_columns(fe)
         x = np.concatenate([x, sx], axis=1)
         names = names + snames
         if fp.context_windows:

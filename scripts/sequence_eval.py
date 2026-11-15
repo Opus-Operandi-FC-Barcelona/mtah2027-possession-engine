@@ -108,14 +108,15 @@ def run_cell(cell, models_root, seq_roots, config_raw, variants):
     cache.install()
     try:
         for name in variants:
-            cfg = ds.apply_config(config_raw, VARIANTS[name])
-            spec.seq = None if name == "base" else seq
+            real = name.partition("=")[2] or name          # Issue #74: "R64=V50s" stores V50s under another name
+            cfg = ds.apply_config(config_raw, VARIANTS[real])
+            spec.seq = None if real == "base" else seq
             core = run_core(players, team, ball, play_blocks=periods, fps=fps, pitch=pitch, config_path=cfg,
                             log=lambda m: None, specialists=spec, durations=spec.durations)
             row = score(gt, core.codes)
             row.pop("lat_by_type", None)
             row["turn"] = turnover_strata(gt, core.codes, ~visible)
-            out["results"][name] = row
+            out["results"][name.partition("=")[0]] = row
     finally:
         cache.uninstall()
         spec.seq = None
@@ -136,7 +137,7 @@ def cmd_run(a) -> int:
     for cell in cells:
         path = out_dir / f"{ds.cell_id(cell)}.json"
         have = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"results": {}}
-        todo = [n for n in names if n not in have["results"]]
+        todo = [n for n in names if n.partition("=")[0] not in have["results"]]
         if not todo:
             continue
         res = run_cell(cell, Path(a.models_root), [Path(r) for r in a.seq_root], config_raw, todo)
@@ -149,7 +150,8 @@ def cmd_run(a) -> int:
 def cmd_agg(a) -> int:
     table = ds.load_results(a.out_dirs)
     ref = a.ref
-    names = [n for n in VARIANTS if any(n in m for by in table.values() for m in by.values())]
+    seen = {n for by in table.values() for m in by.values() for n in m}
+    names = [n for n in VARIANTS if n in seen] + sorted(seen - set(VARIANTS))
     worlds = sorted({w for w, _ in table})
     print(f"{'variant':<12}" + "".join(f"{w:>10}{'d':>9}" for w in worlds) + "   per-seed delta")
     summary = {}
@@ -203,7 +205,8 @@ def main(argv=None) -> int:
     r.add_argument("--out-dir", required=True)
     r.add_argument("--bench-dir", default=str(ds.DEFAULT_BENCH))
     r.add_argument("--shard", default="0/1")
-    r.add_argument("--variants", default=None, help="comma-separated subset (default: the whole grid)")
+    r.add_argument("--variants", default=None, help="comma-separated subset (default: the whole grid); "
+                   "NAME=VARIANT runs VARIANT's configuration and stores it as NAME (Issue #74)")
     g = sub.add_parser("agg")
     g.add_argument("--out-dirs", nargs="+", required=True)
     g.add_argument("--json", default=None)
