@@ -13,13 +13,16 @@ description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of 
 
 ## Status
 
-Milestones 1-9 (issues #1-#52; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
+Milestones 1-10 (issues #1-#66; #41 does not exist) are complete.  **Milestone 9** ("intelligent analysis over the
 provided data and invariance to player dropout") adopted three changes: the set-piece anchor fallback and period-start
 clamp (#50, correctness fix), the isolation of the front end per graded play block (#51, correctness fix) and the
 re-trained default model in the estimated "gaps over dead ball" world (#48, +0.017 spellF1 on B'(33)).  #42, #43, #44
 and #49 were measured and left off by configuration; #47 is the audit against the official repository and #52 makes the
-submission depend only on the committed model.  Results: `docs/Opus Operandi.md` (section 6) and
-`docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
+submission depend only on the committed model.  **Milestone 10** (#55-#66, post-freeze experiments in separate
+branches: more PFF matches, context windows, learned turnover gate, real-video ball detectors, latency bias, seed
+bagging, boundary snap, expected-spellF1 decoding, pre-trained ball model, pressure micro-geometry, hidden-ball phase
+prior, tracklet-gated vision) adopted nothing: every change stays in the code, off by configuration, and the submission
+is unchanged.  Results: `docs/Opus Operandi.md` (sections 6 and 7) and `docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
 [`docs/Opus Operandi.md`](<docs/Opus Operandi.md>).
 
 ### Architecture
@@ -76,6 +79,7 @@ labels of the provided game.
 | 7 Post-Optuna improvements | #29-#36 | route overrides, occlusion turnovers, MBR, semi-Markov, extra training matches, multi-frame detector + audit video |
 | 8 Real data (BAR-ATH ingestion, calibration, model selection) | #37-#40 | aggregate sanity report, calibrated degrader, TV sync decision, Smart Tagging on the real match |
 | 9 Intelligent analysis and dropout invariance | #42-#52 | adopted: #48 model re-trained with gaps over dead ball, #50 set-piece anchor fallback + period-start clamp, #51 play-block isolation, #52 reproducible model loading; measured and off: #42 dropout invariance, #43 Smart Tagging alive prior, #44 decoder re-optimisation + ensemble, #49 restart-team rules; #45 docs, #46 release, #47 official audit (there is no #41) |
+| 10 Post-freeze experiments (adopt only if >= +0.010) | #55-#66 | all measured on external matches and left off: #55 56 PFF matches, #56 multi-scale context + goalkeeper depth, #57 learned turnover gate, #58 real-video ball detectors (aggregates), #59 latency bias, #60 seed bagging, #61 boundary snap, #62 expected-spellF1 decoding, #63 pre-trained ball model, #64 pressure micro-geometry, #65 hidden-ball phase prior, #66 tracklet-gated vision |
 ## Install
 
 Python >= 3.10 (developed on 3.13, CI on 3.11).  Dependencies are pinned to exact versions.

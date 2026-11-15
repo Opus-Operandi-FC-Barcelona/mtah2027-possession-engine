@@ -207,7 +207,7 @@ Provided match, label-free aggregates of the submission (no ground truth involve
 
 ## 7. Milestone 10: post-freeze experiments
 
-Nine further ideas were each built in a separate branch and measured under the same protocol (B'(33), seeds 0-2, adopt at
+Twelve further ideas (#55-#66) were each built in a separate branch and measured under the same protocol (B'(33), seeds 0-2, adopt at
 >= +0.010 mean with no seed below -0.003; guards B'(1) and PFF).  None passed, so the submission is unchanged.
 
 | Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |

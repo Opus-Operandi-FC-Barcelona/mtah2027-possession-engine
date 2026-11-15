@@ -83,3 +83,18 @@ Cada línea: `[x] COMPLETADA` / `[~] OLEADA 1` / `[~] OLEADA 2` / `[ ] PENDIENTE
 - [x] COMPLETADA · #52 · wave-6 · Reproducibilidad: `--specialists auto` carga siempre `models/specialists.json`; ruta real en diagnostics · `feat/issue-52-reproducible-specialists`
 - [x] COMPLETADA · #53 · wave-6 · Docs: cita CC BY 4.0 de IDSSE (DOI) en README y enlaces de acceso público a IDSSE/PFF en Opus Operandi.md (issues oficiales #8 y #16) · `feat/issue-53-idsse-pff-citation`
 - [x] COMPLETADA · #54 · wave-6 · Nombre de equipo exacto "Opus Operandi" (con espacio) en config, entregables (`Opus Operandi.csv`, `docs/Opus Operandi.md`) y docs · `feat/issue-54-team-name-spacing`
+
+## Milestone 10: Experimentos post-congelación (rama aparte, adoptar solo si >= +0.010)
+
+- [x] COMPLETADA · #55 · wave-5 · 56 partidos PFF en el entrenamiento (no adoptado) · `feat/issue-55-pff-all-matches`
+- [x] COMPLETADA · #56 · wave-5 · Contexto multiescala y profundidad de porteros en el Especialista B (no adoptado) · `feat/issue-56-multiscale-gk-context`
+- [x] COMPLETADA · #57 · wave-5 · Especialista C: puerta aprendida de cambios H<->A (no adoptado, desactivado) · `feat/issue-57-learned-touch-gate`
+- [x] COMPLETADA · #58 · wave-5 · Chequeo sin etiquetas de detectores de balón en el vídeo táctico real (solo agregados; visión desactivada) · `feat/issue-58-real-video-ball-check`
+- [x] COMPLETADA · #59 · wave-5 · Sesgo de latencia de las fronteras (diagnóstico; sin desplazamiento) · `feat/issue-59-latency-bias`
+- [x] COMPLETADA · #60 · wave-5 · Bagging de semillas de los especialistas (no adoptado) · `feat/issue-60-seed-bagging`
+- [x] COMPLETADA · #61 · wave-5 · Ajuste de fronteras al toque / reinicio (no adoptado, desactivado) · `feat/issue-61-boundary-snap-touch`
+- [x] COMPLETADA · #62 · wave-5 · Decodificación por spellF1 esperado (MBR sobre el posterior; no adoptado, desactivado) · `feat/issue-62-expected-spellf1-decoding`
+- [x] COMPLETADA · #63 · wave-5 · Detector de balón roboflow/sports + supervision en el vídeo real (no adoptado, desactivado) · `feat/issue-63-supervision-ball-detector`
+- [x] COMPLETADA · #64 · wave-5 · Micro-geometría 22v22 de presión y portador implícito (no adoptado, desactivado) · `feat/issue-64-carrier-swarm-features`
+- [x] COMPLETADA · #65 · wave-5 · Prior de fase de Smart Tagging en H vs A con balón oculto (no adoptado, desactivado) · `feat/issue-65-hidden-phase-prior`
+- [x] COMPLETADA · #66 · wave-5 · Filtro por tracklets sobre sv_ball640 (simulado; no adoptado, desactivado) · `feat/issue-66-tracklet-gated-vision`
