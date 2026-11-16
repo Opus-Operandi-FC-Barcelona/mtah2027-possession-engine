@@ -247,7 +247,40 @@ Final submission after #73: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b
 `emission_scale: 0.5`; the pre-#72 submission, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, reproduced with
 `sequence_model.enabled: false` in `configs/default.yaml` and the same command as above.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 11.
 
-## 9. Reproduction
+## 9. Milestones 12-13: changes measured and left off, and an independent check
+
+Seven more items (#75-#81) on top of the adopted sequence model, same protocol (B'(33), seeds 0-2, adopt at >= +0.010
+mean with no seed below -0.003; guards B'(1) and A).  None passed, so the submission above is unchanged.
+
+| Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |
+|---|---|---|---|
+| #75 | Decoder re-tuning for the sequence-model emissions | +0.0015 | off |
+| #76 | Two-seed ensemble of a larger TCN (64 channels) | +0.0097 (seeds +0.0062 / +0.0110 / +0.0118; B'(1) +0.0125, A +0.0067), below the bar | off |
+| #77 | Duration prior, expected-spellF1 decoding and boundary snap with the new emissions | about 0 | off |
+| #78 | Linear-chain CRF head on the sequence model | -0.022 | off |
+| #79 | Post-decoding boundary refinement (ASRF-style) | +0.0004 | off |
+| #80 | Per-player possession zones with duel / control rules | -0.0003 | off |
+| #81 | Boundary-regression and segment-level training losses (two seeds) | +0.0068 (B'(1) +0.0036, A +0.0034) | off |
+
+**Independent check.**  The shipped route was run once on 8 PFF matches with real occlusions (`pff_3852`-`pff_3859`)
+that were never used for training; earlier decoder sweeps used them only as a -0.03 safety guard, never to pick a
+variant:
+
+| Route | spellF1 | macroF1 |
+|---|---|---|
+| Heuristic route | 0.295 | -- |
+| Specialists before the sequence model (pre-#72) | 0.526 | -- |
+| + sequence model on hidden-ball frames (#72) | 0.616 | -- |
+| **+ sequence model on visible frames too (#73, submitted)** | **0.680** | **0.902** |
+
+The ordering matches the internal validation, so the gains were not an artefact of the tuning matches.  The remaining
+error is the one described in the limitations: the route predicts fewer possessions than the truth (2228 against 2759
+on these 8 matches) because it misses H<->A turnovers, 45 % of those with the ball visible and 54 % with the ball
+hidden.  #79 showed that when such a turnover is missed, the emissions carry no trace of it, so no decoder change can
+recover it; the limit is in the information available, not in the decoding.  Details: `docs/TECHNICAL_REPORT.md`,
+Milestones 12 and 13.
+
+## 10. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate
