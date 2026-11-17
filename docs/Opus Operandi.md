@@ -120,6 +120,11 @@ Label-free aggregates of the submission (no ground truth involved and never a se
 The engine follows the metric.  Football rules decide **where** a possession may change; learned models decide
 **which** label the evidence supports; a decoder finds the single most coherent sequence.
 
+The starting observation, on the external matches: possession in the ground truth is **event-like**.  On alive frames
+the team of the last player to touch the ball matches the labelled possession about 92 % of the time; the team of the
+player nearest the ball (the baseline's rule) matches it about 78 % of the time.  About 99 % of labelled turnovers
+happen within 10 frames of a detected touch.  The whole engine is built on touches.
+
 ![Pipeline](figures/pipeline.png)
 
 *Figure 8. End-to-end pipeline.  Blue: challenge inputs.  Yellow: external labelled data.  Orange: learning.
@@ -339,6 +344,44 @@ python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
   `scripts/train_specialists.py` and `scripts/train_sequence.py` rebuild them from the external matches.
 * **CI.**  Ruff, more than 500 tests, a data-leak gate, and two full-length synthetic runs whose SHA256 must match.
 * **Figures.**  `python scripts/make_figures.py` redraws every figure in this document.
+
+## Appendix A. Training and validation data: provenance
+
+| dataset | source and licence | who labelled it, and how | how much |
+|---|---|---|---|
+| IDSSE / DFL Sportec open data | Bassek et al., *Scientific Data* 12, 195, 2025 (<https://doi.org/10.1038/s41597-025-04505-y>); data <https://doi.org/10.6084/m9.figshare.28196177>, also Hugging Face `pysport/idsse-data`; CC BY 4.0 | DFL-provided ball-status and possession channels; our labels are derived mechanically from them (dead ball gives `D`, alive gives the possession team), as the competition derives its own ground truth from tracking channels | 7 Bundesliga matches at 25 fps: `J03WMX`, `J03WN1`, `J03WOH`, `J03WOY`, `J03WPY`, `J03WQQ`, `J03WR9`; training (degraded), all tuning, primary validation |
+| PFF FC World Cup 2022 open data | <https://data.pff.com>, free public access under PFF's terms, accepted by the team; not redistributed | PFF event data (`OTB` ball owner, `OUT` dead ball, set-piece restarts); labels derived by replaying the events | 64 converted: the first 20 by name for the specialists (weight 0.5), matches 20-55 for the TCN, 8 never used (`pff_3852`-`pff_3859`) for the independent check |
+| Metrica Sports sample data, Games 1-3 | <https://github.com/metrica-sports/sample-data>; no licence file, used locally only | Metrica events: control events give possession, stoppages give `D` | 3 matches; evaluation only |
+| SkillCorner open data, A-League 2024/25 | <https://github.com/SkillCorner/opendata>, MIT | `phases_of_play` (gaps between phases give `D`) | 20 matches; tried for training, dropped |
+
+The labelling rules are in `mtah2027-external-benchmarks/docs/LABELLING_RULES.md`.  No label, threshold or
+hyper-parameter comes from the provided game, and none of the data was labelled by our team by hand.
+
+## Appendix B. Release, fallbacks and other commands
+
+| file | SHA256 | how |
+|---|---|---|
+| **submitted** (#73) | `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b` | default configuration |
+| fallback 1 (#72) | `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` | `sequence_model.visible_weight: 0.0`, `emission_scale: 0.5` |
+| fallback 2 (pre-#72) | `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b` | `sequence_model.enabled: false` |
+
+```bash
+python scripts/generate_submission.py --data-dir data --specialists load --kpi        # + the KPI quality dashboard
+python scripts/generate_submission.py --data-dir data --model-variant mixed            # gap (= default) | mixed | calib | idsse | pff | ensemble
+python scripts/generate_submission.py --synthetic --out /tmp/sub.csv                   # self-check without the data (what CI does)
+python scripts/make_figures.py                                                         # redraws docs/figures/
+```
+
+## Appendix C. Reference points on the degraded IDSSE matches
+
+Earlier measurements, made with the first (uncalibrated) degrader:
+
+| route | spellF1 | macroF1 |
+|---|---|---|
+| Official-style baseline (nearest player, majority vote) | 0.215 | 0.440 |
+| Heuristic route (last toucher, dead-ball score, decoder) | 0.435 | 0.773 |
+| Specialists, IDSSE only | 0.642 | 0.910 |
+| Specialists (Milestone 9 model), complete ball, no degradation | 0.750 | 0.948 |
 
 ## References
 
