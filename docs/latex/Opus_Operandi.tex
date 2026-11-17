@@ -2,7 +2,7 @@
 % Build:  cd docs/latex && tectonic Opus_Operandi.tex      (or: pdflatex Opus_Operandi.tex, twice)
 % Figures are read from ../figures/ (redraw them with: python scripts/make_figures.py).
 \documentclass[10pt,a4paper]{article}
-\usepackage[a4paper,margin=2.0cm,top=1.8cm,bottom=2.0cm]{geometry}
+\usepackage[a4paper,margin=1.7cm,top=1.5cm,bottom=1.8cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
@@ -28,7 +28,7 @@
 \definecolor{oboxbg}{HTML}{EEF5FD}
 \hypersetup{colorlinks=true,linkcolor=oink,urlcolor=oink,citecolor=oink}
 \captionsetup{font=small,labelfont=bf,labelsep=period}
-\setlist{itemsep=1pt,topsep=3pt,leftmargin=*}
+\setlist{itemsep=0pt,topsep=2pt,leftmargin=*}
 \newcolumntype{L}{>{\raggedright\arraybackslash}X}
 \renewcommand{\arraystretch}{1.15}
 \pagestyle{fancy}
@@ -37,8 +37,9 @@
 \fancyfoot[L]{\footnotesize\color{ogrey}Opus Operandi --- More than a Hack 2027, phase 1: technical document}
 \fancyfoot[R]{\footnotesize\color{ogrey}\thepage}
 \newcommand{\code}[1]{\texttt{\small #1}}
-\newcommand{\fig}[3][0.92]{\begin{figure}[H]\centering\includegraphics[width=#1\linewidth]{#2}\caption{#3}\end{figure}}
+\newcommand{\fig}[3][0.85]{\begin{figure}[!htb]\centering\includegraphics[width=#1\linewidth]{#2}\caption{#3}\end{figure}}
 
+\setcounter{topnumber}{3}\renewcommand{\topfraction}{0.9}\renewcommand{\textfraction}{0.1}\renewcommand{\floatpagefraction}{0.8}
 \begin{document}
 
 \begin{center}
@@ -73,7 +74,7 @@ with macroF1 over \code{H}, \code{A}, \code{D} as the tie-break. Three consequen
 \item \textbf{Boundaries must be within a few frames.} A one-frame offset is free; a one-second offset costs about 0.35.
 \end{itemize}
 And the data fights back. The tracking is automatic and uncorrected: slots are tracklets, not players. The ball is untracked on about 41\,\% of graded frames, in long blocks. On average 20.5 players are tracked, and 14.2\,\% of frames have fewer than 20. The public window, with the ball present most of the time and only 17 possessions, is far easier than the rest of the match. One possession moves its spellF1 by about 0.06, so we never used it to choose anything.
-\fig{ball_presence.png}{Share of frames with a tracked ball (top) and tracked players (bottom), 30\,s means over the whole video. Grey: graded halves. Green: the public window.}
+\fig[0.82]{ball_presence.png}{Share of frames with a tracked ball (top) and tracked players (bottom), 30\,s means over the whole video. Grey: graded halves. Green: the public window.}
 
 \section{Results}
 \subsection{External validation: the numbers we trust}
@@ -84,7 +85,7 @@ Every decision was taken on other matches, scored with the official \code{posses
 \item \textbf{A}, guard: 20 PFF matches with real occlusions (the ball missing in about a third of the frames).
 \item \textbf{Unseen PFF}, independent check: 8 further PFF matches (\code{pff\_3852}--\code{pff\_3859}) that never entered training or selection.
 \end{itemize}
-\fig{validation_ladder.png}{Each adopted step, on the primary criterion (left) and on the 8 never-used PFF matches (right). The ordering is identical on both, so the gains are not an artefact of the tuning matches.}
+\fig[0.85]{validation_ladder.png}{Each adopted step, on the primary criterion (left) and on the 8 never-used PFF matches (right). The ordering is identical on both, so the gains are not an artefact of the tuning matches.}
 
 \begin{table}[H]\centering\footnotesize\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lcccc}
@@ -100,7 +101,7 @@ Specialists A/B (pre-\#72) & 0.669 & 0.602 & 0.526 & 0.526\\
 \caption{spellF1 with the official metric on other matches. On the unseen PFF matches the submitted route reaches macroF1 0.902.}
 \end{table}
 
-\begin{figure}[H]\centering
+\begin{figure}[!htb]\centering
 \includegraphics[width=0.49\linewidth]{validation_sets.png}\hfill
 \includegraphics[width=0.49\linewidth]{turnover_recall.png}
 \caption{Left: the three routes on the four validation sets. Right: H$\leftrightarrow$A turnovers matched within $\pm$25 frames. On IDSSE, recall rises from 0.570 to 0.640 with the ball visible and from 0.357 to 0.380 with it hidden, while spurious turnovers drop from 2742 to 2477.}
@@ -123,8 +124,7 @@ ground truth & & & 17 & 14.2\,s & \\
 \end{tabular}
 \caption{Public window. Bootstrap 5--95\,\% interval of our spellF1: [0.512, 0.887]. With 17 possessions this window confirms the pipeline but cannot rank methods.}
 \end{table}
-\fig[0.85]{public_scoreboard.png}{Public window, official scorer, against the official baselines.}
-\fig{public_window.png}{Public window: ground truth (top) and our submission (bottom).}
+\fig[0.82]{public_window.png}{Public window: ground truth (top) and our submission (bottom).}
 
 \subsection{The full match}
 \begin{table}[H]\centering\small
@@ -142,7 +142,7 @@ Runtime, full match, laptop CPU & under one minute & \\
 \end{tabular}
 \caption{Label-free aggregates of the submission (no ground truth involved and never a selection criterion).}
 \end{table}
-\fig{full_match.png}{Full-match prediction in both halves, and the distribution of possession lengths.}
+\fig[0.82]{full_match.png}{Full-match prediction in both halves, and the distribution of possession lengths.}
 
 \section{Method overview}
 The engine follows the metric. Football rules decide \emph{where} a possession may change; learned models decide \emph{which} label the evidence supports; a decoder finds the single most coherent sequence.
@@ -189,11 +189,11 @@ SkillCorner open data & 20 & \code{phases\_of\_play} & tried for training, dropp
 \caption{External labelled data. Full provenance (identifiers, DOIs, licences) in Appendix~A.}
 \end{table}
 For IDSSE the labels mirror how the competition builds its own ground truth from tracking channels. Each clean match is \textbf{degraded} before features are computed (Figure~\ref{fig:degr}): the ball is hidden in contiguous blocks with the gap-length distribution of BAR-ATH, tracked-player counts match BAR-ATH, and the degrader adds correlated noise, identity cuts, and duplicate and dropped tracks. The calibration uses only label-free aggregates of the provided tracking. Every match is also used with home and away swapped, so no model ever sees a team identity.
-\begin{figure}[H]\centering\includegraphics[width=0.95\linewidth]{degradation.png}
+\begin{figure}[!htb]\centering\includegraphics[width=0.85\linewidth]{degradation.png}
 \caption{Every external match is made to look like BAR-ATH before training.}\label{fig:degr}\end{figure}
 
 \paragraph{Where the ball goes missing (Issue \#48).} If gaps were placed at random, 41\,\% of hidden-ball frames would be dead. We built a label-free estimator: ball-free player features, a classifier trained on other matches, and prior-shift EM per tracked-player stratum. It was validated on IDSSE with planted affinities and on PFF and Metrica. On BAR-ATH it finds that \textbf{at least about 80\,\%} of hidden-ball graded frames are dead. The tracker loses the ball mostly during stoppages: replays, close-ups, the ball out of play. The degrader now places gaps over dead ball with that affinity (\code{dead\_affinity} 33, realised odds ratio 12--19), and the models are trained in that world.
-\fig{hidden_ball_world.png}{Left: dead share of hidden-ball frames under three views. Right: training in the estimated world, +0.017 on the primary criterion with every seed positive.}
+\fig[0.8]{hidden_ball_world.png}{Left: dead share of hidden-ball frames under three views. Right: training in the estimated world, +0.017 on the primary criterion with every seed positive.}
 
 \subsection{Specialists A and B}
 The per-frame features cover:
@@ -220,7 +220,7 @@ The weights are exported to \code{.npz} and run in \textbf{NumPy} (parity with P
 w_t=\begin{cases}1.0 & \text{ball hidden}\\ 0.5 & \text{ball visible}\end{cases},\quad s=0.8.
 \end{equation}
 The visible-ball weight and the scale were chosen from a \textbf{preregistered grid of five} (Figure~\ref{fig:grid}), posted before any score was seen. The winner beats the reference by +0.057 on the primary criterion, and every seed and both guards improve.
-\begin{figure}[H]\centering\includegraphics[width=0.62\linewidth]{grid73.png}
+\begin{figure}[!htb]\centering\includegraphics[width=0.5\linewidth]{grid73.png}
 \caption{\#73 grid: spellF1 change against the \#72 reference on the primary criterion and both guards.}\label{fig:grid}\end{figure}
 
 \subsection{Decoding for the metric}
@@ -233,7 +233,7 @@ Each graded half is decoded on its own by a Viterbi [7] with \textbf{time-depend
 \item $H/A\to D$ opens with dead-ball evidence. $D\to$\,team stays closed until the evidence drops or a restart frame $t^*$ is reached.
 \item The kernel is compiled with numba and has a bit-identical NumPy fallback; the decode takes under 0.2\,s.
 \end{itemize}
-\begin{figure}[H]\centering\includegraphics[width=0.4\linewidth]{decoder_states.png}
+\begin{figure}[!htb]\centering\includegraphics[width=0.34\linewidth]{decoder_states.png}
 \caption{Decoder states and when each transition opens.}\label{fig:dec}\end{figure}
 A \textbf{spell optimiser} then cleans the result:
 \begin{itemize}
@@ -243,7 +243,7 @@ A \textbf{spell optimiser} then cleans the result:
 \end{itemize}
 
 \section{The possession rules we implement}
-\fig{possession_rules.png}{From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.}
+\fig[0.88]{possession_rules.png}{From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.}
 \begin{table}[H]\centering\small
 \begin{tabularx}{\linewidth}{>{\bfseries}p{3.4cm}L}
 \toprule
@@ -269,7 +269,7 @@ The public window cannot rank methods, so every idea went through the same proto
 \item otherwise the code stays, switched off by configuration.
 \end{itemize}
 Two correctness fixes (\#50, \#51) were adopted on their own merit.
-\fig[0.8]{experiment_ledger.png}{Every idea and its measured effect. Adopted ideas are blue; the dashed line is the adoption bar.}
+\fig[0.68]{experiment_ledger.png}{Every idea and its measured effect. Adopted ideas are blue; the dashed line is the adoption bar.}
 Among the ideas left off are several that are popular elsewhere:
 \begin{itemize}
 \item a CRF head ($-0.022$);
@@ -280,6 +280,9 @@ Among the ideas left off are several that are popular elsewhere:
 \item pre-trained and self-supervised ball detectors on the tactical video, within 0.3\,m in only about 15\,\% of frames where about 0.2\,m would be needed;
 \item broadcast synchronisation, which fills only 7.4\,\% of hidden tactical-ball frames (+0.005).
 \end{itemize}
+The video question deserves its own figure, because a ball detector on the tactical video is the obvious idea for the 41\,\% of frames without a ball. We measured the ceiling on other matches by restoring the true ball in the hidden frames (Issue \#67), then degraded it the way a detector would (Figure~\ref{fig:video}). A perfect ball in every gap is worth +0.046. A detector helps only below about 0.2\,m of error and with almost no false detections. The detectors we measured label-free on the real tactical video (YOLO, multi-frame, pre-trained football and self-supervised models) sit at about 1--2\,m, where they would cost between 0.06 and 0.10. So the video route stays off, by measurement rather than by omission.
+\begin{figure}[!htb]\centering\includegraphics[width=0.85\linewidth]{video_ceiling.png}
+\caption{What a video ball detector would have to deliver. Left: spellF1 change on the primary criterion as a function of the detector's position error and false-detection rate (noise rows: seed 0). Right: ceiling with a perfect ball, by share of gaps covered.}\label{fig:video}\end{figure}
 We prefer a smaller, verified system to a larger one tuned on noise.
 
 \section{Assets used, tried and dropped}
@@ -378,7 +381,7 @@ Specialists (Milestone 9 model), complete ball, no degradation & 0.750 & 0.948\\
 \end{tabular}
 \end{table}
 
-\begin{thebibliography}{10}\small
+\begin{thebibliography}{10}\footnotesize\setlength{\itemsep}{0pt}
 \bibitem{lh} D.~Link, M.~Hoernig. Individual ball possession in soccer. \emph{PLoS ONE} 12(7), 2017.
 \bibitem{idsse} M.~Bassek, R.~Rein, H.~Weber, D.~Memmert. An integrated dataset of spatiotemporal and event data in elite soccer. \emph{Scientific Data} 12, 195, 2025.
 \bibitem{bai} S.~Bai, J.~Z.~Kolter, V.~Koltun. An empirical evaluation of generic convolutional and recurrent networks for sequence modeling. arXiv:1803.01271, 2018.

@@ -89,14 +89,9 @@ baseline_smooth25      0.2868   0.6200           36     7.6 s
 baseline_raw           0.0378   0.5972          131     2.0 s
 ```
 
-![Public scoreboard](figures/public_scoreboard.png)
-
-*Figure 5. Public window, official scorer.  The bar on our spellF1 is the bootstrap 5-95 % interval
-[0.512, 0.887]: with 17 possessions this window can confirm the pipeline but cannot rank methods.*
-
 ![Public window](figures/public_window.png)
 
-*Figure 6. Public window: ground truth (top) and our submission (bottom).*
+*Figure 5. Public window: ground truth (top) and our submission (bottom).*
 
 ### 2.3 The full match
 
@@ -113,7 +108,7 @@ Label-free aggregates of the submission (no ground truth involved and never a se
 
 ![Full match](figures/full_match.png)
 
-*Figure 7. Full-match prediction, both halves, and the distribution of possession lengths.*
+*Figure 6. Full-match prediction, both halves, and the distribution of possession lengths.*
 
 ## 3. Method overview
 
@@ -127,7 +122,7 @@ happen within 10 frames of a detected touch.  The whole engine is built on touch
 
 ![Pipeline](figures/pipeline.png)
 
-*Figure 8. End-to-end pipeline.  Blue: challenge inputs.  Yellow: external labelled data.  Orange: learning.
+*Figure 7. End-to-end pipeline.  Blue: challenge inputs.  Yellow: external labelled data.  Orange: learning.
 Green: decoding and output.*
 
 | stage | what it does | why |
@@ -170,14 +165,14 @@ codes in Smart Tagging name the defending team, so their possession is credited 
 | SkillCorner open data | 20 | `phases_of_play` | tried for training, dropped (-0.03) |
 
 For IDSSE the labels mirror how the competition builds its own ground truth from tracking channels.  Each clean match
-is **degraded** before features are computed (Figure 9): the ball is hidden in contiguous blocks with the gap-length
+is **degraded** before features are computed (Figure 8): the ball is hidden in contiguous blocks with the gap-length
 distribution of BAR-ATH, tracked-player counts match BAR-ATH, and the degrader adds correlated noise, identity cuts,
 and duplicate and dropped tracks.  The calibration uses only label-free aggregates of the provided tracking.  Every
 match is also used with home and away swapped, so no model ever sees a team identity.
 
 ![Degradation](figures/degradation.png)
 
-*Figure 9. Every external match is made to look like BAR-ATH before training.*
+*Figure 8. Every external match is made to look like BAR-ATH before training.*
 
 **Where the ball goes missing (Issue #48).**  If gaps were placed at random, 41 % of hidden-ball frames would be dead.
 We built a label-free estimator: ball-free player features, a classifier trained on other matches, and prior-shift EM
@@ -188,7 +183,7 @@ stoppages: replays, close-ups, the ball out of play.  The degrader now places ga
 
 ![Hidden-ball world](figures/hidden_ball_world.png)
 
-*Figure 10. Left: dead share of hidden-ball frames under three views.  Right: training in the estimated world, +0.017
+*Figure 9. Left: dead share of hidden-ball frames under three views.  Right: training in the estimated world, +0.017
 on the primary criterion with every seed positive.*
 
 ### 4.4 Specialists A and B
@@ -221,17 +216,17 @@ $$\log p_t = (1-w_t)\,\log p^{\mathrm{spec}}_t + w_t\, s\, \log p^{\mathrm{TCN}}
 
 with `w_t` = 1.0 on hidden-ball frames, 0.5 on visible-ball frames, and scale `s` = 0.8.
 
-The visible-ball weight and the scale were chosen from a **preregistered grid of five** (Figure 11), posted before any
+The visible-ball weight and the scale were chosen from a **preregistered grid of five** (Figure 10), posted before any
 score was seen.  The winner beats the reference by +0.057 on the primary criterion, and every seed and both guards
 improve.
 
 ![Grid 73](figures/grid73.png)
 
-*Figure 11. #73 grid: spellF1 change against the #72 reference on the primary criterion and both guards.*
+*Figure 10. #73 grid: spellF1 change against the #72 reference on the primary criterion and both guards.*
 
 ### 4.6 Decoding for the metric
 
-Each graded half is decoded on its own by a Viterbi with **time-dependent** transitions (Figure 12):
+Each graded half is decoded on its own by a Viterbi with **time-dependent** transitions (Figure 11):
 
 $$\hat y = \mathrm{arg\,max}_{y_{1:T}} \sum_t \left[\log p_t(y_t) + \log A_t(y_{t-1}, y_t)\right]$$
 
@@ -243,7 +238,7 @@ $$\hat y = \mathrm{arg\,max}_{y_{1:T}} \sum_t \left[\log p_t(y_t) + \log A_t(y_{
 
 ![Decoder](figures/decoder_states.png)
 
-*Figure 12. Decoder states and when each transition opens.*
+*Figure 11. Decoder states and when each transition opens.*
 
 A **spell optimiser** then cleans the result:
 * it absorbs H->A->H micro-possessions shorter than about 1 s (0.98 s, tuned on other matches), unless the ball is
@@ -256,7 +251,7 @@ A **spell optimiser** then cleans the result:
 
 ![Possession rules](figures/possession_rules.png)
 
-*Figure 13. From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.*
+*Figure 12. From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.*
 
 | situation | rule |
 |---|---|
@@ -281,7 +276,7 @@ Two correctness fixes (#50, #51) were adopted on their own merit.
 
 ![Experiment ledger](figures/experiment_ledger.png)
 
-*Figure 14. Every idea and its measured effect.  Adopted ideas are blue; the dashed line is the adoption bar.*
+*Figure 13. Every idea and its measured effect.  Adopted ideas are blue; the dashed line is the adoption bar.*
 
 Among the ideas left off are several that are popular elsewhere:
 * a CRF head (-0.022);
@@ -292,6 +287,20 @@ Among the ideas left off are several that are popular elsewhere:
 * pre-trained and self-supervised ball detectors on the tactical video, within 0.3 m in only about 15 % of frames
   where about 0.2 m would be needed;
 * broadcast synchronisation, which fills only 7.4 % of hidden tactical-ball frames (+0.005).
+
+The video question deserves its own figure.  A ball detector on the tactical video is the obvious idea for the
+41 % of frames without a ball.  We measured the ceiling on other matches by restoring the true ball in the hidden
+frames (Issue #67), then degraded it the way a detector would.  A perfect ball in every gap is worth +0.046.  A
+detector helps only below about 0.2 m of error and with almost no false detections.  The detectors we measured
+label-free on the real tactical video (YOLO, multi-frame, pre-trained football and self-supervised models) sit at
+about 1-2 m, where they would cost between 0.06 and 0.10.  So the video route stays off, by measurement rather than
+by omission.
+
+![Video ceiling](figures/video_ceiling.png)
+
+*Figure 14. What a video ball detector would have to deliver.  Left: spellF1 change on the primary criterion as a
+function of the detector's position error and false-detection rate (noise rows: seed 0).  Right: ceiling with a
+perfect ball, by share of gaps covered.*
 
 We prefer a smaller, verified system to a larger one tuned on noise.
 

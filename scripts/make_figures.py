@@ -199,6 +199,42 @@ def fig_turnovers(d):
     save(fig, "turnover_recall.png")
 
 
+def fig_oracle(d):
+    o = d["oracle"]
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.4), gridspec_kw={"width_ratios": [1.6, 1]})
+    ax = axes[0]
+    sig = o["sigma"]
+    for key, lab, c in (("fp0", "no false detections", H_C), ("fp10", "10 % false detections", "#5598e7"),
+                        ("fp25", "25 % false detections", "#9ec5f4")):
+        ax.plot(sig, o[key], marker="o", ms=5, lw=2, color=c, label=lab)
+    ax.axhline(o["perfect"], color=INK2, lw=1, ls=":")
+    ax.text(2.05, o["perfect"], f"perfect ball +{o['perfect']:.3f}", va="center", ha="right", fontsize=7.5,
+            color=INK2, bbox=dict(fc=SURF, ec="none", pad=1))
+    ax.axhline(0.01, color=A_C, lw=1.2, ls="--")
+    ax.text(0.105, 0.013, "adoption bar +0.010", fontsize=7.5, color=A_C)
+    ax.axhline(0, color=INK2, lw=0.8)
+    ax.axvspan(0.95, 2.1, color="#f3f2ee", zorder=0)
+    ax.text(1.4, 0.027, "detectors measured on\nthe real tactical video", ha="center", fontsize=7.5, color=INK2)
+    ax.set_xscale("log")
+    ax.set_xticks(sig, [f"{s:g}" for s in sig])
+    ax.set_xlim(0.09, 2.15)
+    ax.set_xlabel("detector position error (m)")
+    ax.set_ylabel("spellF1 change, B'(33)")
+    ax.legend(fontsize=7.5, loc="lower left", bbox_to_anchor=(0.0, 0.08))
+    ax.set_title("A video ball helps only if it is very precise")
+    ax = axes[1]
+    cov = o["coverage"]
+    bars = ax.bar(range(len(cov)), [c[1] for c in cov], color=["#9ec5f4", "#5598e7", H_C], width=0.55)
+    bar_labels(ax, bars, fmt="+{:.3f}", dy=0.001)
+    ax.axhline(0.01, color=A_C, lw=1.2, ls="--")
+    ax.set_xticks(range(len(cov)), [f"{c[0]} % of gaps" for c in cov], fontsize=8)
+    ax.set_ylim(0, 0.05)
+    ax.set_ylabel("spellF1 change (perfect ball)")
+    ax.set_title("Ceiling by gap coverage")
+    ax.grid(axis="x", visible=False)
+    save(fig, "video_ceiling.png")
+
+
 def fig_scoreboard(d):
     s = d["public_scoreboard"]
     names = [r[0] for r in s]
@@ -443,6 +479,7 @@ def main(argv=None):
         fig_ledger(d)
         fig_world(d)
         fig_turnovers(d)
+        fig_oracle(d)
         fig_scoreboard(d)
         fig_pipeline()
         fig_decoder()
