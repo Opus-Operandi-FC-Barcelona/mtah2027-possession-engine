@@ -51,6 +51,9 @@ identical across runs, across the numba and NumPy decoders, and on Windows and L
 <p align="center"><img src="docs/figures/hidden_ball_world.png" width="85%" alt="Hidden-ball world"></p>
 <p align="center"><sub><b>Where the ball goes missing.</b> A label-free estimator shows that most hidden-ball frames of BAR-ATH are dead; training in that world adds +0.017 with every seed positive.</sub></p>
 
+<p align="center"><img src="docs/figures/video_ceiling.png" width="85%" alt="Video ceiling"></p>
+<p align="center"><sub><b>Why the video stays off, by measurement.</b> A perfect ball in every gap is worth +0.046, but a detector helps only below about 0.2 m of error with almost no false detections; the detectors we measured on the real tactical video sit at 1-2 m.</sub></p>
+
 ### Quick start
 
 ```bash
