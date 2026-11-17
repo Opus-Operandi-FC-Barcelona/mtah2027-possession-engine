@@ -60,6 +60,26 @@ python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 python scripts/make_figures.py          # redraws docs/figures/ (needs matplotlib)
 ```
 
+### Training data (other matches only, labels by algorithm)
+
+| dataset | licence | labels | matches |
+|---|---|---|---|
+| IDSSE / DFL Sportec ([doi](https://doi.org/10.6084/m9.figshare.28196177)) | CC BY 4.0 | DFL ball-status and possession channels | 7: `J03WMX`, `J03WN1`, `J03WOH`, `J03WOY`, `J03WPY`, `J03WQQ`, `J03WR9` |
+| PFF FC World Cup 2022 ([data.pff.com](https://data.pff.com)) | PFF terms, not redistributed | replayed events (`OTB`, `OUT`, restarts) | 20 specialists, 36 TCN, 8 never used (independent check) |
+| Metrica sample data, Games 1-3 | no licence file, local only | control and stoppage events | 3, evaluation only |
+| SkillCorner open data | MIT | phases of play | 20, tried and dropped |
+
+### Release and fallbacks
+
+| file | SHA256 | configuration |
+|---|---|---|
+| **submitted** (#73) | `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b` | default |
+| fallback (#72) | `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a` | `sequence_model.visible_weight: 0.0`, `emission_scale: 0.5` |
+| fallback (pre-#72) | `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b` | `sequence_model.enabled: false` |
+
+The technical document is also available as LaTeX source (`docs/latex/Opus_Operandi.tex`, compiled to
+`docs/Opus Operandi.pdf`).
+
 ---
 
 # Engineering reference
