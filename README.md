@@ -37,7 +37,8 @@ in and out.
 | Best official baseline, public window | 0.424 | 0.581 |
 
 The submission is **byte-for-byte reproducible**: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b`,
-identical across runs, across the numba and NumPy decoders, and on Windows and Linux CI.
+identical across runs, from a fresh clone and across the numba and NumPy decoders; the Linux CI reproduces the
+full-length synthetic match bit for bit.
 
 <p align="center"><img src="docs/figures/validation_ladder.png" width="100%" alt="Validation ladder"></p>
 <p align="center"><sub><b>Every adopted step, measured on other matches.</b> Left: primary criterion. Right: 8 PFF matches never used for training or selection. The ordering is the same.</sub></p>
@@ -57,10 +58,19 @@ identical across runs, across the numba and NumPy decoders, and on Windows and L
 ### Quick start
 
 ```bash
-pip install -r requirements.txt && pip install -e . --no-deps
-python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"
+git clone https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-engine.git
+cd mtah2027-possession-engine
+python -m venv .venv
+source .venv/bin/activate            # Linux / macOS
+.venv\Scripts\activate               # Windows (cmd or PowerShell)
+pip install -r requirements.txt
+pip install -e . --no-deps
+# unpack the organisers' bundle into data/ with its original names (see data/README.md):
+#   data/tactical/BAR-ATH_tactical_atd.txt, _atd.xml, _smart_tagging.xml, _homography.csv
+python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"   # about 30 s, CPU
 python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
-python scripts/make_figures.py          # redraws docs/figures/ (needs matplotlib)
+# SHA256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
+python scripts/make_figures.py       # optional: redraws docs/figures/ (needs matplotlib)
 ```
 
 ### Training data (other matches only, labels by algorithm)
@@ -194,10 +204,11 @@ ever processed locally; tests and CI use a deterministic **synthetic match** gen
 ## Reproduce the submission
 
 ```bash
-python -m venv .venv && source .venv/bin/activate           # Windows: .venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate            # Linux / macOS;  Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e . --no-deps
-python scripts/generate_submission.py --data-dir data --team "Opus Operandi"
-# -> "outputs/Opus Operandi.csv"   (199,319 rows + header, validated with the official format check)
+python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"
+# -> "outputs/Opus Operandi.csv"   (199,319 rows + header, SHA256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b)
 python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 python scripts/generate_submission.py --data-dir data --team "Opus Operandi" --kpi      # + seven-KPI dashboard
 python scripts/generate_submission.py --data-dir data --model-variant idsse          # another specialists file

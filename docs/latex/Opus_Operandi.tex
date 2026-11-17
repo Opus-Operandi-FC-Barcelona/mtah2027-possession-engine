@@ -58,7 +58,7 @@ Code: \url{https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-eng
 \item Two calibrated LightGBM \textbf{specialists} (ball visible / ball hidden) and a \textbf{non-causal TCN} ($\pm$20\,s of context) are trained only on \textbf{other matches}: 7 Bundesliga (IDSSE/DFL) and World Cup 2022 (PFF). Labels come from algorithms, never from hand annotation.
 \item Key finding: in BAR-ATH \textbf{the ball goes missing mostly while it is dead}. A label-free estimator puts this at $\geq$\,80\,\% of hidden-ball frames, against 41\,\% if gaps were random. Training in that estimated world was our largest data-side gain.
 \item \textbf{31 ideas} were built and measured under one preregistered rule ($\geq$\,+0.010 spellF1, no seed below $-0.003$). \textbf{5 were adopted}; the other 26 stay in the code, off by configuration.
-\item External validation (official metric): spellF1 \textbf{0.739} on IDSSE leave-one-match-out and \textbf{0.680} (macroF1 0.902) on \textbf{8 PFF matches never used for anything}. Public window: spellF1 \textbf{0.700} (macroF1 0.898), against 0.424 for the best baseline. The CSV is \textbf{byte-for-byte reproducible}, and the SHA256 is checked on Windows and Linux CI.
+\item External validation (official metric): spellF1 \textbf{0.739} on IDSSE leave-one-match-out and \textbf{0.680} (macroF1 0.902) on \textbf{8 PFF matches never used for anything}. Public window: spellF1 \textbf{0.700} (macroF1 0.898), against 0.424 for the best baseline. The CSV is \textbf{byte-for-byte reproducible}, and a fresh clone regenerates the same SHA256 (the Linux CI checks the synthetic match bit for bit).
 \end{itemize}
 \end{tcolorbox}
 
@@ -316,13 +316,20 @@ No private ground truth, no human-produced data about the provided game, no hand
 \section{Reproduction}
 \begin{tcolorbox}[colback=black!85,colupper=white,boxrule=0pt,arc=2pt,left=6pt,right=6pt]
 \footnotesize\ttfamily
-python -m venv .venv \&\& .venv\textbackslash Scripts\textbackslash activate\\
-pip install -r requirements.txt \&\& pip install -e . -{}-no-deps\\
-\# unpack the organisers' bundle into data/ (tactical/ and broadcast/)\\
-python scripts/generate\_submission.py -{}-data-dir data -{}-specialists load -{}-team "Opus Operandi"\\
+git clone https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-engine.git\\
+cd mtah2027-possession-engine\\
+python -m venv .venv\\
+source .venv/bin/activate \ \ \ \ \ \ \ \ \ \ \# Linux / macOS\\
+.venv\textbackslash Scripts\textbackslash activate \ \ \ \ \ \ \ \ \ \# Windows (cmd or PowerShell)\\
+pip install -r requirements.txt\\
+pip install -e . -{}-no-deps\\
+\# unpack the organisers' bundle into data/ with its original names:\\
+\# \ data/tactical/BAR-ATH\_tactical\_atd.txt, \_atd.xml, \_smart\_tagging.xml, \_homography.csv\\
+python scripts/generate\_submission.py -{}-data-dir data -{}-specialists load -{}-team "Opus Operandi" \ \# about 30 s, CPU\\
 python evaluation/validate\_submission.py "outputs/Opus Operandi.csv"\\
 \# sha256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
 \end{tcolorbox}
+Verified from a fresh clone of the public repository: the regenerated file is byte-identical to the submitted one (Windows~11, Python 3.13). The Linux CI (Python 3.11), which cannot hold the match data, reproduces the full-length synthetic match with the same SHA256 as Windows.
 \begin{itemize}
 \item \textbf{Dependencies.} All are pinned (Python $\geq$\,3.10; developed on 3.13, CI on 3.11).
 \item \textbf{Determinism.} \code{PYTHONHASHSEED=0}, fixed seeds, deterministic single-thread LightGBM, NumPy TCN inference, and every decoder input rounded to $10^{-6}$. Two runs give the same SHA256, and so do the numba and NumPy decoders.
