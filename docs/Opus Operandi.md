@@ -22,12 +22,15 @@ and true possessions of the same team are matched one-to-one by temporal IoU, an
 
 $$\mathrm{spellF1} = \frac{1}{5}\sum_{\theta\in\{0.3,\,0.4,\,0.5,\,0.6,\,0.7\}} \frac{2\,TP_\theta}{2\,TP_\theta+FP_\theta+FN_\theta}$$
 
-macroF1 over `H`, `A`, `D` breaks ties.  Three consequences drove every design choice:
+macroF1 over `H`, `A`, `D` breaks ties.  The organisers' own sensitivity table (`EVALUATION.md`) shows the stakes: a
+prediction that is perfect but one second late scores only 0.654.  We turned this into three engineering rules:
 
-* **Segmentation beats frame accuracy.**  A one-second flicker invents a possession and can split a true one.  A
-  per-frame classifier with 90 % accuracy can still score badly.
-* **A `D` splits a possession**, so finding stoppages matters as much as the team call.
-* **Boundaries must be within a few frames.**  A one-frame offset is free; a one-second offset costs about 0.35.
+* **Change hands rarely, and only at a touch.**  The decoder charges -11.5 for a change of possession, except within
+  ±5 frames of a touch by the gaining team, where the cost is -1.4.
+* **Treat stoppages as stages, not as a clean-up.**  Each run of `D` closes one possession and opens the next, so
+  dead-ball evidence and restart anchoring are modules of their own.
+* **Put every boundary on an event frame.**  A change lands on the frame of the touch, and a restart on the frame `t*`
+  where the ball leaves rest, so that boundary errors stay within a few frames.
 
 And the data fights back.  The tracking is automatic and uncorrected: slots are tracklets, not players.  The ball is
 untracked on about 41 % of graded frames, in long blocks.  On average 20.5 players are tracked, and 14.2 % of frames
@@ -251,7 +254,7 @@ A **spell optimiser** then cleans the result:
 
 ![Possession rules](figures/possession_rules.png)
 
-*Figure 12. From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.*
+*Figure 12. How the engine decides each candidate change of possession: dead ball first, then a touch by the other team, then the flicker test.*
 
 | situation | rule |
 |---|---|

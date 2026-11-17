@@ -67,11 +67,11 @@ Each frame of the tactical video gets \code{H} (Barcelona in possession), \code{
 \begin{equation}
 \mathrm{spellF1} = \frac{1}{5}\sum_{\theta\in\{0.3,\dots,0.7\}} \frac{2\,TP_\theta}{2\,TP_\theta+FP_\theta+FN_\theta},
 \end{equation}
-with macroF1 over \code{H}, \code{A}, \code{D} as the tie-break. Three consequences drove every design choice:
+with macroF1 over \code{H}, \code{A}, \code{D} as the tie-break. The organisers' own sensitivity table (\code{EVALUATION.md}) shows the stakes: a prediction that is perfect but one second late scores only 0.654. We turned this into three engineering rules:
 \begin{itemize}
-\item \textbf{Segmentation beats frame accuracy.} A one-second flicker invents a possession and can split a true one. A per-frame classifier with 90\,\% accuracy can still score badly.
-\item \textbf{A \code{D} splits a possession}, so finding stoppages matters as much as the team call.
-\item \textbf{Boundaries must be within a few frames.} A one-frame offset is free; a one-second offset costs about 0.35.
+\item \textbf{Change hands rarely, and only at a touch.} The decoder charges $-11.5$ for a change of possession, except within $\pm$5 frames of a touch by the gaining team, where the cost is $-1.4$.
+\item \textbf{Treat stoppages as stages, not as a clean-up.} Each run of \code{D} closes one possession and opens the next, so dead-ball evidence and restart anchoring are modules of their own.
+\item \textbf{Put every boundary on an event frame.} A change lands on the frame of the touch, and a restart on the frame $t^*$ where the ball leaves rest, so that boundary errors stay within a few frames.
 \end{itemize}
 And the data fights back. The tracking is automatic and uncorrected: slots are tracklets, not players. The ball is untracked on about 41\,\% of graded frames, in long blocks. On average 20.5 players are tracked, and 14.2\,\% of frames have fewer than 20. The public window, with the ball present most of the time and only 17 possessions, is far easier than the rest of the match. One possession moves its spellF1 by about 0.06, so we never used it to choose anything.
 \fig[0.82]{ball_presence.png}{Share of frames with a tracked ball (top) and tracked players (bottom), 30\,s means over the whole video. Grey: graded halves. Green: the public window.}
@@ -85,7 +85,7 @@ Every decision was taken on other matches, scored with the official \code{posses
 \item \textbf{A}, guard: 20 PFF matches with real occlusions (the ball missing in about a third of the frames).
 \item \textbf{Unseen PFF}, independent check: 8 further PFF matches (\code{pff\_3852}--\code{pff\_3859}) that never entered training or selection.
 \end{itemize}
-\fig[0.85]{validation_ladder.png}{Each adopted step, on the primary criterion (left) and on the 8 never-used PFF matches (right). The ordering is identical on both, so the gains are not an artefact of the tuning matches.}
+\fig[0.78]{validation_ladder.png}{Each adopted step, on the primary criterion (left) and on the 8 never-used PFF matches (right). The ordering is identical on both, so the gains are not an artefact of the tuning matches.}
 
 \begin{table}[H]\centering\footnotesize\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lcccc}
@@ -193,7 +193,7 @@ For IDSSE the labels mirror how the competition builds its own ground truth from
 \caption{Every external match is made to look like BAR-ATH before training.}\label{fig:degr}\end{figure}
 
 \paragraph{Where the ball goes missing (Issue \#48).} If gaps were placed at random, 41\,\% of hidden-ball frames would be dead. We built a label-free estimator: ball-free player features, a classifier trained on other matches, and prior-shift EM per tracked-player stratum. It was validated on IDSSE with planted affinities and on PFF and Metrica. On BAR-ATH it finds that \textbf{at least about 80\,\%} of hidden-ball graded frames are dead. The tracker loses the ball mostly during stoppages: replays, close-ups, the ball out of play. The degrader now places gaps over dead ball with that affinity (\code{dead\_affinity} 33, realised odds ratio 12--19), and the models are trained in that world.
-\fig[0.8]{hidden_ball_world.png}{Left: dead share of hidden-ball frames under three views. Right: training in the estimated world, +0.017 on the primary criterion with every seed positive.}
+\fig[0.72]{hidden_ball_world.png}{Left: dead share of hidden-ball frames under three views. Right: training in the estimated world, +0.017 on the primary criterion with every seed positive.}
 
 \subsection{Specialists A and B}
 The per-frame features cover:
@@ -243,7 +243,7 @@ A \textbf{spell optimiser} then cleans the result:
 \end{itemize}
 
 \section{The possession rules we implement}
-\fig[0.88]{possession_rules.png}{From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.}
+\fig[0.74]{possession_rules.png}{How the engine decides each candidate change of possession: dead ball first, then a touch by the other team, then the flicker test.}
 \begin{table}[H]\centering\small
 \begin{tabularx}{\linewidth}{>{\bfseries}p{3.4cm}L}
 \toprule
@@ -269,7 +269,7 @@ The public window cannot rank methods, so every idea went through the same proto
 \item otherwise the code stays, switched off by configuration.
 \end{itemize}
 Two correctness fixes (\#50, \#51) were adopted on their own merit.
-\fig[0.68]{experiment_ledger.png}{Every idea and its measured effect. Adopted ideas are blue; the dashed line is the adoption bar.}
+\fig[0.62]{experiment_ledger.png}{Every idea and its measured effect. Adopted ideas are blue; the dashed line is the adoption bar.}
 Among the ideas left off are several that are popular elsewhere:
 \begin{itemize}
 \item a CRF head ($-0.022$);
@@ -281,7 +281,7 @@ Among the ideas left off are several that are popular elsewhere:
 \item broadcast synchronisation, which fills only 7.4\,\% of hidden tactical-ball frames (+0.005).
 \end{itemize}
 The video question deserves its own figure, because a ball detector on the tactical video is the obvious idea for the 41\,\% of frames without a ball. We measured the ceiling on other matches by restoring the true ball in the hidden frames (Issue \#67), then degraded it the way a detector would (Figure~\ref{fig:video}). A perfect ball in every gap is worth +0.046. A detector helps only below about 0.2\,m of error and with almost no false detections. The detectors we measured label-free on the real tactical video (YOLO, multi-frame, pre-trained football and self-supervised models) sit at about 1--2\,m, where they would cost between 0.06 and 0.10. So the video route stays off, by measurement rather than by omission.
-\begin{figure}[!htb]\centering\includegraphics[width=0.85\linewidth]{video_ceiling.png}
+\begin{figure}[!htb]\centering\includegraphics[width=0.78\linewidth]{video_ceiling.png}
 \caption{What a video ball detector would have to deliver. Left: spellF1 change on the primary criterion as a function of the detector's position error and false-detection rate (noise rows: seed 0). Right: ceiling with a perfect ball, by share of gaps covered.}\label{fig:video}\end{figure}
 We prefer a smaller, verified system to a larger one tuned on noise.
 
@@ -381,7 +381,7 @@ Specialists (Milestone 9 model), complete ball, no degradation & 0.750 & 0.948\\
 \end{tabular}
 \end{table}
 
-\begin{thebibliography}{10}\footnotesize\setlength{\itemsep}{0pt}
+\begin{thebibliography}{10}\scriptsize\setlength{\itemsep}{0pt}
 \bibitem{lh} D.~Link, M.~Hoernig. Individual ball possession in soccer. \emph{PLoS ONE} 12(7), 2017.
 \bibitem{idsse} M.~Bassek, R.~Rein, H.~Weber, D.~Memmert. An integrated dataset of spatiotemporal and event data in elite soccer. \emph{Scientific Data} 12, 195, 2025.
 \bibitem{bai} S.~Bai, J.~Z.~Kolter, V.~Koltun. An empirical evaluation of generic convolutional and recurrent networks for sequence modeling. arXiv:1803.01271, 2018.
@@ -391,7 +391,6 @@ Specialists (Milestone 9 model), complete ball, no degradation & 0.750 & 0.948\\
 \bibitem{viterbi} A.~Viterbi. Error bounds for convolutional codes and an asymptotically optimum decoding algorithm. \emph{IEEE Trans. Information Theory} 13(2), 1967.
 \bibitem{sg} A.~Savitzky, M.~J.~E.~Golay. Smoothing and differentiation of data by simplified least squares procedures. \emph{Analytical Chemistry} 36(8), 1964.
 \bibitem{asrf} Y.~Ishikawa, S.~Kasai, Y.~Aoki, H.~Kataoka. Alleviating over-segmentation errors by detecting action boundaries. \emph{WACV}, 2021.
-\bibitem{data} PFF FC FIFA World Cup 2022 open data (data.pff.com); Metrica Sports sample data (github.com/metrica-sports/sample-data); SkillCorner open data (github.com/SkillCorner/opendata).
 \end{thebibliography}
 
 \end{document}

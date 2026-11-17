@@ -330,31 +330,53 @@ def fig_degrader():
 
 
 def fig_rules():
-    fig, ax = plt.subplots(figsize=(10, 2.6))
+    """The engine's decision path for a candidate change, as a flow chart (questions -> outcomes)."""
+    from matplotlib.patches import Polygon
+
+    fig, ax = plt.subplots(figsize=(10, 3.9))
     ax.set_xlim(0, 100)
-    ax.set_ylim(0.5, 9.5)
+    ax.set_ylim(0, 40)
     ax.axis("off")
-    raw = [(0, 22, "Barcelona", H_C), (22, 26, "A", A_C), (26, 45, "Barcelona", H_C), (45, 68, "Athletic", A_C),
-           (68, 82, "out", D_C), (82, 100, "Barcelona", H_C)]
-    pos = [(0, 45, "H", H_C), (45, 68, "A", A_C), (68, 82, "D", D_C), (82, 100, "H", H_C)]
-    for a, b, t, c in raw:
-        ax.add_patch(plt.Rectangle((a, 7.2), b - a, 1.6, fc=c, ec=SURF, lw=2))
-        ax.text((a + b) / 2, 8.0, t, ha="center", va="center", fontsize=7.5, color="white")
-    for a, b, t, c in pos:
-        ax.add_patch(plt.Rectangle((a, 4.2), b - a, 1.6, fc=c, ec=SURF, lw=2))
-        ax.text((a + b) / 2, 5.0, t, ha="center", va="center", fontsize=8, color="white", weight="bold")
-    ax.text(-1, 8.0, "touches", ha="right", va="center", fontsize=8, color=INK)
-    ax.text(-1, 5.0, "possession", ha="right", va="center", fontsize=8, color=INK)
-    notes = [(24, "1. flicker < 1 s, no double touch:\nabsorbed (Barcelona keeps it)"),
-             (45, "2. touch of the gaining team:\nchange lands on the touch"),
-             (68, "3. ball beyond the line / stoppage:\nD splits the possession"),
-             (82, "4. restart frame t* found in\nthe tracking: team taking it")]
-    for i, (x, t) in enumerate(notes):
-        ax.annotate("", (x, 4.1), (x, 7.1), arrowprops=dict(arrowstyle="-|>", color=INK2, lw=0.8))
-        yy = 3.6 if i % 2 == 0 else 1.7
-        if i % 2:
-            ax.plot([x, x], [4.1, yy + 0.1], color=GRID, lw=0.8)
-        ax.text(x, yy, t, ha="center", va="top", fontsize=6.8, color=INK2)
+
+    def question(x, y, text):
+        w, h = 9.5, 6.5
+        ax.add_patch(Polygon([(x - w, y), (x, y + h), (x + w, y), (x, y - h)], closed=True, fc="#fff4cc",
+                             ec=INK2, lw=0.9))
+        ax.text(x, y, text, ha="center", va="center", fontsize=7.2, color=INK, linespacing=1.2)
+
+    def outcome(x, y, title, body, colour):
+        w, h = 16, 8.5
+        ax.add_patch(FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle="round,pad=0.3,rounding_size=1.2",
+                                    fc=colour, ec=INK2, lw=0.8))
+        ax.text(x, y + 2.2, title, ha="center", va="center", fontsize=7.8, weight="bold", color=INK)
+        ax.text(x, y - 1.3, body, ha="center", va="center", fontsize=6.6, color=INK2, linespacing=1.2)
+
+    def arrow(p, q, label=None, lx=0.0, ly=0.0):
+        ax.add_patch(FancyArrowPatch(p, q, arrowstyle="-|>", mutation_scale=9, color=INK2, lw=0.9))
+        if label:
+            ax.text((p[0] + q[0]) / 2 + lx, (p[1] + q[1]) / 2 + ly, label, fontsize=7, color=A_C, weight="bold",
+                    ha="center", va="center")
+
+    ax.add_patch(FancyBboxPatch((1, 27.5), 11, 7, boxstyle="round,pad=0.3,rounding_size=1.2", fc=BOX["in"],
+                                ec=INK2, lw=0.8))
+    ax.text(6.5, 31, "frame t\n(team X\nin control)", ha="center", va="center", fontsize=7.4, color=INK)
+    question(25, 31, "dead-ball\nevidence?")
+    question(47, 31, "touch by the\nother team\nwithin ±5 fr?")
+    question(69, 31, "new run ≥ 1 s,\nor visible ball\n+ double touch?")
+    arrow((12.3, 31), (15.5, 31))
+    arrow((34.5, 31), (37.5, 31), "no", 0, 1.6)
+    arrow((56.5, 31), (59.5, 31), "yes", 0, 1.6)
+    arrow((78.5, 31), (82.5, 31), "yes", 0, 1.6)
+    outcome(25, 12, "D, then restart", "D until the frame t* where\nthe ball leaves rest;\nthen the team taking it", "#e9e8e4")
+    outcome(47, 12, "hold", "team X keeps the ball:\nloose balls, flights,\ndeflections", "#dce9fb")
+    outcome(69, 12, "absorb", "flicker or failed\nchallenge: no change", "#dce9fb")
+    outcome(91.5, 31, "change", "on the frame\nof the touch", "#fde3d6")
+    arrow((25, 24.5), (25, 16.5), "yes", 2.2, 0)
+    arrow((47, 24.5), (47, 16.5), "no", 2.0, 0)
+    arrow((69, 24.5), (69, 16.5), "no", 2.0, 0)
+    ax.text(50, 2.2, "Ball hidden: the last and next possessor are carried over the gap; in long gaps the sequence model "
+            "places the change where the collective movement reverses.", ha="center", fontsize=7, color=INK2,
+            style="italic")
     save(fig, "possession_rules.png")
 
 
