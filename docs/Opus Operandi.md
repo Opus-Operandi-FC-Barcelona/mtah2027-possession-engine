@@ -12,7 +12,7 @@ Other-match benchmarks: `mtah2027-external-benchmarks`.  Full lab notebook with 
 > * Two calibrated LightGBM **specialists** (ball visible / ball hidden) and a **non-causal TCN** (±20 s of context) are trained only on **other matches**: 7 Bundesliga (IDSSE/DFL) and 20 World Cup 2022 (PFF). Labels come from algorithms, never from hand annotation.
 > * Key finding: in BAR-ATH **the ball goes missing mostly while it is dead**. A label-free estimator puts this at ≥ 80 % of hidden-ball frames, against 41 % if gaps were random. Training in that estimated world was our largest data-side gain.
 > * **31 ideas** were built and measured under one preregistered rule (≥ +0.010 spellF1, no seed below -0.003). **5 were adopted**; the other 26 stay in the code, off by configuration.
-> * External validation (official metric): spellF1 **0.739** on IDSSE leave-one-match-out and **0.680** (macroF1 0.902) on **8 PFF matches never used for anything**. Public window: spellF1 **0.700** (macroF1 0.898), against 0.424 for the best baseline. The CSV is **byte-for-byte reproducible**, and the SHA256 is checked on Windows and Linux CI.
+> * External validation (official metric): spellF1 **0.739** on IDSSE leave-one-match-out and **0.680** (macroF1 0.902) on **8 PFF matches never used for anything**. Public window: spellF1 **0.700** (macroF1 0.898), against 0.424 for the best baseline. The CSV is **byte-for-byte reproducible**, and a fresh clone regenerates the same SHA256 (the Linux CI checks the synthetic match bit for bit).
 
 ## 1. The task, and why it is hard
 
@@ -341,13 +341,24 @@ Every label in the file comes out of the code in the repository.
 ## 9. Reproduction
 
 ```bash
-python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements.txt && pip install -e . --no-deps
-# unpack the organisers' bundle into data/ (tactical/ and broadcast/), see data/README.md
+git clone https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-engine.git
+cd mtah2027-possession-engine
+python -m venv .venv
+source .venv/bin/activate            # Linux / macOS
+.venv\Scripts\activate               # Windows (cmd or PowerShell)
+pip install -r requirements.txt
+pip install -e . --no-deps
+# unpack the organisers' bundle into data/ with its original names (see data/README.md):
+#   data/tactical/BAR-ATH_tactical_atd.txt, _atd.xml, _smart_tagging.xml, _homography.csv
 python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"
+# -> outputs/Opus Operandi.csv  (about 30 s on a laptop CPU, no GPU)
 python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 # SHA256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
 ```
+
+Verified from a fresh clone of the public repository: the regenerated file is byte-identical to the submitted one
+(Windows 11, Python 3.13).  The Linux CI (Python 3.11), which cannot hold the match data, reproduces the full-length
+synthetic match with the same SHA256 as Windows.
 
 * **Dependencies.**  All are pinned (Python ≥ 3.10; developed on 3.13, CI on 3.11).
 * **Determinism.**  `PYTHONHASHSEED=0`, fixed seeds, deterministic single-thread LightGBM, NumPy TCN inference, and
