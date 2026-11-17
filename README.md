@@ -1,15 +1,70 @@
-# mtah2027-possession-engine
+<div align="center">
 
-Deterministic frame-level **ball possession engine** for *More than a Hack 2027* (FC Barcelona x Metrica
-Sports), phase 1 -- team **Opus Operandi**.  Given the tactical Automatic Tracking Data (ATD) and the Smart
-Tagging of the BAR-ATH match, it writes one label per video frame (`H` Barcelona in possession, `A`
-Athletic Club in possession, `D` ball dead, `X` abstain / not evaluated) in the format validated by the
-official `evaluation/validate_submission.py`.
+# Opus Operandi: possession that survives the missing ball
 
-The ranking metric is **spellF1** (possession spells matched by temporal IoU, a `D` splits a possession),
-so the engine optimises the *number* of possessions and the precision of their boundaries.  Full technical
-description: [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md).  Status of every issue:
-[`docs/ISSUES_TRACKER.md`](docs/ISSUES_TRACKER.md).
+**Deterministic frame-level ball possession for FC Barcelona vs Athletic Club**<br>
+More than a Hack 2027, phase 1 (Metrica Sports, FC Barcelona Innovation Hub, Mobile World Capital Barcelona)
+
+Alejandro Coves Bolaños · Jesús Sánchez Briñas · Lucas Borges de Castro · Lorena Almoguera Romero · Ismael Mohamed Mohamed
+
+[Technical document](<docs/Opus Operandi.md>) · [Lab notebook (every experiment)](docs/TECHNICAL_REPORT.md) · [Issue tracker](docs/ISSUES_TRACKER.md) · [Reproduce](#reproduce-the-submission)
+
+</div>
+
+---
+
+## At a glance
+
+We label all **199,319 frames** as `H` (Barcelona), `A` (Athletic), `D` (dead ball) or `X` (not graded).  The tracking
+is automatic and uncorrected: the ball is untracked on about 41 % of graded frames, in long blocks, and players drop
+in and out.
+
+* **Football logic does the segmentation.**  A time-dependent Viterbi lets possession change hands only at a touch,
+  and restarts start where the tracking shows the ball leaving rest.
+* **Learned evidence from other matches only.**  Two calibrated LightGBM specialists (ball visible / hidden) and a
+  non-causal TCN (±20 s) are trained on 7 Bundesliga (IDSSE/DFL) and 20 World Cup 2022 (PFF) matches, with labels
+  derived by algorithm and degraded to look like BAR-ATH.
+* **Key finding:** in BAR-ATH the ball goes missing mostly *while it is dead* (≥ 80 % of hidden-ball frames,
+  label-free estimate, against 41 % if gaps were random).  Training in that world was our largest data-side gain.
+* **31 ideas, one preregistered rule** (≥ +0.010 spellF1, no seed below -0.003): 5 adopted, 26 kept in the code but
+  switched off.
+
+| | spellF1 (ranking) | macroF1 (tie-break) |
+|---|---|---|
+| **IDSSE, 7 matches leave-one-match-out, 3 seeds** (primary criterion) | **0.739** | -- |
+| **8 PFF matches never used for anything** (independent check, real occlusions) | **0.680** | **0.902** |
+| **Public 5-minute window** (official scorer, pipeline check only) | **0.700** | **0.898** |
+| Best official baseline, public window | 0.424 | 0.581 |
+
+The submission is **byte-for-byte reproducible**: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b`,
+identical across runs, across the numba and NumPy decoders, and on Windows and Linux CI.
+
+<p align="center"><img src="docs/figures/validation_ladder.png" width="100%" alt="Validation ladder"></p>
+<p align="center"><sub><b>Every adopted step, measured on other matches.</b> Left: primary criterion. Right: 8 PFF matches never used for training or selection. The ordering is the same.</sub></p>
+
+<p align="center"><img src="docs/figures/pipeline.png" width="100%" alt="Pipeline"></p>
+<p align="center"><sub><b>Pipeline.</b> Inputs (blue), external labelled data (yellow), learning (orange), decoding and output (green).</sub></p>
+
+<p align="center"><img src="docs/figures/experiment_ledger.png" width="85%" alt="Experiment ledger"></p>
+<p align="center"><sub><b>How we decided.</b> Every idea, its measured effect on the primary criterion, and the adoption bar.</sub></p>
+
+<p align="center"><img src="docs/figures/hidden_ball_world.png" width="85%" alt="Hidden-ball world"></p>
+<p align="center"><sub><b>Where the ball goes missing.</b> A label-free estimator shows that most hidden-ball frames of BAR-ATH are dead; training in that world adds +0.017 with every seed positive.</sub></p>
+
+### Quick start
+
+```bash
+pip install -r requirements.txt && pip install -e . --no-deps
+python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"
+python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
+python scripts/make_figures.py          # redraws docs/figures/ (needs matplotlib)
+```
+
+---
+
+# Engineering reference
+
+The sections below document every module, option and measurement of the engine.
 
 ## Status
 
@@ -30,7 +85,7 @@ no retraining; B'(33) +0.0568 with every seed positive, B'(1) +0.0430, A +0.0599
 (263 possessions, mean 12.9 s, `D` 45.5 % of graded play frames; generated twice with identical hash on Python 3.13.14, Windows 11).  Fallback chain: the #72 submission
 (SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`) is reproduced with `visible_weight: 0.0` and `emission_scale: 0.5`; the pre-#72 submission
 (SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`) with `sequence_model.enabled: false` in `configs/default.yaml`.
-Results: `docs/Opus Operandi.md` (sections 6 to 8) and `docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
+Results: `docs/Opus Operandi.md` (sections 2 and 6) and `docs/TECHNICAL_REPORT.md`.  The submission document for the competition form is
 [`docs/Opus Operandi.md`](<docs/Opus Operandi.md>).
 
 ### Architecture

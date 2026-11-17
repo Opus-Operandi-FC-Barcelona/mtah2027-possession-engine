@@ -1,302 +1,354 @@
-# Opus Operandi -- technical document (More than a Hack 2027, phase 1: ball possession)
+# Opus Operandi: possession that survives the missing ball
 
-Team: **Opus Operandi**.  Code: <https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-engine>.
-Companion repository (other-match benchmarks and tuning): `mtah2027-external-benchmarks`.  Longer write-up with
-every experiment: `docs/TECHNICAL_REPORT.md`.  The sections follow the points requested in `SUBMISSION.md`.
+**More than a Hack 2027, phase 1: frame-level ball possession, FC Barcelona vs Athletic Club**
 
-## 1. Approach and why
+Team **Opus Operandi**: Alejandro Coves Bolaños, Jesús Sánchez Briñas, Lucas Borges de Castro, Lorena Almoguera Romero, Ismael Mohamed Mohamed.
+Code: <https://github.com/Opus-Operandi-FC-Barcelona/mtah2027-possession-engine>.
+Other-match benchmarks: `mtah2027-external-benchmarks`.  Full lab notebook with every experiment: `docs/TECHNICAL_REPORT.md`.
 
-The ranking metric, spellF1, matches same-team possession spells by temporal IoU (0.3 ... 0.7); a `D` splits a
-possession and `X` is forward-filled.  A one-frame offset is free, a one-second offset costs about 0.35 spellF1.  The
-system is therefore built around *the right number of possessions* and *boundaries within a few frames*, not around
-per-frame accuracy.  Possession in the ground truth is event-like: the team of the player that last touched the ball
-agrees with the labelled possession on about 92 % of the alive frames of the external matches, against about 78 % for the
-player nearest to the ball (the baseline's rule), and about 99 % of the labelled turnovers happen within 10 frames of a
-detected touch.  The pipeline is built on that.
+> **At a glance**
+>
+> * A deterministic engine labels all **199,319 frames**. Football logic does the segmentation: a possession changes hands only at a touch, and a restart starts where the tracking shows the ball leaving rest. Learned models supply the evidence.
+> * Two calibrated LightGBM **specialists** (ball visible / ball hidden) and a **non-causal TCN** (±20 s of context) are trained only on **other matches**: 7 Bundesliga (IDSSE/DFL) and 20 World Cup 2022 (PFF). Labels come from algorithms, never from hand annotation.
+> * Key finding: in BAR-ATH **the ball goes missing mostly while it is dead**. A label-free estimator puts this at ≥ 80 % of hidden-ball frames, against 41 % if gaps were random. Training in that estimated world was our largest data-side gain.
+> * **31 ideas** were built and measured under one preregistered rule (≥ +0.010 spellF1, no seed below -0.003). **5 were adopted**; the other 26 stay in the code, off by configuration.
+> * External validation (official metric): spellF1 **0.739** on IDSSE leave-one-match-out and **0.680** (macroF1 0.902) on **8 PFF matches never used for anything**. Public window: spellF1 **0.700** (macroF1 0.898), against 0.424 for the best baseline. The CSV is **byte-for-byte reproducible**, and the SHA256 is checked on Windows and Linux CI.
 
-Pipeline (`src/mtah2027/pipeline.py`), every stage deterministic and vectorised:
+## 1. The task, and why it is hard
 
-1. **Ingest** the tactical ATD (every channel declared in `atd.xml` is parsed; here `x, y, s`), the Smart Tagging XML and
-   the homography.
-2. **Clean and orient**: drop off-pitch staff and duplicate tracks (< 0.6 m), interpolate gaps of <= 5 frames,
-   Savitzky-Golay velocity and acceleration, mirror each half so that the home team attacks +x.
-3. **Features**: continuous dead-ball score (ball beyond the lines, ball at rest, slow or walking players, set-piece
-   geometry), distances and Link-and-Hoernig-style control weights, **touch detection**, exact restart frames `t*` of
-   every tagged set piece found in the tracking (never taken from the tag window), throw-in team resolution from the
-   tracking where the tag says `N/A`, dynamic goalkeepers and collective physics (spectral and convex-hull areas and
-   their derivatives, vector coherence), ball memory for the frames where the ball is not tracked.
-4. **Emissions** `log_probs[N, 3]`: **Specialist A** (ball visible) and **Specialist B** (ball absent), calibrated
-   LightGBM classifiers fused per frame by ball visibility, with Smart Tagging phase as a soft prior.  A heuristic route
-   (last toucher, dead-ball score) is the fallback and the comparison point.
-5. **Time-dependent transitions** `log A_t[N, 3, 3]`: a possession changes hands only around a touch of the gaining team
-   (cost -1.4, otherwise -11.5) or, moderately, inside a long ball occlusion; `H/A -> D` opens with dead-ball evidence;
-   `D -> H/A` stays closed until the dead evidence drops or a restart frame is reached.
-6. **Viterbi** per graded half, independently (numba kernel, bit-identical NumPy fallback).
-7. **Spell optimiser**: micro-possessions shorter than about 1 s (0.98 s on the learned route, 1.75 s on the heuristic
-   route, both tuned on other matches) between the other team's runs are absorbed unless the ball is visible
-   and there is a double touch; long possessions get a `D` bridge over >= 4 s dead-evidence valleys that coincide with a
-   touchline or set piece; forced-`D` intervals before restarts are applied.
-8. **Contract**: `X` outside the graded blocks, `D` in the second-half pre-kick-off interval, no internal `X`, validated
-   with the official `validate_submission.py`.
+Each frame of the tactical video gets `H` (Barcelona in possession), `A` (Athletic in possession), `D` (ball dead) or
+`X` (not graded).  The ranking metric treats every possession, a maximal run of `H` or `A`, as one object.  Predicted
+and true possessions of the same team are matched one-to-one by temporal IoU, and F1 is averaged over five thresholds:
 
-Why a decoder rather than per-frame thresholds: the transition costs encode the football prior that changes of
-possession are rare and happen at touches, which removes the flicker that destroys spellF1 for per-frame classifiers.
-Why learned specialists on top: while the ball is hidden (about 41 % of the graded frames of the provided tracking) the
-team can still be inferred from collective movement (width and advance of the attacking block); on other matches with
-the ball hidden, a model using only those cues predicts the team in 0.85 of the hidden-ball alive frames, against 0.62
-for the "last touch" rule.
+$$\mathrm{spellF1} = \frac{1}{5}\sum_{\theta\in\{0.3,\,0.4,\,0.5,\,0.6,\,0.7\}} \frac{2\,TP_\theta}{2\,TP_\theta+FP_\theta+FN_\theta}$$
 
-## 2. Assets used, tried and dropped
+macroF1 over `H`, `A`, `D` breaks ties.  Three consequences drove every design choice:
 
-| Asset | Status | How |
-|---|---|---|
-| Tactical ATD (`x, y, s`, 46 slots, ball) | **used** | all geometry, kinematics, features |
-| Smart Tagging XML | **used** | set-piece and goal windows -> exact restart frames and forced `D`; throw-in teams; weak phase prior.  The four defending codes name the *defender* (`Team` = team performing the event), so the loader credits the opponent with the possession of those phases |
-| Tactical homography | loaded and validity-checked | only consumed by the optional stages below, which are off |
-| Broadcast ATD + homography | **tried, off** | block-wise synchronisation (`preprocessing/broadcast_sync.py`): 63 % of the blocks synchronised but the TV ball fills only 7.4 % of the hidden tactical-ball frames; +0.005 spellF1 on the leave-one-match-out simulation, below the +0.01 adoption rule |
-| Tactical / broadcast video: YOLO and multi-frame ball detector, attention crops | **built, off** | `vision/`; no video was processed for the submission; simulation shows a gain only with a ~0.3 m accurate detector.  Measured label-free on the real tactical video (Issue #58, 1,000 frames with the tracked ball visible, ball ~4.5 px): the most confident motion detection is within 2 m of the tracked ball in ~10 % of the frames, with ~3.7 false positives per frame, so the route stays off  The AGPL `ultralytics` package is an optional extra that nothing in the submission path needs |
-| Aerial-ball filter | **built, off** | lowered spellF1 on degraded external matches (touches at kicks/landings are real boundaries) |
-| Explicit-duration (semi-Markov) decoder | **built, off** | possessions 2409 -> 2503 of 3061 but spellF1 -0.001 ... -0.004 |
-| MBR boundary consensus | **built, off** | +-0.0004 |
-| Specialist-opened transitions inside occlusions | **built, off** | within +-0.003 |
-| Block-masking pseudo-labelling of the provided match (#21) | **built, off** | algorithmic labels on the provided game are allowed, but on external matches it lowered spellF1 (0.606 -> 0.590) |
-| SkillCorner as training data | **tried, dropped** | -0.026 ... -0.031 spellF1 on the degraded validation |
-| Smart Tagging phases as an alive-ball prior / transition cue while the ball is hidden (#43) | **built, off** | measured with a Smart Tagging simulator (tags derived from true labels with low/medium/high noise): best +0.002 |
-| Smart Tagging restart rules (post-goal and second-half kick-off team, wider restart window, `t*` offset prior, Long Ball flags) (#49) | **built, off** | +0.0003 at best: restarts were already resolved by the tracking anchors |
-| Robust collective-shape features under player dropout, native speed channel (#42) | **built, off** | +0.002 ... +0.003 |
-| Decoder re-optimisation and ensemble of two models trained in different worlds (#44) | **built, off** | best +0.009 (all guards positive) after about 700 candidates; selectable as `--model-variant ensemble` |
-| Official scorer, `games.py`, starter | **used, vendored unmodified** | metric, constants, format check |
-| Public 5 minutes of ground truth | pipeline check only | alignment and format; never used to choose between variants or tune |
+* **Segmentation beats frame accuracy.**  A one-second flicker invents a possession and can split a true one.  A
+  per-frame classifier with 90 % accuracy can still score badly.
+* **A `D` splits a possession**, so finding stoppages matters as much as the team call.
+* **Boundaries must be within a few frames.**  A one-frame offset is free; a one-second offset costs about 0.35.
 
-Rule of the project: every optional stage is adopted only if it gains >= +0.01 mean spellF1 on the other-match
-validation with no seed worse than -0.003; otherwise the code and tests stay and it is switched off by configuration.
+And the data fights back.  The tracking is automatic and uncorrected: slots are tracklets, not players.  The ball is
+untracked on about 41 % of graded frames, in long blocks.  On average 20.5 players are tracked, and 14.2 % of frames
+have fewer than 20.  The public window, with the ball present most of the time and 17 possessions, is far easier
+than the rest of the match.  One possession moves its spellF1 by about 0.06, so we never used it to choose anything.
 
-## 3. Training data
+![Ball presence and tracked players over the match](figures/ball_presence.png)
 
-**Nothing from the provided game is used as a label or for fitting.**  The learned models (Specialists A/B) and every
-tuned hyper-parameter come from other matches, labelled **by algorithm**, never by hand:
+*Figure 1. Share of frames with a tracked ball (top) and tracked players (bottom), 30 s means over the whole video.
+Grey: graded halves.  Green: the public window.*
 
-| Dataset | Source / who labelled | Matches used | Licence | Role |
+## 2. Results
+
+### 2.1 External validation: the numbers we trust
+
+Every decision was taken on other matches, scored with the official `possession_metrics.py`:
+
+* **B'(33):** primary criterion.  The 7 IDSSE matches, leave-one-match-out (the held-out match is an unlabelled
+  target), degraded with the calibrated degrader in the estimated "gaps over dead ball" world, evaluation seeds 0-2.
+* **B'(1):** guard.  The same matches with gaps placed at random.
+* **A:** guard.  20 PFF matches with real occlusions (the ball missing in about a third of the frames).
+* **Unseen PFF:** independent check.  8 further PFF matches (`pff_3852`-`pff_3859`) that never entered training or
+  selection.
+
+![Validation ladder](figures/validation_ladder.png)
+
+*Figure 2. Each adopted step, on the primary criterion (left) and on the 8 never-used PFF matches (right).  The
+ordering is identical on both, so the gains are not an artefact of the tuning matches.*
+
+| route | IDSSE B'(33) | IDSSE B'(1) | PFF A (20) | PFF unseen (8) |
 |---|---|---|---|---|
-| IDSSE / DFL Sportec open data (Bassek et al., *Scientific Data* 12, 195, 2025, <https://doi.org/10.1038/s41597-025-04505-y>; data <https://doi.org/10.6084/m9.figshare.28196177>, also Hugging Face `pysport/idsse-data`; ids J03WMX, J03WN1, J03WOH, J03WOY, J03WPY, J03WQQ, J03WR9) | DFL-provided ball-status and possession channels; labels derived mechanically from them (ball dead -> `D`; alive -> the team of the possession channel) | 7 Bundesliga matches, 25 fps | CC BY 4.0 | training of the specialists (degraded), all tuning and validation |
-| PFF FC World Cup 2022 Open Data (<https://data.pff.com>, free public access under PFF's terms) | PFF event data (`OTB` owner, `OUT` dead, set-piece restarts); labels derived by replaying the events | 64 converted; first 20 by name for training at weight 0.5, 8 never-used ones for validation | PFF terms accepted by the team; not redistributed | training and validation under real occlusions (ball missing in about a third of the frames) |
-| Metrica Sports sample data, Games 1-3 | events -> labels (control events give possession, stoppages give `D`) | 3 | no licence file in the repository; used locally only | evaluation only (their ball channel disappears while the ball is dead, which would leak `D`) |
-| SkillCorner Open Data, A-League 2024/25 | `phases_of_play` (gaps between phases = `D`) | 20 converted | MIT | tried for training, dropped; 10 fps broadcast tracking |
+| Heuristic route (no learning) | -- | -- | -- | 0.295 |
+| Specialists A/B (pre-#72) | 0.669 | 0.602 | 0.526 | 0.526 |
+| + sequence TCN on hidden-ball frames (#72) | 0.682 | 0.641 | 0.600 | 0.616 |
+| **+ TCN on visible frames too (#73, submitted)** | **0.739** | **0.684** | **0.660** | **0.680** |
 
-Rules for the labels are in `mtah2027-external-benchmarks/docs/LABELLING_RULES.md`.  For the IDSSE matches they mirror
-how the competition derives its own ground truth from tracking channels.
+On the unseen PFF matches the submitted route reaches macroF1 **0.902**.
 
-* **Degradation.**  Each full-view match is degraded so that the models see competition-like inputs: the ball hidden in
-  contiguous blocks, correlated tracking noise, identity cuts, duplicate and dropped tracks.  Two profiles exist: the
-  first one built from the task description (`external_degrader_legacy`), and one calibrated against **label-free
-  aggregate statistics of the provided tracking** (gap-length distribution, tracked players per frame;
-  `external_degrader_target`); no labels of the provided game are involved.  Since Issue #48 the calibrated profile
-  also places the hidden-ball blocks preferentially over dead-ball stretches (`dead_affinity`): a label-free estimator
-  (ball-free player features, a classifier trained on other matches, prior-shift EM per tracked-player stratum),
-  validated on IDSSE with planted affinities and on PFF and Metrica, estimates that at least about 80 % of the
-  hidden-ball graded frames of the provided tracking are dead, against 41 % if gaps were placed at random.  The default
-  model is trained in that estimated world (`dead_affinity` 33, realised odds ratio about 12-19).
-* **Team symmetry.**  Each match is also used with the home/away roles swapped, so the models never see a team identity.
-* **Calibration** by out-of-fold temperature on whole held-out matches.
-* **Reproducibility.**  `python scripts/train_specialists.py --bench-dir <external cache>` rebuilds `models/specialists*.json`
-  (a LightGBM text dump plus metadata; no match data); training is deterministic.
-* A deterministic **synthetic match** (`scripts/generate_synthetic_fixtures.py`) in the exact layout of the data bundle
-  is used for tests and CI.
+![Validation sets](figures/validation_sets.png)
 
-## 4. Possession rules implemented
+*Figure 3. The three routes on the four validation sets.*
 
-* **Dead ball (`D`).**  Declared from evidence: ball beyond the lines, ball at rest, players slowing or walking,
-  set-piece geometry, and the exact interval before each restart `t*` found in the tracking; also between a goal and the
-  next kick-off.  A `D` always splits a possession (`H D H` = two possessions).
-* **Possession and loose balls.**  A team is in possession from the touch that wins the ball until the other team's
-  winning touch.  While the ball is in flight or loose the state is held (the last toucher keeps the ball).
-* **Challenges and duels.**  A change of possession requires a touch of the gaining team; simultaneous contact by both
-  teams does not flip by itself, and micro-possessions shorter than about 1 s between the other team's runs are absorbed unless the ball
-  is visible and shows a double touch.
-* **Restarts.**  The restart frame is anchored in the tracking (the ball leaves rest), not at the tag window (the
-  `Kick Off (Start)` windows open about 3.5 s before the kick-off).  Throw-ins tagged `Team = N/A` are resolved from the
-  tracking (the isolated player within 1.5 m of the touchline, confirmed by the first controller); when the vote is
-  below the confidence floor they stay unresolved and both `D -> H` and `D -> A` remain open.
-* **Hidden ball.**  The last and next toucher are carried over the gap with decaying confidence; inside long
-  occlusions the specialists combine evidence from both sides and the change lands where the collective movement
-  reverses.
-* **`X`.**  `X` outside the graded blocks and never inside them (the scorer forward-fills it for spellF1 and counts it
-  as an error for macroF1).  Graded blocks come from `games.py`: first half from the kick-off to the end of the half,
-  second half from the kick-off to the final whistle; the interval between the start of the second half and its
-  kick-off is graded and fully dead, hence `D`.  Nothing crosses a half boundary.
-* Frame alignment: video frame = ATD `frame_id - 1`.
+The sequence model also finds turnovers that the specialists missed (Figure 4).  On IDSSE the H<->A turnover recall
+rises from 0.570 to 0.640 with the ball visible, and from 0.357 to 0.380 with the ball hidden.  Spurious turnovers
+drop from 2742 to 2477.
 
-## 5. Results and limitations
+![Turnover recall](figures/turnover_recall.png)
 
-All numbers are on **other matches** with the official metric (`evaluation/possession_metrics.py`), mean over the
-7 IDSSE matches, leave-one-match-out (the held-out match is an unlabelled target), seeds 0-2.  The score of the
-provided game is not known to the authors.
+*Figure 4. True H<->A changes matched by a predicted change of the same direction within ±25 frames.*
 
-| Setting | spellF1 | macroF1 |
+### 2.2 Public window (official scorer, pipeline check only)
+
+```
+submission            spellF1  macroF1  possessions  mean dur  latency
+Opus Operandi          0.7000   0.8978           15    16.7 s   +2.8 fr   (truth: 17 possessions, 14.2 s)
+baseline_smooth125     0.4242   0.5812           16    18.5 s
+baseline_smooth50      0.3256   0.6207           26    10.8 s
+baseline_smooth25      0.2868   0.6200           36     7.6 s
+baseline_raw           0.0378   0.5972          131     2.0 s
+```
+
+![Public scoreboard](figures/public_scoreboard.png)
+
+*Figure 5. Public window, official scorer.  The bar on our spellF1 is the bootstrap 5-95 % interval
+[0.512, 0.887]: with 17 possessions this window can confirm the pipeline but cannot rank methods.*
+
+![Public window](figures/public_window.png)
+
+*Figure 6. Public window: ground truth (top) and our submission (bottom).*
+
+### 2.3 The full match
+
+Label-free aggregates of the submission (no ground truth involved and never a selection criterion):
+
+| | submission | reference |
 |---|---|---|
-| Official-style baseline (nearest player, majority vote), degraded | 0.215 | 0.440 |
-| Heuristic route, degraded (first degrader) | 0.435 | 0.773 |
-| Specialists (IDSSE only), degraded (first degrader) | 0.642 | 0.910 |
-| Specialists (default, IDSSE + PFF), degraded (first degrader) | 0.632 | 0.907 |
-| Specialists (Milestone 8 default), calibrated degrader | 0.604 | 0.902 |
-| Specialists (Milestone 8 default), calibrated degrader with gaps over dead ball (B'(33)) | 0.657 | 0.914 |
-| **Specialists (final default, trained at `dead_affinity` 33), B'(33)** | **0.675** | **0.922** |
-| Specialists (final default), calibrated degrader with gaps placed at random (B'(1)) | 0.600 | -- |
-| Specialists (final default), complete ball | 0.750 | 0.948 |
-| Specialists (final default), 20 held-out PFF matches with real occlusions (4-fold) | 0.526 | 0.864 |
+| Possessions | 263 | -- |
+| Mean possession | 12.9 s | 14.2 s in the public truth |
+| `D` share of graded play frames | 45.5 % | 29-52 % in the external matches |
+| Barcelona share of alive frames | 62.6 % | -- |
+| Blindness test (first 20 min with the ball hidden artificially) | spellF1 0.751 | KPI alarm at 0.75 |
+| Runtime, full match, laptop CPU | under one minute | |
 
-B'(33) and B'(1) differ in the evaluation world, not in the model: the same model scores higher when the hidden-ball
-blocks fall over dead ball, because those frames are easier.  What matters is the difference between models measured in
-the same world.
+![Full match](figures/full_match.png)
 
-**Limitations (honest list).**
+*Figure 7. Full-match prediction, both halves, and the distribution of possession lengths.*
 
-* **Player dropout.**  The provided tracking has on average 20.5 tracked players per frame and 14.2 % of the frames with
-  fewer than 20; external matches have <= 1.2 % of such frames, so this regime has no external counterpart.  On the
-  provided match nearly all of those frames are predicted `D`.  Issue #42 showed that player dropout alone does not
-  cause this on external matches (fewer than 20 players: predicted `D` 45.7 % against 43.6 % true), and the label-free
-  estimator of Issue #48 finds that 91 % of those frames lie inside ball gaps, i.e. joint tracking outages that most
-  likely coincide with stoppages; the high `D` share there is therefore plausible but cannot be validated externally.
-* **Hidden-ball turnovers.**  About 70 % of the H<->A turnovers that happen while the ball is hidden are still missed
-  (81 % before the past/future-window features), so the learned route predicts fewer possessions than the truth
-  (2409 against 3061 on the 7 degraded IDSSE matches).  Every extra flip tried is as often wrong as right.
-* **Domain shift.**  Specialists are trained on Bundesliga and World Cup data degraded by our own model; the tracking
-  noise and the gap structure of the provided match are known only through label-free aggregates.  On the synthetic
-  match, whose physics is not football, the learned route scores below the heuristic one; the choice of route is made
-  with external evidence only (KPI 7), never with the public ground truth.
-* The validation measures are two proxies (degraded IDSSE and real-occlusion PFF) that disagree on the size of some
-  trade-offs; spellF1 noise across matches is about 0.04.
-* Smart Tagging weights cannot be tuned (no external match has Smart Tagging).  Video-based ball recovery and TV
-  synchronisation were not validated on the real video beyond the aggregates above.
-* With more time: a detector trained for the tactical camera, and a longer-context model of collective play for the
-  hidden-ball turnovers.
+## 3. Method overview
 
-## 6. Milestone 9 results
+The engine follows the metric.  Football rules decide **where** a possession may change; learned models decide
+**which** label the evidence supports; a decoder finds the single most coherent sequence.
 
-Milestone 9 ("intelligent analysis over the provided data and invariance to player dropout") was measured under a
-common protocol fixed after the audit against the official repository (#47): the ground truth is derived from tracking
-flags, and only the IDSSE labels share that semantics, so the primary criterion is **B'** = 7 IDSSE leave-one-match-out
-with the calibrated degrader, seeds 0-2 (adopt at >= +0.01 mean spellF1, no seed below -0.003); PFF held-out (event
-labels) is a guard only (reject if it drops more than 0.03).  From #48 on, B' is evaluated in the estimated world where
-gaps fall over dead ball (B'(33)), with the random-placement world B'(1) as a second guard.
+![Pipeline](figures/pipeline.png)
 
-<!-- BEGIN MILESTONE 9 RESULTS -->
-| Issue | Change | Decision | Result (spellF1, other matches) |
-|---|---|---|---|
-| #42 | Player-dropout invariance: strata by tracked players, robust shape features, native speed channel | off | best +0.004; dropout alone does not over-predict `D` (< 20 players: 45.7 % predicted vs 43.6 % true) |
-| #43 | Smart Tagging alive-ball prior and transition cue while the ball is hidden (tag simulator) | off | best +0.002 at medium / high tag noise |
-| #44 | Decoder re-optimisation (about 700 candidates) and ensemble of the two models trained in different worlds | off (`--model-variant ensemble` selectable) | best +0.009 on B'(33), all guards positive, below the bar |
-| #47 | Audit against the official repository (`docs/OFFICIAL_AUDIT.md`) | -- | protocol above |
-| #48 | Hidden-ball / dead-ball affinity in the degrader, label-free estimator, model re-trained at affinity 33 | **adopted** | B'(33) 0.657 -> **0.675** (+0.017, all seeds), PFF 0.521 -> 0.526, B'(1) -0.008 |
-| #49 | Restart-team rules (post-goal / second-half kick-off, tracking vote), `t*` offset prior, Long Ball flags | off | +0.0003 |
-| #50 | Set-piece anchor: bounded tag-window fallback and period-start clamp | **adopted** (correctness) | +0.0085 on B' (40 of 42 runs up) |
-| #51 | Front end isolated per graded play block (no leak across half-time) | **adopted** (correctness) | +0.0004 |
-| #52 | Submission depends only on the committed model (`auto` loads it; retraining reproduces it) | **adopted** | identical SHA256 for train and load |
+*Figure 8. End-to-end pipeline.  Blue: challenge inputs.  Yellow: external labelled data.  Orange: learning.
+Green: decoding and output.*
 
-Provided match, label-free aggregates of the submission (no ground truth involved; not a selection criterion):
-
-| | Milestone 8 submission | Final submission |
+| stage | what it does | why |
 |---|---|---|
-| Possessions | 243 | 266 |
-| Mean possession | 12.8 s | 12.3 s |
-| `D` share of graded play frames | 50.1 % | 47.5 % |
-| `H` / `A` share of graded play frames | -- | 33.0 % / 19.5 % |
-| `D` share of hidden-ball graded frames | -- | 91.7 % (label-free estimate of the truth: >= about 80 %) |
-| Runtime (load model, full match) | -- | 17.5 s |
-<!-- END MILESTONE 9 RESULTS -->
+| Ingest and clean | parses every channel declared in `atd.xml`, drops staff and duplicate tracks (< 0.6 m), interpolates gaps ≤ 5 frames, Savitzky-Golay kinematics, home team always attacks +x | a clean, symmetric representation |
+| Dead-ball evidence | ball beyond the lines, ball at rest, players walking, set-piece geometry | stoppages split possessions |
+| Restart anchoring | the restart frame `t*` of every tagged set piece is found in the tracking, never taken from the tag window | the tags open about 3.5 s early |
+| Touches and control | ball-acceleration and turning peaks near a player; Link-Hoernig control weights | turnovers happen at touches |
+| Specialists A/B | calibrated LightGBM, ball visible / ball hidden | the team can be read from collective movement when the ball is gone |
+| Sequence TCN | ±20 s of non-causal context over the specialists' features | long gaps need context from both sides |
+| Dynamic Viterbi | time-dependent transitions `log A_t[N,3,3]` | possession changes only where football allows it |
+| Spell optimiser and contract | absorbs flickers, bridges stoppages, writes the 199,319-row file | spellF1 punishes micro-possessions |
 
-## 7. Milestone 10: post-freeze experiments
+## 4. How it works
 
-Twelve further ideas (#55-#66) were each built in a separate branch and measured under the same protocol (B'(33), seeds 0-2, adopt at
->= +0.010 mean with no seed below -0.003; guards B'(1) and PFF).  None passed, so the submission is unchanged.
+### 4.1 Reading the match
 
-| Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |
+The tactical ATD holds 46 slots and the ball per frame.  The video frame is ATD `frame_id - 1`.  Coordinates are
+converted to metres on the 105.3 × 68.0 m pitch, and each half is mirrored so that Barcelona always attacks +x.
+Off-pitch staff and duplicate tracklets of the same team closer than 0.6 m are removed.  Gaps of up to 5 frames are
+interpolated.  Velocity and acceleration come from a Savitzky-Golay filter (window 7, order 2).
+
+### 4.2 Dead ball and restarts
+
+A continuous dead-ball score combines four cues: ball beyond the lines, time at rest (< 0.4 m/s), mean and 80th
+percentile of the players' speed (which catches stoppages even while the ball is tracked), and kick-off, goal-kick
+and corner geometry.  Smart Tagging windows are used as **search windows only**.  Inside each one the restart frame
+`t*` is where the ball goes from rest (< 1 m/s) to a kick (> 4 m/s), or where collective speed jumps.  Frames before
+`t*` are `D`, as is the interval between a goal and the next kick-off.  Throw-ins tagged `Team = N/A` are resolved from
+the tracking: the isolated player within 1.5 m of the touchline, confirmed by the first controller.  The four defending
+codes in Smart Tagging name the defending team, so their possession is credited to the opponent.
+
+### 4.3 Learning from other matches, in BAR-ATH's world
+
+| source | matches | labels (all derived by algorithm) | role |
 |---|---|---|---|
-| #55 | 56 PFF training matches instead of 20 | -0.012 (PFF guard +0.03) | off |
-| #56 | Multi-scale context windows and goalkeeper depth | -0.002 | off |
-| #57 | Learned H<->A turnover gate (third specialist) | -0.001 ... -0.006 (+0.011 / +0.015 on real PFF occlusions) | off |
-| #58 | Classic ball detectors on the real tactical video (aggregates only) | top hit within 2 m in 10 % of frames | vision off |
-| #59 | Latency bias of the boundaries | about 1 frame early, below the 3-frame threshold | no shift |
-| #60 | Bag of three specialist seeds | -0.001 | off |
-| #61 | Boundary snap to the touch / restart frame | +0.0002 | off |
-| #62 | Expected-spellF1 (minimum Bayes risk) decoding | 0.000 ... -0.001 | off |
-| #63 | Pre-trained football ball model (roboflow/sports + supervision) on the real video | top hit within 2 m in 60 %, median 1.1 m; simulated -0.074 | off |
-| #64 | Implicit carrier + 22v22 pressure micro-geometry features for the hidden-ball specialist | B'(33) +0.0002; B'(1) +0.0023; A +0.0003 / +0.0014 | off |
-| #65 | Smart Tagging phase prior on the H-vs-A odds of hidden-ball frames (fixed 0.8-2.5 and label-free auto) | B'(33) +0.0009 at best, -0.0073 at high noise; A down to -0.034 | off |
-| #66 | Tracklet gate and emission tempering on the #63 detections (simulated) | gate 3 -0.005, gate 5 +0.0005 (keeps 6-25 % of the points) | off |
+| IDSSE / DFL Sportec open data | 7 Bundesliga, 25 fps | DFL ball-status and possession channels: dead gives `D`, alive gives the possession team | training, all tuning, primary validation |
+| PFF FC World Cup 2022 | 64 converted: 20 train, 8 unseen | events replayed (`OTB` owner, `OUT` dead, set-piece restarts) | training at weight 0.5, guard, independent check |
+| Metrica sample data, Games 1-3 | 3 | control events give possession, stoppages give `D` | evaluation only (their ball channel vanishes when the ball is dead, which would leak `D`) |
+| SkillCorner open data | 20 | `phases_of_play` | tried for training, dropped (-0.03) |
 
-The decoder-side changes all target the same missed turnovers, and turnover recall did not move with any of them: the
-remaining error sits in the specialists' emissions, not in the decoder.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 10.
+For IDSSE the labels mirror how the competition builds its own ground truth from tracking channels.  Each clean match
+is **degraded** before features are computed (Figure 9): the ball is hidden in contiguous blocks with the gap-length
+distribution of BAR-ATH, tracked-player counts match BAR-ATH, and the degrader adds correlated noise, identity cuts,
+and duplicate and dropped tracks.  The calibration uses only label-free aggregates of the provided tracking.  Every
+match is also used with home and away swapped, so no model ever sees a team identity.
 
-## 8. Milestone 11: sequence model (adopted) and the video detector (not adopted)
+![Degradation](figures/degradation.png)
 
-Six items (#67-#72), measured on external matches only (B'(33) / B'(1) / A, same protocol; adopt at >= +0.010 with no seed below -0.003).
+*Figure 9. Every external match is made to look like BAR-ATH before training.*
 
-| Issue | Change | Result | Decision |
-|---|---|---|---|
-| #67 | Oracle ceiling of the hidden ball, error decomposition | correcting only the visible frames is worth more than the hidden ones | diagnostic |
-| #68 | Self-supervised ball detector fine-tuned on the tactical video (GPU) | top candidate within 0.3 m in about 15 %; confidence uninformative | not adopted |
-| #69 | Integration of the detector | not wired: accuracy far below the ~0.2 m needed | not adopted |
-| #70 | Research on other value sources | notes and aggregate probes | nothing adopted |
-| #71 | Label-free world selection | no variant adopted | defaults unchanged |
-| #72 | Non-causal TCN (8 residual blocks, receptive field about +-20 s) over the specialists' features; probabilities replace the hidden-ball emissions (E100), mean of two training seeds | B'(33) +0.0130 (seeds +0.0142 / +0.0114 / +0.0133), B'(1) +0.0394, A +0.0735 | **adopted** |
-| #73 | TCN probabilities also on ball-visible frames (`visible_weight` 0.5, `emission_scale` 0.8; variant V50s of a preregistered grid of five) | B'(33) +0.0568 (seeds +0.0598 / +0.0561 / +0.0546), B'(1) +0.0430, A +0.0599 | **adopted** |
+**Where the ball goes missing (Issue #48).**  If gaps were placed at random, 41 % of hidden-ball frames would be dead.
+We built a label-free estimator: ball-free player features, a classifier trained on other matches, and prior-shift EM
+per tracked-player stratum.  It was validated on IDSSE with planted affinities and on PFF and Metrica.  On BAR-ATH it
+finds that **at least about 80 %** of hidden-ball graded frames are dead.  The tracker loses the ball mostly during
+stoppages: replays, close-ups, the ball out of play.  The degrader now places gaps over dead ball with that affinity
+(`dead_affinity` 33, realised odds ratio 12-19), and the models are trained in that world.
 
-Final submission after #73: SHA256 `40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b` (two runs identical, and again from `main`; Python 3.13.14, Windows 11; `validate_submission.py` valid;
-263 possessions, mean 12.9 s, `D` 45.5 % of graded play frames).  Fallbacks: the #72 submission, SHA256 `a31c0a3c864fa6ce16bc39c1f3d3b51a45b9bd2abc1d2bfbbb6cc223b08b3a6a`, reproduced with `sequence_model.visible_weight: 0.0` and
-`emission_scale: 0.5`; the pre-#72 submission, SHA256 `cac8927c2adc1b1a6778d0045a2fae0ba4437aee8ea10a889de02db7552d0c7b`, reproduced with
-`sequence_model.enabled: false` in `configs/default.yaml` and the same command as above.  Details: `docs/TECHNICAL_REPORT.md`, Milestone 11.
+![Hidden-ball world](figures/hidden_ball_world.png)
 
-## 9. Milestones 12-13: changes measured and left off, and an independent check
+*Figure 10. Left: dead share of hidden-ball frames under three views.  Right: training in the estimated world, +0.017
+on the primary criterion with every seed positive.*
 
-Seven more items (#75-#81) on top of the adopted sequence model, same protocol (B'(33), seeds 0-2, adopt at >= +0.010
-mean with no seed below -0.003; guards B'(1) and A).  None passed, so the submission above is unchanged.
+### 4.4 Specialists A and B
 
-| Issue | Change | Result (spellF1 vs default on B'(33)) | Decision |
-|---|---|---|---|
-| #75 | Decoder re-tuning for the sequence-model emissions | +0.0015 | off |
-| #76 | Two-seed ensemble of a larger TCN (64 channels) | +0.0097 (seeds +0.0062 / +0.0110 / +0.0118; B'(1) +0.0125, A +0.0067), below the bar | off |
-| #77 | Duration prior, expected-spellF1 decoding and boundary snap with the new emissions | about 0 | off |
-| #78 | Linear-chain CRF head on the sequence model | -0.022 | off |
-| #79 | Post-decoding boundary refinement (ASRF-style) | +0.0004 | off |
-| #80 | Per-player possession zones with duel / control rules | -0.0003 | off |
-| #81 | Boundary-regression and segment-level training losses (two seeds) | +0.0068 (B'(1) +0.0036, A +0.0034) | off |
+The per-frame features cover:
+* distances to the three nearest players of each team and their difference;
+* Link-Hoernig control weights and a touch score;
+* dynamic goalkeepers, spectral and convex-hull team areas (numba monotone chain) and their 2 s derivatives;
+* velocity coherence, `R = |mean(v_i / |v_i|)|`, and line advance;
+* ball memory: last and next seen position and possessor, and time since and until the ball was seen.
 
-**Independent check.**  The shipped route was run once on 8 PFF matches with real occlusions (`pff_3852`-`pff_3859`)
-that were never used for training; earlier decoder sweeps used them only as a -0.03 safety guard, never to pick a
-variant:
+**Specialist A** (ball visible) and **Specialist B** (ball hidden: collective physics, coherence, memory, dead-ball
+cues, a soft Smart Tagging prior) are LightGBM classifiers.  They run with `deterministic=True`, one thread and seed 0,
+and are calibrated by out-of-fold temperature on whole held-out matches.  They are fused per frame by ball visibility
+into `log p[N, 3]`, rounded to 1e-6.  On other matches with the ball hidden, Specialist B finds the right team on 0.85
+of alive frames, against 0.62 for "last touch".
 
-| Route | spellF1 | macroF1 |
+### 4.5 Sequence model (Issues #72-#73)
+
+A non-causal dilated TCN reads the specialists' feature matrix:
+* 8 residual blocks, dilations 1 to 128, 64 channels, receptive field about ±20 s, 0.2 M parameters;
+* an H/A/D head and a turnover head;
+* trained on degraded IDSSE (both worlds) and PFF matches 20-55, which are never in an evaluation cell;
+* two training seeds, averaged.
+
+The weights are exported to `.npz` and run in **NumPy** (parity with PyTorch to 1e-6), so the submission needs no
+PyTorch.  The TCN is mixed into the emissions in log space:
+
+$$\log p_t = (1-w_t)\,\log p^{\mathrm{spec}}_t + w_t\, s\, \log p^{\mathrm{TCN}}_t$$
+
+with `w_t` = 1.0 on hidden-ball frames, 0.5 on visible-ball frames, and scale `s` = 0.8.
+
+The visible-ball weight and the scale were chosen from a **preregistered grid of five** (Figure 11), posted before any
+score was seen.  The winner beats the reference by +0.057 on the primary criterion, and every seed and both guards
+improve.
+
+![Grid 73](figures/grid73.png)
+
+*Figure 11. #73 grid: spellF1 change against the #72 reference on the primary criterion and both guards.*
+
+### 4.6 Decoding for the metric
+
+Each graded half is decoded on its own by a Viterbi with **time-dependent** transitions (Figure 12):
+
+$$\hat y = \mathrm{arg\,max}_{y_{1:T}} \sum_t \left[\log p_t(y_t) + \log A_t(y_{t-1}, y_t)\right]$$
+
+* `log A_t(H, A)` is -11.5 at rest and opens to -1.4 within ±5 frames of a touch by the gaining team (or, moderately,
+  inside a long ball gap).
+* `H/A -> D` opens with dead-ball evidence.  `D -> team` stays closed until the evidence drops or a restart frame
+  `t*` is reached.
+* The kernel is compiled with numba and has a bit-identical NumPy fallback; the decode takes under 0.2 s.
+
+![Decoder](figures/decoder_states.png)
+
+*Figure 12. Decoder states and when each transition opens.*
+
+A **spell optimiser** then cleans the result:
+* it absorbs H->A->H micro-possessions shorter than about 1 s (0.98 s, tuned on other matches), unless the ball is
+  visible and shows a double touch;
+* it bridges long possessions with a `D` over ≥ 4 s dead-evidence valleys that coincide with a touchline or set piece;
+* the **contract** writes `X` outside the graded blocks, `D` in the second-half pre-kick-off interval and no internal
+  `X`, and validates the file with the official `validate_submission.py`.
+
+## 5. The possession rules we implement
+
+![Possession rules](figures/possession_rules.png)
+
+*Figure 13. From touches to possession: a failed challenge, a controlled regain, a stoppage and a restart.*
+
+| situation | rule |
+|---|---|
+| **Possession** | from the touch that wins the ball until the other team's winning touch |
+| **Loose balls, balls in flight** | the state is held: the last team in control keeps the ball until the other team touches it |
+| **Challenges and duels** | a change needs a touch by the gaining team; simultaneous contact does not flip by itself; flickers < 1 s are absorbed unless the ball is visible with a double touch |
+| **Ball out of play, fouls, goals** | `D` from the evidence of the stoppage until the restart frame `t*` found in the tracking; a `D` always splits a possession |
+| **Restarts** | the team taking the restart, from the moment the ball leaves rest; unresolved throw-ins keep both `D -> H` and `D -> A` open |
+| **Hidden ball** | the last and next possessor are carried over the gap with decaying confidence; in long gaps the change lands where the collective movement reverses |
+| **Ungraded frames** | `X` outside the graded blocks (from `games.py`), never inside; nothing crosses a half boundary |
+
+## 6. How we decided: one rule, 31 experiments
+
+The public window cannot rank methods, so every idea went through the same protocol, written down before any
+measurement:
+* it is built in its own branch and issue, with its own tests;
+* it is measured against the current default on B'(33) with evaluation seeds 0-2, with B'(1) and PFF A as guards;
+* it is **adopted only if** the mean spellF1 gain is ≥ +0.010 and no seed falls below -0.003;
+* otherwise the code stays, switched off by configuration.
+
+Two correctness fixes (#50, #51) were adopted on their own merit.
+
+![Experiment ledger](figures/experiment_ledger.png)
+
+*Figure 14. Every idea and its measured effect.  Adopted ideas are blue; the dashed line is the adoption bar.*
+
+Among the ideas left off are several that are popular elsewhere:
+* a CRF head (-0.022);
+* expected-spellF1 / minimum-Bayes-risk decoding (about 0);
+* semi-Markov durations (-0.003);
+* a larger TCN ensemble (+0.0097, just below the bar);
+* pseudo-labels on BAR-ATH (-0.016);
+* pre-trained and self-supervised ball detectors on the tactical video, within 0.3 m in only about 15 % of frames
+  where about 0.2 m would be needed;
+* broadcast synchronisation, which fills only 7.4 % of hidden tactical-ball frames (+0.005).
+
+We prefer a smaller, verified system to a larger one tuned on noise.
+
+## 7. Assets used, tried and dropped
+
+| asset | status | how |
 |---|---|---|
-| Heuristic route | 0.295 | -- |
-| Specialists before the sequence model (pre-#72) | 0.526 | -- |
-| + sequence model on hidden-ball frames (#72) | 0.616 | -- |
-| **+ sequence model on visible frames too (#73, submitted)** | **0.680** | **0.902** |
+| Tactical ATD (`x, y, s`, 46 slots, ball) and metadata XML | used | all geometry, kinematics and features; slot teams |
+| Smart Tagging XML | used | set-piece and goal windows (search windows for `t*`), throw-in teams, a weak phase prior |
+| Tactical homography | loaded, validity-checked | consumed only by the optional vision stages, which are off |
+| Broadcast ATD + homography | tried, off | 63 % of blocks synchronised; the TV ball fills 7.4 % of hidden frames, +0.005 |
+| Tactical / broadcast video | tried, off | YOLO, multi-frame, pre-trained and self-supervised detectors measured label-free on the real video; no video is processed for the submission |
+| Public 5-minute ground truth | pipeline check only | alignment and format; never used to choose or tune |
+| Official scorer, `games.py`, starter | used, vendored unmodified | metric, graded blocks, format check |
+| IDSSE / DFL, PFF, Metrica, SkillCorner | see 4.3 | other matches only |
 
-The ordering matches the internal validation, so the gains were not an artefact of the tuning matches.  The remaining
-error is the one described in the limitations: the route predicts fewer possessions than the truth (2228 against 2759
-on these 8 matches) because it misses H<->A turnovers, 45 % of those with the ball visible and 54 % with the ball
-hidden.  #79 showed that when such a turnover is missed, the emissions carry no trace of it, so no decoder change can
-recover it; the limit is in the information available, not in the decoding.  Details: `docs/TECHNICAL_REPORT.md`,
-Milestones 12 and 13.
+No private ground truth, no human-produced data about the provided game, no hand labelling and no manual correction.
+Every label in the file comes out of the code in the repository.
 
-## 10. Reproduction
+## 8. Limitations and what we would do next
+
+* **Missed turnovers.**  The route predicts fewer possessions than the truth: 2228 against 2759 on the 8 unseen PFF
+  matches.  It misses 45 % of H<->A turnovers with the ball visible and 54 % with the ball hidden.  #79 showed that
+  when a turnover is missed, the emissions carry no trace of it.  The limit is the information in the tracking, not
+  the decoder.
+* **Player dropout** (14.2 % of frames with fewer than 20 players) has no counterpart in the external matches.  91 %
+  of those frames lie inside ball gaps, so a high `D` share there is plausible but cannot be validated externally.
+* **Domain shift.**  We know BAR-ATH's noise only through label-free aggregates.  The two proxies (IDSSE and PFF)
+  sometimes disagree on the size of a trade-off.  Match-to-match noise on spellF1 is about 0.04.
+* **Next steps:**
+  * a ball detector trained for this tactical camera (we measured that it needs about 0.2 m accuracy);
+  * labelled matches in Metrica's own tracking convention;
+  * a player-level set encoder in front of the TCN for the hidden-ball turnovers.
+
+## 9. Reproduction
 
 ```bash
 python -m venv .venv && source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e . --no-deps
 # unpack the organisers' bundle into data/ (tactical/ and broadcast/), see data/README.md
-python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"   # -> "outputs/Opus Operandi.csv"
+python scripts/generate_submission.py --data-dir data --specialists load --team "Opus Operandi"
 python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
-python scripts/generate_submission.py --data-dir data --specialists load --kpi                 # + KPI quality dashboard
-python scripts/generate_submission.py --data-dir data --model-variant mixed  # alternatives: gap (= default) | mixed | calib | idsse | pff | ensemble
-python scripts/generate_submission.py --synthetic --out /tmp/sub.csv         # self-check without the data (what CI does)
+# SHA256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
 ```
 
-All dependencies are pinned to exact versions (`requirements.txt`, `pyproject.toml`; Python >= 3.10, developed on 3.13,
-CI on 3.11).  The submission uses only the committed `models/specialists.json` (Issue #52: `--specialists auto` and
-`load` both load it; retraining with `train_specialists.py` reproduces it byte for byte); numba and LightGBM are optional at run time with identical-result fallbacks.  `PYTHONHASHSEED=0` is
-enforced, seeds are fixed (`seed: 0`), LightGBM runs with `deterministic=True, num_threads=1`, and every decoder input
-is rounded to 1e-6, so two runs (and the numba and fallback decoders) give the same SHA256.  CI generates the full-length
-synthetic match twice and compares the hashes.  `data/`, `cache/`, videos and prediction CSVs are git-ignored and
-blocked by a CI security gate; the match data is processed only locally and never leaves the machine.
+* **Dependencies.**  All are pinned (Python ≥ 3.10; developed on 3.13, CI on 3.11).
+* **Determinism.**  `PYTHONHASHSEED=0`, fixed seeds, deterministic single-thread LightGBM, NumPy TCN inference, and
+  every decoder input rounded to 1e-6.  Two runs give the same SHA256, and so do the numba and NumPy decoders.
+* **Committed models.**  The submission uses only `models/specialists.json` and `models/sequence_tcn.json`.
+  `scripts/train_specialists.py` and `scripts/train_sequence.py` rebuild them from the external matches.
+* **CI.**  Ruff, more than 500 tests, a data-leak gate, and two full-length synthetic runs whose SHA256 must match.
+* **Figures.**  `python scripts/make_figures.py` redraws every figure in this document.
+
+## References
+
+1. D. Link, M. Hoernig. *Individual ball possession in soccer.* PLoS ONE 12(7), 2017.
+2. M. Bassek, R. Rein, H. Weber, D. Memmert. *An integrated dataset of spatiotemporal and event data in elite soccer.* Scientific Data 12, 195, 2025.
+3. S. Bai, J. Z. Kolter, V. Koltun. *An empirical evaluation of generic convolutional and recurrent networks for sequence modeling.* arXiv:1803.01271, 2018.
+4. C. Lea, M. D. Flynn, R. Vidal, A. Reiter, G. D. Hager. *Temporal convolutional networks for action segmentation and detection.* CVPR 2017.
+5. G. Ke et al. *LightGBM: a highly efficient gradient boosting decision tree.* NeurIPS 2017.
+6. C. Guo, G. Pleiss, Y. Sun, K. Q. Weinberger. *On calibration of modern neural networks.* ICML 2017.
+7. A. Viterbi. *Error bounds for convolutional codes and an asymptotically optimum decoding algorithm.* IEEE Trans. Information Theory 13(2), 1967.
+8. A. Savitzky, M. J. E. Golay. *Smoothing and differentiation of data by simplified least squares procedures.* Analytical Chemistry 36(8), 1964.
+9. Y. Ishikawa, S. Kasai, Y. Aoki, H. Kataoka. *Alleviating over-segmentation errors by detecting action boundaries.* WACV 2021.
+10. PFF FC FIFA World Cup 2022 open data (data.pff.com); Metrica Sports sample data (github.com/metrica-sports/sample-data); SkillCorner open data (github.com/SkillCorner/opendata).
