@@ -325,13 +325,14 @@ pip install -r requirements.txt\\
 pip install -e . -{}-no-deps\\
 \# unpack the organisers' bundle into data/ with its original names:\\
 \# \ data/tactical/BAR-ATH\_tactical\_atd.txt, \_atd.xml, \_smart\_tagging.xml, \_homography.csv\\
-python scripts/generate\_submission.py -{}-data-dir data -{}-specialists load -{}-team "Opus Operandi" \ \# about 30 s, CPU\\
+python scripts/generate\_submission.py -{}-data-dir data -{}-specialists load -{}-team "Opus Operandi"\\
 python evaluation/validate\_submission.py "outputs/Opus Operandi.csv"\\
-\# sha256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
+\# expected sha256 40f95b38fbcc942de6492a102ea74d72e180689e6f3b59c805d61edaa5116a7b
 \end{tcolorbox}
 Verified from a fresh clone of the public repository: the regenerated file is byte-identical to the submitted one (Windows~11, Python 3.13). The Linux CI (Python 3.11), which cannot hold the match data, reproduces the full-length synthetic match with the same SHA256 as Windows.
 \begin{itemize}
-\item \textbf{Dependencies.} All are pinned (Python $\geq$\,3.10; developed on 3.13, CI on 3.11).
+\item \textbf{For the reviewer.} Use Python 3.11--3.13 (tested; on Linux/macOS the command may be \code{python3}). Regeneration needs \textbf{no internet, no GPU and no external data}: it loads the committed models and takes about 30\,s on a laptop CPU. If PowerShell blocks \code{activate}, run \code{.venv\textbackslash Scripts\textbackslash python} instead of \code{python}. Compare the hash with \code{sha256sum} (Linux), \code{shasum -a 256} (macOS) or \code{Get-FileHash -Algorithm SHA256} (PowerShell); the generator also prints it.
+\item \textbf{Dependencies.} All are pinned in \code{requirements.txt} and \code{pyproject.toml}.
 \item \textbf{Determinism.} \code{PYTHONHASHSEED=0}, fixed seeds, deterministic single-thread LightGBM, NumPy TCN inference, and every decoder input rounded to $10^{-6}$. Two runs give the same SHA256, and so do the numba and NumPy decoders.
 \item \textbf{Committed models.} The submission uses only \code{models/specialists.json} and \code{models/sequence\_tcn.json}. \code{scripts/train\_specialists.py} and \code{scripts/train\_sequence.py} rebuild them from the external matches.
 \item \textbf{CI.} Ruff, more than 500 tests, a data-leak gate, and two full-length synthetic runs whose SHA256 must match.
