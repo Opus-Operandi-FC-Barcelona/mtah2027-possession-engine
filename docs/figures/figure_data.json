@@ -1,0 +1,70 @@
+{
+  "_source": "Aggregates measured on other matches (reports/*.json, docs/TECHNICAL_REPORT.md) and the official public scoreboard. No match data.",
+  "ladder_b33": [
+    ["Milestone 8\nspecialists", 0.657],
+    ["#48 re-trained\nin gap world", 0.675],
+    ["#72 + TCN\nhidden ball", 0.6823],
+    ["#73 + TCN\nvisible ball", 0.7391]
+  ],
+  "ladder_pff8": [
+    ["heuristic\nroute", 0.295],
+    ["specialists\n(pre-#72)", 0.526],
+    ["+ TCN hidden\n(#72)", 0.616],
+    ["+ TCN visible\n(#73, submitted)", 0.680]
+  ],
+  "validation_table": [
+    {"name": "specialists (pre-#72)", "values": [0.6693, 0.6017, 0.5263, 0.526]},
+    {"name": "+ TCN on hidden ball (#72)", "values": [0.6823, 0.6411, 0.5998, 0.616]},
+    {"name": "+ TCN on visible ball (#73, submitted)", "values": [0.7391, 0.6841, 0.6597, 0.680]}
+  ],
+  "grid73": {
+    "V0":   {"w": 0.0,  "s": 0.8, "b33": 0.0000, "b1": 0.0034, "pff": 0.0051},
+    "V25":  {"w": 0.25, "s": 0.5, "b33": 0.0252, "b1": 0.0178, "pff": 0.0306},
+    "V25s": {"w": 0.25, "s": 0.8, "b33": 0.0338, "b1": 0.0266, "pff": 0.0440},
+    "V50":  {"w": 0.5,  "s": 0.5, "b33": 0.0480, "b1": 0.0337, "pff": 0.0490},
+    "V50s": {"w": 0.5,  "s": 0.8, "b33": 0.0568, "b1": 0.0430, "pff": 0.0599}
+  },
+  "ledger": [
+    ["#73 TCN on visible frames", 0.0568, true],
+    ["#48 gap world + re-train", 0.017, true],
+    ["#72 sequence TCN (hidden ball)", 0.013, true],
+    ["#50 set-piece anchor (correctness)", 0.0085, true],
+    ["#51 per-block front end (correctness)", 0.0004, true],
+    ["#76 larger TCN, 2 seeds", 0.0097, false],
+    ["#44 two-world ensemble", 0.009, false],
+    ["#81 boundary / segment loss", 0.0068, false],
+    ["#39 broadcast (TV) sync", 0.005, false],
+    ["#42 dropout-robust shape", 0.004, false],
+    ["#43 Smart Tagging prior", 0.002, false],
+    ["#75 decoder re-tune", 0.0015, false],
+    ["#65 phase prior on H/A odds", 0.0009, false],
+    ["#66 tracklet-gated vision", 0.0005, false],
+    ["#32 MBR consensus", 0.0004, false],
+    ["#79 boundary refinement", 0.0004, false],
+    ["#49 restart-team rules", 0.0003, false],
+    ["#61 boundary snap", 0.0002, false],
+    ["#64 carrier + pressure feats", 0.0002, false],
+    ["#77 duration prior / MBR", 0.0, false],
+    ["#80 per-player zones", -0.0003, false],
+    ["#62 expected-spellF1 decode", -0.0005, false],
+    ["#60 bag of 3 seeds", -0.001, false],
+    ["#56 multi-scale context", -0.002, false],
+    ["#34 semi-Markov decoder", -0.0025, false],
+    ["#57 learned turnover gate", -0.0035, false],
+    ["#55 56 PFF matches", -0.012, false],
+    ["#21 pseudo-labels on BAR-ATH", -0.016, false],
+    ["#78 CRF head", -0.022, false],
+    ["SkillCorner as training data", -0.028, false],
+    ["#63 pre-trained ball model (sim.)", -0.074, false]
+  ],
+  "world": {"random": 0.41, "estimate": 0.80, "submission": 0.917, "m8_b33": 0.657, "m48_b33": 0.675},
+  "turnover_recall": {"b33": [[0.570, 0.357], [0.640, 0.380]], "pff": [[0.496, 0.412], [0.518, 0.453]]},
+  "public_scoreboard": [
+    ["Opus Operandi", 0.7000, 0.8978],
+    ["baseline_smooth125", 0.4242, 0.5812],
+    ["baseline_smooth50", 0.3256, 0.6207],
+    ["baseline_smooth25", 0.2868, 0.6200],
+    ["baseline_raw", 0.0378, 0.5972]
+  ],
+  "public_ci": [0.512, 0.887]
+}
