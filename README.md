@@ -73,6 +73,11 @@ python evaluation/validate_submission.py "outputs/Opus Operandi.csv"
 python scripts/make_figures.py       # optional: redraws docs/figures/ (needs matplotlib)
 ```
 
+Use Python 3.11-3.13 (tested; `python3` on some Linux/macOS systems).  Regeneration needs no internet, no GPU and no
+external data (it loads the committed models; about 30 s on a laptop CPU).  If PowerShell blocks `activate`, call
+`.venv\Scripts\python` directly.  Check the hash with `sha256sum`, `shasum -a 256` or `Get-FileHash -Algorithm SHA256`;
+the generator also prints it.
+
 ### Training data (other matches only, labels by algorithm)
 
 | dataset | licence | labels | matches |

@@ -360,7 +360,12 @@ Verified from a fresh clone of the public repository: the regenerated file is by
 (Windows 11, Python 3.13).  The Linux CI (Python 3.11), which cannot hold the match data, reproduces the full-length
 synthetic match with the same SHA256 as Windows.
 
-* **Dependencies.**  All are pinned (Python ≥ 3.10; developed on 3.13, CI on 3.11).
+* **For the reviewer.**  Use Python 3.11-3.13 (tested; on Linux/macOS the command may be `python3`).  Regeneration
+  needs **no internet, no GPU and no external data**: it loads the committed models and takes about 30 s on a laptop
+  CPU.  If PowerShell blocks `activate`, run `.venv\Scripts\python` instead of `python`.  Compare the hash with
+  `sha256sum` (Linux), `shasum -a 256` (macOS) or `Get-FileHash -Algorithm SHA256` (PowerShell); the generator also
+  prints it.
+* **Dependencies.**  All are pinned in `requirements.txt` and `pyproject.toml`.
 * **Determinism.**  `PYTHONHASHSEED=0`, fixed seeds, deterministic single-thread LightGBM, NumPy TCN inference, and
   every decoder input rounded to 1e-6.  Two runs give the same SHA256, and so do the numba and NumPy decoders.
 * **Committed models.**  The submission uses only `models/specialists.json` and `models/sequence_tcn.json`.
